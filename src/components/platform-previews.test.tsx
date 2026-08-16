@@ -1,0 +1,333 @@
+import { act } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { DEFAULT_ARTICLE_FORMATTING } from '../domain/formatting'
+import * as xhsExport from '../lib/xhs-export'
+import { PlatformPreviews } from './platform-previews'
+
+describe('PlatformPreviews editor-to-preview locating', () => {
+  let container: HTMLDivElement
+  let root: Root
+
+  beforeEach(() => {
+    ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+    window.localStorage.clear()
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+  })
+
+  afterEach(async () => {
+    await act(async () => root.unmount())
+    container.remove()
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  })
+
+  it('centers and highlights the requested source block in the right preview', async () => {
+    const scrollIntoView = vi.fn()
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: scrollIntoView,
+    })
+
+    await act(async () => {
+      root.render(
+        <PlatformPreviews
+          activePlatform="wechat"
+          title="Preview locate"
+          html="<p>First block</p><p>Second block</p><p>Third block</p>"
+          formatting={DEFAULT_ARTICLE_FORMATTING}
+          previewDevice="desktop"
+          onPreviewDeviceChange={vi.fn()}
+        />,
+      )
+      await Promise.resolve()
+    })
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await act(async () => {
+        await new Promise(resolve => window.setTimeout(resolve, 0))
+      })
+    }
+
+    await act(async () => {
+      root.render(
+        <PlatformPreviews
+          activePlatform="wechat"
+          title="Preview locate"
+          html="<p>First block</p><p>Second block</p><p>Third block</p>"
+          formatting={DEFAULT_ARTICLE_FORMATTING}
+          previewDevice="desktop"
+          onPreviewDeviceChange={vi.fn()}
+          locateRequest={{ blockIndex: 1, requestId: 1 }}
+        />,
+      )
+      await new Promise(resolve => window.setTimeout(resolve, 0))
+    })
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await act(async () => {
+        await new Promise(resolve => window.setTimeout(resolve, 0))
+      })
+    }
+
+    const target = container.querySelector<HTMLElement>('[data-source-block="1"]')
+    expect(target?.textContent).toBe('Second block')
+    expect(target?.getAttribute('data-preview-selected')).toBe('true')
+    expect(target?.classList.contains('preview-located-target')).toBe(true)
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'center', inline: 'nearest', behavior: 'smooth' })
+  })
+
+  it('defaults WeChat themes to the compact category, keeps All last, and shares article formatting controls', async () => {
+    const onFormattingChange = vi.fn()
+    await act(async () => {
+      root.render(
+        <PlatformPreviews
+          activePlatform="wechat"
+          title="Theme preview"
+          html="<h2>Heading</h2><p>Body</p>"
+          formatting={DEFAULT_ARTICLE_FORMATTING}
+          onFormattingChange={onFormattingChange}
+          previewDevice="desktop"
+          onPreviewDeviceChange={vi.fn()}
+        />,
+      )
+      await Promise.resolve()
+    })
+
+    const categoryButtons = Array.from(container.querySelectorAll<HTMLButtonElement>('.wechat-theme-categories button'))
+    expect(categoryButtons.map(button => button.textContent)).toEqual(['简约', '书卷', '杂志', '商务', '科技', '活力', '全部'])
+    expect(categoryButtons[0].getAttribute('aria-selected')).toBe('true')
+    expect(container.querySelectorAll('.wechat-theme-card').length).toBeGreaterThan(0)
+    expect(container.querySelectorAll('.wechat-theme-card').length).toBeLessThan(26)
+    expect(container.querySelector('.wechat-layout')?.classList.contains('tool-rail-open')).toBe(true)
+    expect(container.querySelector('.wechat-viewport')?.nextElementSibling?.classList.contains('preview-tool-resizer')).toBe(true)
+    expect(container.querySelector('.preview-context-actions')?.textContent).not.toContain('公众号主题')
+    expect(container.querySelector('[data-wechat-theme="literary"]')).not.toBeNull()
+
+    const lineHeightControls = container.querySelector<HTMLElement>('[aria-label="选择文章行距"]')!
+    const airyButton = Array.from(lineHeightControls.querySelectorAll<HTMLButtonElement>('button')).find(button => button.textContent === '宽松')!
+    await act(async () => airyButton.click())
+    expect(onFormattingChange).toHaveBeenCalledWith(expect.objectContaining({ lineHeight: 'airy' }))
+    onFormattingChange.mockClear()
+
+    await act(async () => categoryButtons.at(-1)?.click())
+    const cards = container.querySelectorAll<HTMLButtonElement>('.wechat-theme-card')
+    expect(cards).toHaveLength(26)
+    const swiss = Array.from(cards).find(card => card.textContent?.includes('瑞士索引'))!
+
+    await act(async () => swiss.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })))
+    expect(container.querySelector('[data-wechat-theme="literary"]')).not.toBeNull()
+    expect(container.querySelector('[data-wechat-theme="swiss-index"]')).toBeNull()
+    expect(onFormattingChange).not.toHaveBeenCalled()
+
+    await act(async () => swiss.click())
+    expect(onFormattingChange).toHaveBeenCalledWith(expect.objectContaining({
+      wechat: expect.objectContaining({ themeId: 'swiss-index' }),
+    }))
+  })
+
+  it('copies the inline-styled WeChat body as rich HTML', async () => {
+    const write = vi.fn().mockResolvedValue(undefined)
+    let clipboardPayload: Record<string, Blob> | undefined
+    class ClipboardItemMock {
+      constructor(payload: Record<string, Blob>) {
+        clipboardPayload = payload
+      }
+    }
+    vi.stubGlobal('ClipboardItem', ClipboardItemMock)
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { write },
+    })
+
+    await act(async () => root.render(
+      <PlatformPreviews
+        activePlatform="wechat"
+        title="Clipboard preview"
+        html="<h2>复制标题</h2><p>保留公众号排版</p>"
+        formatting={DEFAULT_ARTICLE_FORMATTING}
+        previewDevice="desktop"
+        onPreviewDeviceChange={vi.fn()}
+      />,
+    ))
+
+    const copyButton = container.querySelector<HTMLButtonElement>('button[aria-label="复制公众号格式"]')!
+    await act(async () => {
+      copyButton.click()
+      await Promise.resolve()
+    })
+
+    expect(write).toHaveBeenCalledTimes(1)
+    expect(clipboardPayload?.['text/html']).toBeInstanceOf(Blob)
+    expect(clipboardPayload?.['text/html'].type).toBe('text/html')
+    expect(clipboardPayload?.['text/plain'].type).toBe('text/plain')
+    expect(copyButton.textContent).toContain('已复制')
+    expect(copyButton.getAttribute('aria-label')).toBe('公众号格式已复制')
+  })
+
+  it('focuses the left source immediately when a preview block is selected and has no floating edit button', async () => {
+    const onEditTarget = vi.fn()
+    await act(async () => root.render(
+      <PlatformPreviews
+        activePlatform="x"
+        title="Direct edit"
+        html="<p>First</p><p>Second</p>"
+        formatting={DEFAULT_ARTICLE_FORMATTING}
+        previewDevice="desktop"
+        onPreviewDeviceChange={vi.fn()}
+        onEditTarget={onEditTarget}
+      />,
+    ))
+
+    await act(async () => container.querySelector<HTMLElement>('[data-source-block="1"]')?.click())
+    expect(onEditTarget).toHaveBeenCalledWith({ kind: 'body', blockIndex: 1 })
+    expect(container.querySelector('.preview-edit-action')).toBeNull()
+    expect(container.querySelector('.x-layout')?.classList.contains('tool-rail-open')).toBe(true)
+    expect(container.querySelector('.preview-context-actions')?.textContent).not.toContain('X 长文排版')
+
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="收起 X 长文排版侧栏"]')?.click())
+    expect(container.querySelector('.x-layout')?.classList.contains('tool-rail-open')).toBe(false)
+    const collapsedXPanel = container.querySelector<HTMLElement>('#x-formatting-panel')!
+    expect(collapsedXPanel.hidden).toBe(true)
+
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="展开 X 长文排版侧栏"]')?.click())
+    expect(container.querySelector('.x-layout')?.classList.contains('tool-rail-open')).toBe(true)
+    expect(container.querySelector<HTMLElement>('#x-formatting-panel')?.hidden).toBe(false)
+  })
+
+  it('renders source spacers without shifting the following editable block mapping', async () => {
+    await act(async () => root.render(
+      <PlatformPreviews
+        activePlatform="x"
+        title="Blank line mapping"
+        html={'<p>第一段</p><div data-source-spacer="true" style="height: 1.72em; min-height: 1.72em; display: block" aria-hidden="true"></div><div data-source-spacer="true" style="height: 1.72em; min-height: 1.72em; display: block" aria-hidden="true"></div><p>第二段</p>'}
+        sourceText={'第一段\n\n\n\n第二段'}
+        sourceLanguage="markdown"
+        formatting={DEFAULT_ARTICLE_FORMATTING}
+        previewDevice="desktop"
+        onPreviewDeviceChange={vi.fn()}
+      />,
+    ))
+
+    const paragraphs = container.querySelectorAll<HTMLElement>('.x-article-content > p')
+    const spacers = container.querySelectorAll<HTMLElement>('.x-article-content > [data-source-spacer]')
+    expect(paragraphs[0].getAttribute('data-source-block')).toBe('0')
+    expect(paragraphs[1].getAttribute('data-source-block')).toBe('1')
+    expect(spacers).toHaveLength(2)
+    expect(Array.from(spacers).every(spacer => !spacer.hasAttribute('data-source-block'))).toBe(true)
+  })
+
+  it('collapses and expands the WeChat and Xiaohongshu right tool rails in place', async () => {
+    const onFormattingChange = vi.fn()
+    await act(async () => root.render(
+      <PlatformPreviews
+        activePlatform="wechat"
+        title="Rail controls"
+        html="<p>Body</p>"
+        formatting={DEFAULT_ARTICLE_FORMATTING}
+        previewDevice="desktop"
+        onPreviewDeviceChange={vi.fn()}
+      />,
+    ))
+
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="收起公众号主题侧栏"]')?.click())
+    expect(container.querySelector('.wechat-layout')?.classList.contains('tool-rail-open')).toBe(false)
+    expect(container.querySelector<HTMLElement>('#wechat-theme-panel')?.hidden).toBe(true)
+    expect(container.querySelector<HTMLButtonElement>('button[aria-label="展开公众号主题侧栏"]')).not.toBeNull()
+
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="展开公众号主题侧栏"]')?.click())
+    expect(container.querySelector('.wechat-layout')?.classList.contains('tool-rail-open')).toBe(true)
+
+    await act(async () => root.render(
+      <PlatformPreviews
+        activePlatform="xhs"
+        title="Rail controls"
+        html="<p>Body</p>"
+        formatting={DEFAULT_ARTICLE_FORMATTING}
+        onFormattingChange={onFormattingChange}
+        previewDevice="desktop"
+        onPreviewDeviceChange={vi.fn()}
+      />,
+    ))
+
+    expect(container.querySelector('.xhs-layout')?.classList.contains('tool-rail-open')).toBe(true)
+    const xhsResizer = container.querySelector<HTMLElement>('[aria-label="调整小红书工具侧栏宽度"]')
+    expect(xhsResizer?.getAttribute('role')).toBe('separator')
+    expect(xhsResizer?.nextElementSibling?.id).toBe('xhs-tool-panel')
+    expect(container.querySelector('[aria-label="小红书排版调整"]')).not.toBeNull()
+    const largeFontButton = Array.from(container.querySelectorAll<HTMLButtonElement>('[aria-label="小红书排版调整"] [aria-label="选择文章字号"] button'))
+      .find(button => button.textContent === '大')!
+    await act(async () => largeFontButton.click())
+    expect(onFormattingChange).toHaveBeenCalledWith(expect.objectContaining({ fontSize: 'large' }))
+    expect(Array.from(container.querySelectorAll<HTMLButtonElement>('.xhs-current-page-actions button')).map(button => button.textContent)).toEqual(['放大查看', '下载当前页'])
+
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="收起小红书工具侧栏"]')?.click())
+    expect(container.querySelector('.xhs-layout')?.classList.contains('tool-rail-open')).toBe(false)
+    expect(container.querySelector<HTMLElement>('#xhs-tool-panel')?.hidden).toBe(true)
+
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="展开小红书工具侧栏"]')?.click())
+    expect(container.querySelector('.xhs-layout')?.classList.contains('tool-rail-open')).toBe(true)
+    expect(container.querySelector<HTMLElement>('#xhs-tool-panel')?.hidden).toBe(false)
+  })
+
+  it('opens each Xiaohongshu card as an image with zoom controls', async () => {
+    vi.spyOn(xhsExport, 'captureXhsCard').mockResolvedValue(new Blob(['preview'], { type: 'image/png' }))
+    const createObjectUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:xhs-preview')
+    const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
+
+    await act(async () => root.render(
+      <PlatformPreviews
+        activePlatform="xhs"
+        title="Image preview"
+        html="<p>Body</p>"
+        formatting={DEFAULT_ARTICLE_FORMATTING}
+        previewDevice="desktop"
+        onPreviewDeviceChange={vi.fn()}
+      />,
+    ))
+
+    const previewButton = Array.from(container.querySelectorAll<HTMLButtonElement>('.xhs-current-page-actions button'))
+      .find(button => button.textContent?.includes('放大查看'))!
+    await act(async () => {
+      previewButton.click()
+      await Promise.resolve()
+    })
+
+    expect(xhsExport.captureXhsCard).toHaveBeenCalledWith(expect.any(HTMLElement))
+    expect(createObjectUrl).toHaveBeenCalledWith(expect.any(Blob))
+    expect(container.querySelector('[role="dialog"][aria-label="小红书第 1 张图片放大预览"]')).not.toBeNull()
+    expect(container.querySelector('.xhs-image-zoom-value')?.textContent).toBe('100%')
+
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="放大图片"]')?.click())
+    expect(container.querySelector('.xhs-image-zoom-value')?.textContent).toBe('125%')
+
+    await act(async () => container.querySelector<HTMLButtonElement>('.xhs-image-preview-close')?.click())
+    expect(container.querySelector('.xhs-image-preview-layer')).toBeNull()
+    expect(revokeObjectUrl).toHaveBeenCalledWith('blob:xhs-preview')
+  })
+
+  it('selects an individual Markdown list line instead of the whole preview list', async () => {
+    const onEditTarget = vi.fn()
+    await act(async () => root.render(
+      <PlatformPreviews
+        activePlatform="wechat"
+        title="Line locate"
+        html="<ul><li>第一行</li><li>第二行</li><li>第三行</li></ul>"
+        sourceText={'- 第一行\n- 第二行\n- 第三行'}
+        sourceLanguage="markdown"
+        formatting={DEFAULT_ARTICLE_FORMATTING}
+        previewDevice="desktop"
+        onPreviewDeviceChange={vi.fn()}
+        onEditTarget={onEditTarget}
+      />,
+    ))
+
+    const secondLine = container.querySelector<HTMLElement>('[data-source-line="2"]')
+    expect(secondLine?.textContent).toBe('第二行')
+    expect(secondLine?.getAttribute('role')).toBe('button')
+    await act(async () => secondLine?.click())
+    expect(onEditTarget).toHaveBeenCalledWith({ kind: 'body', blockIndex: 0, line: 2 })
+    expect(container.querySelector('[data-source-line="2"]')?.getAttribute('data-preview-selected')).toBe('true')
+    expect(container.querySelector('ul')?.getAttribute('data-preview-selected')).toBeNull()
+  })
+})
