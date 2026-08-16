@@ -1,0 +1,31 @@
+node_modules/
+dist/
+coverage/
+*.local
+*.log
+.env
+.env.*
+.dev.vars
+.dev.vars.*
+.wrangler/
+*.tsbuildinfo
+.DS_Store
+
+# Local workspace and personal content
+.obsidian/
+articles/
+AGENTS.md
+WORKLOG.md
+HISTORY.md
+task_plan.md
+findings.md
+progress.md
+design-qa.md
+artifacts/
+examples/
+
+# Unused local source assets
+/SVG/TikTok (1).svg
+/SVG/哔哩哔哩.svg
+/SVG/抖音.svg
+/SVG/微信.svg
