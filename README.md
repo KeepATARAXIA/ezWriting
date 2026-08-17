@@ -161,7 +161,7 @@ ZIP 安全限制：压缩包最大 20 MB、最多 120 个文件、单文件解�
 
 ## 本地开发
 
-环境要求：Node.js 20 或更高版本。
+环境要求：Node.js 24.15 或更高版本。
 
 ```bash
 git clone https://github.com/KeepATARAXIA/ezWriting.git
