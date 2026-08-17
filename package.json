@@ -1,16 +1,20 @@
 {
-  "name": "dispatch-workbench",
+  "name": "ezwriting",
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "vite",
     "build": "npm run typecheck && vite build",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc -b && tsc -p cloudflare/worker/tsconfig.json",
+    "verify": "npm test && npm run build",
     "worker:dev": "wrangler dev --config cloudflare/worker/wrangler.jsonc",
-    "worker:deploy": "npm run build && wrangler deploy --config cloudflare/worker/wrangler.jsonc"
+    "worker:deploy": "npm run verify && wrangler deploy --config cloudflare/worker/wrangler.jsonc"
   },
   "dependencies": {
     "@codemirror/commands": "6.10.4",
