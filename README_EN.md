@@ -161,7 +161,7 @@ EZWRITING uses React, TypeScript, and Vite. Responsibilities are separated so th
 
 ## Local development
 
-Requirements: Node.js 20 or later.
+Requirements: Node.js 24.15 or later.
 
 ```bash
 git clone https://github.com/KeepATARAXIA/ezWriting.git
