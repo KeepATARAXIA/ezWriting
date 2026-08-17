@@ -4,7 +4,7 @@ import { basicSetup } from 'codemirror'
 import { html } from '@codemirror/lang-html'
 import { markdown } from '@codemirror/lang-markdown'
 import { redo, redoDepth, undo, undoDepth } from '@codemirror/commands'
-import { Compartment, EditorState, Facet, Prec, StateField, type Transaction } from '@codemirror/state'
+import { Annotation, Compartment, EditorState, Facet, Prec, StateField, type Transaction } from '@codemirror/state'
 import {
   Decoration,
   EditorView,
@@ -100,6 +100,7 @@ function readFileAsDataUrl(file: File): Promise<string> {
 const MARKDOWN_IMAGE_SOURCE = /!\[([^\]\n]*)\]\(\s*(?:<([^>\n]+)>|([^\s)\n]+))(?:\s+["'][^"'\n]*["'])?\s*\)/g
 const EMBEDDED_IMAGE_TOKEN = /dispatch-editor-image:\/\/[a-z0-9-]+/gi
 const EMBEDDED_IMAGE_PREFIX = 'dispatch-editor-image://image-'
+const controlledValueUpdate = Annotation.define<boolean>()
 
 interface EmbeddedImageContext {
   sources: Map<string, string>
@@ -719,7 +720,10 @@ export function SourceEditor({ value, language, focusRequest, onChange, onActive
             },
           }),
           EditorView.updateListener.of(update => {
-            if (update.docChanged) scheduleSourceChange(update.view)
+            const isControlledValueUpdate = update.transactions.some(
+              transaction => transaction.annotation(controlledValueUpdate) === true,
+            )
+            if (update.docChanged && !isControlledValueUpdate) scheduleSourceChange(update.view)
             if (update.docChanged || update.selectionSet) scheduleActiveBlock(update.view)
             if (update.docChanged || update.selectionSet || update.geometryChanged) updateEditorUi(update.view)
           }),
@@ -766,6 +770,7 @@ export function SourceEditor({ value, language, focusRequest, onChange, onActive
       changes: { from: 0, to: current.length, insert: compacted.text },
       selection: { anchor: Math.min(anchor, compacted.text.length), head: Math.min(head, compacted.text.length) },
       effects: imageSourceEffect,
+      annotations: controlledValueUpdate.of(true),
     })
   }, [value])
 
