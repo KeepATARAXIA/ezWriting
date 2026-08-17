@@ -27,6 +27,9 @@ describe('App local draft history', () => {
     bridgeMocks.getPlatformAccounts.mockResolvedValue([])
     bridgeMocks.publishDraft.mockReset()
     window.localStorage.clear()
+    const editorRect = new DOMRect(0, 0, 120, 18)
+    Range.prototype.getClientRects = () => [editorRect] as unknown as DOMRectList
+    Range.prototype.getBoundingClientRect = () => editorRect
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
@@ -82,10 +85,9 @@ describe('App local draft history', () => {
     const deleteButton = container.querySelector<HTMLButtonElement>('.history-delete-action')!
     await act(async () => {
       deleteButton.click()
-      await new Promise(resolve => window.setTimeout(resolve, 30))
     })
+    await vi.waitFor(() => expect(container.textContent).toContain('本地历史测试稿”已删除'))
     expect(await repository.listDrafts()).toHaveLength(0)
-    expect(container.textContent).toContain('本地历史测试稿”已删除')
 
     const undoButton = Array.from(container.querySelectorAll<HTMLButtonElement>('.history-undo-notice button'))[0]
     await act(async () => {
