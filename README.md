@@ -1,123 +1,123 @@
 <div align="right">
-  <strong>简体中文</strong> · <a href="./README_EN.md">English</a>
+  <a href="./README_ZH.md">简体中文</a> · <strong>English</strong>
 </div>
 
 <div align="center">
 
 # EZWRITING
 
-**本地优先的多平台内容分发工作台**
+**A local-first workspace for multi-platform content publishing**
 
-把一份 Markdown、HTML 或 ZIP 稿件带进浏览器，在同一个页面完成编辑、图片整理、平台预览和草稿同步。
+Bring a Markdown, HTML, or ZIP article into the browser, then edit, organize images, preview platform-specific layouts, and create drafts from one workspace.
 
-[在线体验](https://ezwriting-dev.a2976916992.workers.dev/) · [功能说明](#核心能力) · [本地开发](#本地开发) · [English](./README_EN.md)
+[Live demo](https://ezwriting-dev.a2976916992.workers.dev/) · [Features](#core-capabilities) · [Local development](#local-development) · [简体中文](./README_ZH.md)
 
 </div>
 
-![EZWRITING 产品工作台全景](./docs/readme-assets/product-workbench-overview.png)
+![EZWRITING product workspace overview](./docs/readme-assets/product-workbench-overview.png)
 
 > [!IMPORTANT]
-> EZWRITING 当前处于公开 MVP 阶段，推荐使用桌面端 Chrome、Edge 或其他 Chromium 浏览器。导入、编辑、预览、备份和图片导出不需要登录；多平台草稿同步需要安装 [文章同步助手 Wechatsync](https://github.com/wechatsync/Wechatsync) 并提前登录目标平台。
+> EZWRITING is currently a public MVP. A desktop version of Chrome, Edge, or another Chromium browser is recommended. Importing, editing, previewing, backing up data, and exporting images work without an account. Multi-platform draft delivery requires the [Wechatsync](https://github.com/wechatsync/Wechatsync) browser extension and active sessions on the target platforms.
 
-## 为什么做 EZWRITING
+## Why EZWRITING exists
 
-一篇长文写完以后，发布工作通常才刚刚开始：公众号要重新检查排版，X Article 有自己的阅读节奏，小红书更适合分页卡片，其他平台又有不同的图片和草稿要求。不断复制、粘贴、上传图片和切换后台，不仅耗时，也容易让多个版本逐渐偏离最初的稿件。
+Finishing a long-form article is often only the beginning of the publishing process. WeChat needs its own formatting pass, X Article has a different reading rhythm, Xiaohongshu works better as paginated cards, and every other platform introduces another set of image and draft requirements. Repeated copying, pasting, image uploads, and dashboard switching consume time and gradually pull each version away from the original draft.
 
-EZWRITING 把这段流程收进一个网页：
+EZWRITING brings that process into one browser workspace:
 
 ```mermaid
 flowchart LR
-    A["Markdown / HTML / ZIP"] --> B["浏览器本地解析与安全过滤"]
-    B --> C["一份可编辑稿件"]
-    C --> D["公众号 / 小红书 / X 预览"]
-    D --> E["Wechatsync 发布桥接"]
-    E --> F["已登录平台的草稿箱"]
+    A["Markdown / HTML / ZIP"] --> B["Local parsing and sanitization"]
+    B --> C["One editable draft"]
+    C --> D["WeChat / Xiaohongshu / X previews"]
+    D --> E["Wechatsync publishing bridge"]
+    E --> F["Drafts on signed-in platforms"]
 ```
 
-核心原则是“一份正文，多个平台呈现”。编辑器只维护一份 Markdown 主稿，公众号、小红书和 X 使用各自的预览与排版逻辑，避免三个版本越改越散。
+The core rule is simple: one source, multiple platform presentations. The editor keeps one canonical Markdown draft, while WeChat, Xiaohongshu, and X apply their own preview and formatting logic. This prevents three independently edited versions from drifting apart.
 
-## 核心能力
+## Core capabilities
 
-| 环节 | 能力 |
+| Stage | What EZWRITING provides |
 | --- | --- |
-| 导入 | 支持 Markdown、HTML、ZIP 内容包和包含正文与配图的文件夹 |
-| 整理 | 读取 front matter、标题、摘要、标签、封面及标准 Markdown / Obsidian 图片引用 |
-| 编辑 | Markdown 文本编辑器，支持标题、列表、引用、Callout、代码、表格、链接、高亮、图片、快捷键与撤销重做 |
-| 预览 | 微信公众号长文、小红书图文卡片和 X Article 三种独立预览 |
-| 排版 | 主题、字体、字号、行距和强调色；编辑结果同步进入预览与发布稿 |
-| 本地保存 | 稿件、图片和排版设置保存在当前浏览器的 IndexedDB 中，支持整库导入与导出 |
-| 发布 | 检测 Wechatsync 与平台登录状态，选择多个平台、查看进度、错误和草稿入口 |
-| 安全边界 | 外部 HTML 经过过滤；ZIP 限制文件数和解压体积，并拒绝路径穿越 |
+| Import | Markdown, HTML, ZIP content packages, and folders containing an article with its images |
+| Normalize | Front matter, title, summary, tags, cover image, standard Markdown images, and Obsidian image references |
+| Edit | A Markdown editor with headings, lists, quotes, callouts, code, tables, links, highlights, images, shortcuts, undo, and redo |
+| Preview | Dedicated views for WeChat Official Account articles, Xiaohongshu image cards, and X Article |
+| Format | Themes, fonts, type sizes, line spacing, and accent colors shared by previews and delivery payloads |
+| Save locally | Drafts, images, and layout settings stored in IndexedDB, with full-library backup import and export |
+| Deliver | Wechatsync detection, platform selection, per-platform progress, errors, and draft links |
+| Protect input | HTML sanitization plus ZIP limits for file count, decompressed size, and path traversal |
 
-## 从稿件到草稿箱
+## From source file to platform drafts
 
-### 1. 新建或导入稿件
+### 1. Create or import a draft
 
-可以直接创建空白文档，也可以导入 `.md`、`.markdown`、`.html`、`.htm`、`.zip` 或文章文件夹。
+Start with an empty document, or import a `.md`, `.markdown`, `.html`, `.htm`, `.zip`, or article folder.
 
-### 2. 编辑唯一正文
+### 2. Edit one canonical source
 
-左侧维护 Markdown 主稿，右侧实时生成当前平台的预览。点击右侧正文可以回到左侧对应位置，编辑后预览同步更新。
+The left side contains the Markdown source; the right side renders the active platform preview. Selecting content in the preview locates the corresponding source block, and edits update the preview immediately.
 
-### 3. 整理文章图片
+### 3. Organize article assets
 
-正文图片、封面和缺失资源集中显示在资源页。可以批量选择素材文件夹，也可以单独重链、替换或删除图片。
+Body images, the cover, and unresolved assets are collected in one resource view. You can select a folder to resolve several paths at once, or relink, replace, and remove individual images.
 
-单独导入 Markdown 时，浏览器不能自动读取文件旁边的本地图片。建议选择包含正文与素材的整个文件夹，或使用 ZIP 内容包，让 EZWRITING 按相对路径自动补齐资源。
+When a Markdown file is selected on its own, the browser cannot automatically read neighboring local images. Select the full article folder or use a ZIP package so EZWRITING can resolve assets from their relative paths.
 
-### 4. 检查平台预览
+### 4. Review platform-specific previews
 
-![一份正文生成多平台呈现](./docs/readme-assets/multi-platform-output.png)
+![One source rendered for multiple platforms](./docs/readme-assets/multi-platform-output.png)
 
-#### 微信公众号
+#### WeChat Official Account
 
-当前内置 26 套公众号主题，并提供字体、字号、行距和强调色控制。生成的内联样式正文可以直接复制到公众号编辑器，也会作为公众号发布稿的排版来源。
+The current build includes 26 article themes plus font, size, line-height, and accent-color controls. The generated inline-styled HTML can be copied into the WeChat editor and is also used as the WeChat delivery payload.
 
 #### X Article
 
-按照 X Article 的长文结构组织标题、作者、封面和正文，支持桌面与手机效果切换。自动写入 X Article 草稿仍受账号权限和平台规则限制，需要使用具备对应权限的真实账号验证。
+The X Article view arranges the title, author, cover, and body for long-form reading, with desktop and mobile previews. Automated X Article draft creation still depends on account eligibility and current platform behavior, so it requires verification with an eligible account.
 
-#### 小红书图文
+#### Xiaohongshu image posts
 
-长文会自动拆分为 3:4 图文卡片。可以切换单页、双页或整体预览，调整模板与排版，放大检查单页，并下载当前 PNG 或全部卡片 ZIP。
+Long articles are automatically divided into 3:4 image cards. Switch between single-page, spread, and overview modes; adjust templates and typography; inspect a full-resolution page; then download one PNG or all cards as a ZIP archive.
 
-### 5. 同步到平台草稿箱
+### 5. Create platform drafts
 
-安装 Wechatsync 并登录目标平台后，EZWRITING 会读取可用平台。同步默认只创建草稿，不会无人值守地公开发布；各平台的进度、失败原因和草稿入口分别保留。
+After Wechatsync is installed and the target platforms are signed in, EZWRITING reads the available destinations. Delivery creates drafts by default and never performs unattended public posting. Progress, failures, and returned draft links remain visible per platform.
 
-## 快速开始
+## Quick start
 
-### 只使用本地功能
+### Use the local workspace only
 
-打开 [EZWRITING 公开测试版](https://ezwriting-dev.a2976916992.workers.dev/) 后即可：
+Open the [EZWRITING public demo](https://ezwriting-dev.a2976916992.workers.dev/), then:
 
-1. 新建文档，或导入文章文件。
-2. 在左侧编辑正文、补齐图片。
-3. 在右侧切换公众号、小红书或 X 预览。
-4. 复制公众号格式、导出小红书图片，或复制整理后的长文。
+1. Create a document or import an existing article.
+2. Edit the source and resolve its images.
+3. Switch between WeChat, Xiaohongshu, and X previews.
+4. Copy WeChat-formatted content, export Xiaohongshu cards, or copy the prepared long-form article.
 
-这部分不需要账号，也不要求安装发布扩展。
+No account or publishing extension is required for this workflow.
 
-### 启用多平台草稿同步
+### Enable multi-platform draft delivery
 
-1. 安装并启用 [文章同步助手 Wechatsync](https://github.com/wechatsync/Wechatsync)。
-2. 在同一个 Chromium 浏览器中登录准备发布的平台。
-3. 返回 EZWRITING，等待页面显示“发布引擎已就绪”。
-4. 点击“发布”，选择平台并创建草稿。
-5. 从结果区打开各平台草稿，完成最终人工检查。
+1. Install and enable the [Wechatsync](https://github.com/wechatsync/Wechatsync) extension.
+2. Sign in to the target platforms in the same Chromium browser.
+3. Return to EZWRITING and wait for the publishing engine to report that it is ready.
+4. Select **Publish**, choose the destinations, and create drafts.
+5. Open each returned draft and complete the final human review on the platform.
 
-EZWRITING 不要求填写平台账号或密码；发布执行器使用浏览器中已经存在的登录状态。
+EZWRITING never asks for platform usernames or passwords. The publishing executor uses the sessions already present in the browser.
 
-## 支持的内容格式
+## Supported input formats
 
-| 输入 | 说明 |
+| Input | Details |
 | --- | --- |
-| Markdown | `.md`、`.markdown`；支持 YAML front matter、标准图片语法和 Obsidian 图片引用 |
-| HTML | `.html`、`.htm`；导入后转换为更适合继续编辑的 Markdown，并对派生 HTML 做安全过滤 |
-| ZIP | 一份 Markdown 或 HTML 正文，加相对路径引用的素材文件 |
-| 文件夹 | 直接选择包含正文和图片的目录，不必先手动压缩 |
+| Markdown | `.md` and `.markdown`, including YAML front matter, standard image syntax, and Obsidian image references |
+| HTML | `.html` and `.htm`; converted into editable Markdown while derived HTML is sanitized before rendering |
+| ZIP | One Markdown or HTML article plus assets referenced by relative path |
+| Folder | A directory containing the article and its images, without manually creating a ZIP archive |
 
-推荐的 ZIP 或文件夹结构：
+Recommended ZIP or folder structure:
 
 ```text
 article/
@@ -127,41 +127,41 @@ article/
     └── image-01.jpg
 ```
 
-Markdown 可以使用：
+Supported Markdown image references include:
 
 ```markdown
-![图片说明](assets/image-01.jpg)
+![Image description](assets/image-01.jpg)
 ![[assets/image-01.jpg]]
 ```
 
-ZIP 安全限制：压缩包最大 20 MB、最多 120 个文件、单文件解压后最大 8 MB、总解压大小最大 30 MB，并拒绝绝对路径、`../` 等路径穿越内容。
+ZIP safety limits: 20 MB archive size, 120 files, 8 MB per decompressed file, and 30 MB total decompressed size. Absolute paths, `../`, and other path-traversal entries are rejected.
 
-## 本地数据与隐私
+## Local data and privacy
 
-- 稿件、图片、历史记录和排版设置默认只保存在当前浏览器。
-- 当前版本没有账号系统，也不会把稿件同步到 EZWRITING 服务器。
-- 可以导出 `.ezwriting-backup.json` 整库备份，在其他浏览器或新域名中恢复。
-- 清理网站数据、切换浏览器或更换域名前，请先导出备份。
-- 远程图片仍可能被浏览器和目标平台访问；只有主动发起同步后，所选内容才会交给发布扩展和目标平台。
+- Drafts, images, history, and formatting settings are stored only in the current browser by default.
+- The current version has no account system and does not sync drafts to an EZWRITING server.
+- A complete `.ezwriting-backup.json` archive can be exported and restored in another browser or under a new domain.
+- Export a backup before clearing site data, switching browsers, or moving to another domain.
+- Remote images may still be requested by the browser and target platforms. Content is handed to the extension and target platforms only after the user starts a delivery task.
 
-![本地优先的数据与备份闭环](./docs/readme-assets/local-first-workspace.png)
+![Local-first data and backup loop](./docs/readme-assets/local-first-workspace.png)
 
-## 技术结构
+## Technical structure
 
-项目使用 React、TypeScript 和 Vite。核心代码按职责分层，UI 不直接依赖 Wechatsync 的私有适配器结构。
+EZWRITING uses React, TypeScript, and Vite. Responsibilities are separated so the UI does not depend directly on Wechatsync's private adapter structures.
 
-| 层级 | 主要职责 | 位置 |
+| Layer | Responsibility | Location |
 | --- | --- | --- |
-| 文章模型 | 统一稿件结构、排版与保存状态 | `src/domain/` |
-| 文件处理 | Markdown / HTML / ZIP 解析、兼容与缺图处理 | `src/lib/file-parser.ts`、`src/lib/markdown-compatibility.ts` |
-| 编辑与预览 | Markdown 编辑器、三平台预览和卡片导出 | `src/components/` |
-| 本地存储 | IndexedDB 稿件仓库、自动保存和整库备份 | `src/services/` |
-| 发布桥接 | 可替换的 Wechatsync 网页桥接 | `src/lib/wechatsync-bridge.ts` |
-| 静态托管 | Cloudflare Worker 健康检查与静态资源 | `cloudflare/worker/` |
+| Article model | Normalized drafts, formatting, and saved state | `src/domain/` |
+| File handling | Markdown / HTML / ZIP parsing, compatibility, and missing assets | `src/lib/file-parser.ts`, `src/lib/markdown-compatibility.ts` |
+| Editing and previews | Markdown editing, platform previews, and card export | `src/components/` |
+| Local persistence | IndexedDB repository, autosave, and full-library backups | `src/services/` |
+| Publishing bridge | Replaceable Wechatsync web bridge | `src/lib/wechatsync-bridge.ts` |
+| Static hosting | Cloudflare Worker health check and static assets | `cloudflare/worker/` |
 
-## 本地开发
+## Local development
 
-环境要求：Node.js 24.15 或更高版本。
+Requirements: Node.js 24.15 or later.
 
 ```bash
 git clone https://github.com/KeepATARAXIA/ezWriting.git
@@ -170,9 +170,9 @@ npm install
 npm run dev
 ```
 
-需要调试 Wechatsync 桥接时，请通过终端输出的 `http://127.0.0.1` 地址打开开发页面，并在同一浏览器中启用扩展。
+To test the Wechatsync bridge, open the `http://127.0.0.1` URL printed by the development server and enable the extension in the same browser.
 
-验证命令：
+Validation commands:
 
 ```bash
 npm test
@@ -180,19 +180,19 @@ npm run typecheck
 npm run build
 ```
 
-## 当前限制
+## Current limitations
 
-- 当前重点适配桌面端 Chromium 浏览器；Firefox、Safari 和移动浏览器无法完成相同的扩展发布流程。
-- X Article 草稿能力取决于账号权限和平台规则，仍需更多真实账号验证。
-- 小红书图文和抖音图文主要通过卡片图片导出完成；平台草稿能力以 Wechatsync 实际返回为准。
-- 默认保存为草稿，不提供无人值守发布。
-- 暂不包含账号、云同步、定时发布、数据看板、DOCX / PDF 导入或 AI 改写。
-- 项目仍处于 MVP 阶段，平台页面变化可能影响扩展桥接结果。
+- The primary target is a desktop Chromium browser. Firefox, Safari, and mobile browsers cannot provide the same extension-based publishing flow.
+- X Article draft creation depends on account eligibility and platform behavior and still needs broader real-account verification.
+- Xiaohongshu and Douyin image-post workflows primarily use exported cards; platform draft behavior depends on the current Wechatsync response.
+- Delivery creates drafts by default. Unattended publishing is intentionally out of scope.
+- Accounts, cloud sync, scheduling, analytics, DOCX / PDF import, and AI rewriting are not included in the current version.
+- This is still an MVP, and target-platform page changes may affect extension-based delivery.
 
-## 致谢
+## Acknowledgements
 
-EZWRITING 的多平台发布执行能力建立在开源项目 [文章同步助手 Wechatsync](https://github.com/wechatsync/Wechatsync) 之上。该项目由 [fun](https://github.com/lljxx1) 创建并采用 GPL-3.0 许可证。EZWRITING 负责文件导入、编辑、预览、本地历史和发布反馈；平台适配与最终同步由 Wechatsync 执行。
+EZWRITING uses the open-source [Wechatsync](https://github.com/wechatsync/Wechatsync) project as its multi-platform publishing executor. Wechatsync was created by [fun](https://github.com/lljxx1) and is licensed under GPL-3.0. EZWRITING handles file import, editing, previews, local history, and delivery feedback; Wechatsync handles platform adapters and the final synchronization step.
 
-## 许可证
+## License
 
-本仓库目前尚未添加开源许可证。在正式许可证公布前，请勿默认仓库代码可以自由复制、修改或分发。
+This repository does not currently include an open-source license. Until a license is published, do not assume that the source may be freely copied, modified, or redistributed.
