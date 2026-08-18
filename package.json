@@ -2,6 +2,16 @@
   "name": "ezwriting",
   "private": true,
   "version": "0.1.0",
+  "description": "Local-first multi-platform content publishing workbench.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/KeepATARAXIA/ezWriting.git"
+  },
+  "bugs": {
+    "url": "https://github.com/KeepATARAXIA/ezWriting/issues"
+  },
+  "homepage": "https://ezwriting-dev.a2976916992.workers.dev/",
   "type": "module",
   "engines": {
     "node": ">=24.15.0"

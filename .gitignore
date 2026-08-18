@@ -23,7 +23,9 @@ findings.md
 progress.md
 design-qa.md
 artifacts/
-examples/
+examples/*
+!examples/sample-article.md
+!examples/content-package-image-test-lite.zip
 
 # Unused local source assets
 /SVG/TikTok (1).svg

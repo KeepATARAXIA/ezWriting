@@ -10,7 +10,11 @@
 
 把一份 Markdown、HTML 或 ZIP 稿件带进浏览器，在同一个页面完成编辑、图片整理、平台预览和草稿同步。
 
-[在线体验](https://ezwriting-dev.a2976916992.workers.dev/) · [功能说明](#核心能力) · [本地开发](#本地开发) · [English](./README.md)
+[在线体验](https://ezwriting-dev.a2976916992.workers.dev/) · [快速开始](#快速开始) · [平台支持](./docs/PLATFORM_SUPPORT.md) · [路线图](./ROADMAP.md) · [English](./README.md)
+
+[![CI](https://github.com/KeepATARAXIA/ezWriting/actions/workflows/ci.yml/badge.svg)](https://github.com/KeepATARAXIA/ezWriting/actions/workflows/ci.yml)
+[![Version](https://img.shields.io/badge/version-0.1.0-2457FF)](./CHANGELOG.md)
+[![License: MIT](https://img.shields.io/badge/license-MIT-111827)](./LICENSE)
 
 </div>
 
@@ -18,6 +22,8 @@
 
 > [!IMPORTANT]
 > EZWRITING 当前处于公开 MVP 阶段，推荐使用桌面端 Chrome、Edge 或其他 Chromium 浏览器。导入、编辑、预览、备份和图片导出不需要登录；多平台草稿同步需要安装 [文章同步助手 Wechatsync](https://github.com/wechatsync/Wechatsync) 并提前登录目标平台。
+
+当前版本：**v0.1.0**。测试草稿同步前，请先查看带核对日期的[平台支持矩阵](./docs/PLATFORM_SUPPORT.md)和[已知问题](./docs/KNOWN_ISSUES.md)。平台行为可能独立于 EZWRITING 发生变化。
 
 ## 为什么做 EZWRITING
 
@@ -97,6 +103,8 @@ flowchart LR
 4. 复制公众号格式、导出小红书图片，或复制整理后的长文。
 
 这部分不需要账号，也不要求安装发布扩展。
+
+如果想立即测试导入，可以下载[纯 Markdown 示例](./examples/sample-article.md)或[轻量图片内容包](./examples/content-package-image-test-lite.zip)，然后拖进工作台。
 
 ### 启用多平台草稿同步
 
@@ -189,10 +197,16 @@ npm run build
 - 暂不包含账号、云同步、定时发布、数据看板、DOCX / PDF 导入或 AI 改写。
 - 项目仍处于 MVP 阶段，平台页面变化可能影响扩展桥接结果。
 
+当前验证状态请查看带核对日期的[平台支持矩阵](./docs/PLATFORM_SUPPORT.md)和[已知问题](./docs/KNOWN_ISSUES.md)。计划工作记录在公开[路线图](./ROADMAP.md)中，重要变更记录在[更新日志](./CHANGELOG.md)中。
+
+## 参与贡献
+
+欢迎提交范围明确的问题和小型 Pull Request。提交前请阅读[贡献指南](./CONTRIBUTING.md)，并从日志或截图中删除 Cookie、Token、账号名、私密草稿链接和未公开正文。
+
 ## 致谢
 
 EZWRITING 的多平台发布执行能力建立在开源项目 [文章同步助手 Wechatsync](https://github.com/wechatsync/Wechatsync) 之上。该项目由 [fun](https://github.com/lljxx1) 创建并采用 GPL-3.0 许可证。EZWRITING 负责文件导入、编辑、预览、本地历史和发布反馈；平台适配与最终同步由 Wechatsync 执行。
 
 ## 许可证
 
-本仓库目前尚未添加开源许可证。在正式许可证公布前，请勿默认仓库代码可以自由复制、修改或分发。
+EZWRITING 使用 [MIT License](./LICENSE) 发布。第三方代码及其原始许可证记录在 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md) 中。

@@ -1,0 +1,56 @@
+name: Feature request / 功能建议
+description: Propose a focused improvement to the current workflow / 为当前工作流提出范围明确的改进
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        EZWRITING focuses on local-first authoring, platform-specific previews, and human-reviewed draft delivery. Please explain the workflow problem before proposing a feature.
+
+        EZWRITING 聚焦本地优先编辑、平台化预览和人工复核后的草稿同步。请先说明真实工作流问题，再描述功能方案。
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting / 提交前确认
+      options:
+        - label: I checked the roadmap and existing issues. / 我已查看路线图和现有 Issue。
+          required: true
+        - label: This request fits the current product boundary. / 这个建议符合当前产品边界。
+          required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Workflow problem / 工作流问题
+      description: What repeated work, uncertainty, or failure are you trying to remove? / 你想减少什么重复劳动、不确定性或失败？
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome / 期望结果
+      description: Describe the result rather than only a UI control. / 请描述最终结果，不要只描述一个界面控件。
+    validations:
+      required: true
+  - type: dropdown
+    id: frequency
+    attributes:
+      label: Frequency / 使用频率
+      options:
+        - Every article / 每篇文章
+        - Weekly / 每周
+        - Occasionally / 偶尔
+        - One-time migration / 一次性迁移
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Current workaround / 当前替代方案
+      description: How do you handle this today? / 你目前如何处理？
+  - type: textarea
+    id: scope
+    attributes:
+      label: Platform and constraints / 平台与约束
+      description: Include target platforms, browser limits, privacy needs, and sample output if relevant. / 如有关联，请说明目标平台、浏览器限制、隐私要求和示例结果。

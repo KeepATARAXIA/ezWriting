@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Known issues / 已知问题
+    url: https://github.com/KeepATARAXIA/ezWriting/blob/main/docs/KNOWN_ISSUES.md
+    about: Check current platform and publishing limitations before opening an issue. / 提交前查看当前平台与发布限制。
+  - name: Platform support / 平台支持矩阵
+    url: https://github.com/KeepATARAXIA/ezWriting/blob/main/docs/PLATFORM_SUPPORT.md
+    about: Review dedicated previews, local outputs, and draft-delivery status. / 查看专属预览、本地输出与草稿同步状态。

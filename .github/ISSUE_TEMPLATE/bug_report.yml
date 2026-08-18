@@ -1,0 +1,86 @@
+name: Bug report / 问题反馈
+description: Report a reproducible EZWRITING problem / 报告可以复现的 EZWRITING 问题
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a problem. Remove cookies, tokens, account names, private draft links, and unpublished content from logs or screenshots.
+
+        感谢反馈。日志和截图中请删除 Cookie、Token、账号名、私密草稿链接和未公开正文。
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting / 提交前确认
+      options:
+        - label: I checked the known issues and platform support matrix. / 我已查看已知问题和平台支持矩阵。
+          required: true
+        - label: I can reproduce this in the current live demo or latest main branch. / 我可以在当前在线版或最新 main 分支复现。
+          required: true
+        - label: I removed private credentials and article content. / 我已删除私密凭据和正文。
+          required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area / 模块
+      options:
+        - Import or parsing / 导入或解析
+        - Editor / 编辑器
+        - Local save, history, or backup / 本地保存、历史或备份
+        - WeChat preview or copy / 公众号预览或复制
+        - Xiaohongshu preview or export / 小红书预览或导出
+        - X Article preview or copy / X Article 预览或复制
+        - Publishing bridge / 发布桥接
+        - Other / 其他
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and version / 浏览器与版本
+      placeholder: Chrome 140.0.x on Windows 11
+    validations:
+      required: true
+  - type: input
+    id: wechatsync
+    attributes:
+      label: Wechatsync version / Wechatsync 版本
+      description: Required only for publishing problems. / 仅发布问题必填。
+      placeholder: 2.0.9 or not installed / 2.0.9 或未安装
+  - type: input
+    id: platform
+    attributes:
+      label: Target platform / 目标平台
+      description: Required only for preview or publishing problems. / 仅预览或发布问题必填。
+      placeholder: WeChat Official Account / 微信公众号
+  - type: input
+    id: input
+    attributes:
+      label: Input format / 输入格式
+      placeholder: Markdown, HTML, ZIP, folder, or empty document / Markdown、HTML、ZIP、文件夹或空白文档
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps / 复现步骤
+      placeholder: Describe the smallest repeatable sequence. / 请描述最小可重复步骤。
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result / 预期结果
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result and sanitized errors / 实际结果与脱敏错误
+    validations:
+      required: true
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context / 补充信息
+      description: Add sanitized screenshots, console errors, or a minimal sample file. / 可附脱敏截图、控制台错误或最小示例文件。

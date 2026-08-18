@@ -10,7 +10,11 @@
 
 Bring a Markdown, HTML, or ZIP article into the browser, then edit, organize images, preview platform-specific layouts, and create drafts from one workspace.
 
-[Live demo](https://ezwriting-dev.a2976916992.workers.dev/) · [Features](#core-capabilities) · [Local development](#local-development) · [简体中文](./README_ZH.md)
+[Live demo](https://ezwriting-dev.a2976916992.workers.dev/) · [Quick start](#quick-start) · [Platform support](./docs/PLATFORM_SUPPORT.md) · [Roadmap](./ROADMAP.md) · [简体中文](./README_ZH.md)
+
+[![CI](https://github.com/KeepATARAXIA/ezWriting/actions/workflows/ci.yml/badge.svg)](https://github.com/KeepATARAXIA/ezWriting/actions/workflows/ci.yml)
+[![Version](https://img.shields.io/badge/version-0.1.0-2457FF)](./CHANGELOG.md)
+[![License: MIT](https://img.shields.io/badge/license-MIT-111827)](./LICENSE)
 
 </div>
 
@@ -18,6 +22,8 @@ Bring a Markdown, HTML, or ZIP article into the browser, then edit, organize ima
 
 > [!IMPORTANT]
 > EZWRITING is currently a public MVP. A desktop version of Chrome, Edge, or another Chromium browser is recommended. Importing, editing, previewing, backing up data, and exporting images work without an account. Multi-platform draft delivery requires the [Wechatsync](https://github.com/wechatsync/Wechatsync) browser extension and active sessions on the target platforms.
+
+Current version: **v0.1.0**. Before testing draft delivery, review the dated [platform support matrix](./docs/PLATFORM_SUPPORT.md) and [known issues](./docs/KNOWN_ISSUES.md). Platform behavior can change independently of EZWRITING.
 
 ## Why EZWRITING exists
 
@@ -97,6 +103,8 @@ Open the [EZWRITING public demo](https://ezwriting-dev.a2976916992.workers.dev/)
 4. Copy WeChat-formatted content, export Xiaohongshu cards, or copy the prepared long-form article.
 
 No account or publishing extension is required for this workflow.
+
+To test import immediately, download the [plain Markdown sample](./examples/sample-article.md) or the [lightweight image content package](./examples/content-package-image-test-lite.zip), then drag it into the workspace.
 
 ### Enable multi-platform draft delivery
 
@@ -189,10 +197,16 @@ npm run build
 - Accounts, cloud sync, scheduling, analytics, DOCX / PDF import, and AI rewriting are not included in the current version.
 - This is still an MVP, and target-platform page changes may affect extension-based delivery.
 
+See the dated [platform support matrix](./docs/PLATFORM_SUPPORT.md) and [known issues](./docs/KNOWN_ISSUES.md) for current verification status. Planned work is tracked in the public [roadmap](./ROADMAP.md), and notable changes are recorded in the [changelog](./CHANGELOG.md).
+
+## Contributing
+
+Focused bug reports and small pull requests are welcome. Read the [contributing guide](./CONTRIBUTING.md) before opening an issue, and remove cookies, tokens, account names, private draft links, and unpublished content from logs or screenshots.
+
 ## Acknowledgements
 
 EZWRITING uses the open-source [Wechatsync](https://github.com/wechatsync/Wechatsync) project as its multi-platform publishing executor. Wechatsync was created by [fun](https://github.com/lljxx1) and is licensed under GPL-3.0. EZWRITING handles file import, editing, previews, local history, and delivery feedback; Wechatsync handles platform adapters and the final synchronization step.
 
 ## License
 
-This repository does not currently include an open-source license. Until a license is published, do not assume that the source may be freely copied, modified, or redistributed.
+EZWRITING is released under the [MIT License](./LICENSE). Third-party notices and their original licenses are listed in [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
