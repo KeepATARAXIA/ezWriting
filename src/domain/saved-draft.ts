@@ -6,12 +6,19 @@ export const SAVED_DRAFT_SCHEMA_VERSION = 2
 export type DraftKind = 'image' | 'longform'
 
 export type XhsCardTemplate = 'clean' | 'editorial' | 'focus'
+export type XhsImageLayout = 'full' | 'image-left' | 'image-right'
+
+export interface XhsImageOverride {
+  layout: XhsImageLayout
+  widthPercent: number
+}
 
 export interface XhsCardSettings {
   template: XhsCardTemplate
   showPageNumber: boolean
   showFooter: boolean
   footerText: string
+  imageOverrides: Record<string, XhsImageOverride>
 }
 
 export const DEFAULT_XHS_CARD_SETTINGS: XhsCardSettings = {
@@ -19,6 +26,41 @@ export const DEFAULT_XHS_CARD_SETTINGS: XhsCardSettings = {
   showPageNumber: true,
   showFooter: true,
   footerText: 'DISPATCH',
+  imageOverrides: {},
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
+export function normalizeXhsImageOverride(value: unknown): XhsImageOverride | null {
+  if (!isRecord(value)) return null
+  const layout = value.layout
+  if (layout !== 'full' && layout !== 'image-left' && layout !== 'image-right') return null
+  const rawWidth = Number(value.widthPercent)
+  if (!Number.isFinite(rawWidth)) return null
+  const minimum = layout === 'full' ? 35 : 30
+  const maximum = layout === 'full' ? 100 : 70
+  return { layout, widthPercent: Math.round(Math.min(maximum, Math.max(minimum, rawWidth))) }
+}
+
+export function normalizeXhsCardSettings(value?: unknown): XhsCardSettings {
+  const candidate = isRecord(value) ? value : {}
+  const rawOverrides = isRecord(candidate.imageOverrides) ? candidate.imageOverrides : {}
+  const imageOverrides: Record<string, XhsImageOverride> = {}
+  Object.entries(rawOverrides).slice(0, 500).forEach(([key, override]) => {
+    if (!key || key.length > 120) return
+    const normalized = normalizeXhsImageOverride(override)
+    if (normalized) imageOverrides[key] = normalized
+  })
+
+  return {
+    template: candidate.template === 'clean' || candidate.template === 'editorial' ? candidate.template : 'focus',
+    showPageNumber: typeof candidate.showPageNumber === 'boolean' ? candidate.showPageNumber : DEFAULT_XHS_CARD_SETTINGS.showPageNumber,
+    showFooter: typeof candidate.showFooter === 'boolean' ? candidate.showFooter : DEFAULT_XHS_CARD_SETTINGS.showFooter,
+    footerText: typeof candidate.footerText === 'string' ? candidate.footerText.slice(0, 80) : DEFAULT_XHS_CARD_SETTINGS.footerText,
+    imageOverrides,
+  }
 }
 
 export interface PersistedDraft {
@@ -79,9 +121,7 @@ export function createPersistedDraft(
       },
     },
     kind: overrides.kind ?? 'longform',
-    xhsSettings: overrides.xhsSettings
-      ? { ...overrides.xhsSettings }
-      : { ...DEFAULT_XHS_CARD_SETTINGS },
+    xhsSettings: normalizeXhsCardSettings(overrides.xhsSettings),
     createdAt: overrides.createdAt ?? now,
     updatedAt: overrides.updatedAt ?? now,
     deletedAt: overrides.deletedAt ?? null,

@@ -3,6 +3,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_ARTICLE_FORMATTING } from '../domain/formatting'
 import * as xhsExport from '../lib/xhs-export'
+import * as xhsPagination from '../lib/xhs-pagination'
+import * as wechatTheme from '../lib/wechat-theme'
 import { PlatformPreviews } from './platform-previews'
 
 describe('PlatformPreviews editor-to-preview locating', () => {
@@ -75,6 +77,49 @@ describe('PlatformPreviews editor-to-preview locating', () => {
     expect(target?.getAttribute('data-preview-selected')).toBe('true')
     expect(target?.classList.contains('preview-located-target')).toBe(true)
     expect(scrollIntoView).toHaveBeenCalledWith({ block: 'center', inline: 'nearest', behavior: 'smooth' })
+  })
+
+  it('only runs the expensive formatter for the active platform', async () => {
+    const paginate = vi.spyOn(xhsPagination, 'paginateForXhsCards')
+    const applyWechat = vi.spyOn(wechatTheme, 'applyWechatTheme')
+    const renderPreview = (activePlatform: 'wechat' | 'xhs' | 'x') => root.render(
+      <PlatformPreviews
+        activePlatform={activePlatform}
+        title="Active formatter"
+        html="<p>Body</p>"
+        formatting={DEFAULT_ARTICLE_FORMATTING}
+        previewDevice="desktop"
+        onPreviewDeviceChange={vi.fn()}
+      />,
+    )
+
+    await act(async () => renderPreview('x'))
+    expect(paginate).not.toHaveBeenCalled()
+    expect(applyWechat).not.toHaveBeenCalled()
+
+    await act(async () => renderPreview('xhs'))
+    expect(paginate).toHaveBeenCalledTimes(1)
+    expect(applyWechat).not.toHaveBeenCalled()
+
+    await act(async () => renderPreview('wechat'))
+    expect(applyWechat).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows when the deferred preview is catching up with the editor', async () => {
+    await act(async () => root.render(
+      <PlatformPreviews
+        activePlatform="x"
+        title="Updating preview"
+        html="<p>Body</p>"
+        formatting={DEFAULT_ARTICLE_FORMATTING}
+        previewDevice="desktop"
+        isUpdating
+        onPreviewDeviceChange={vi.fn()}
+      />,
+    ))
+
+    expect(container.querySelector('.preview-sync-status')?.textContent).toContain('正在同步最新编辑')
+    expect(container.querySelector('.preview-sync-status')?.classList.contains('updating')).toBe(true)
   })
 
   it('defaults WeChat themes to the compact category, keeps All last, and shares article formatting controls', async () => {
@@ -254,8 +299,9 @@ describe('PlatformPreviews editor-to-preview locating', () => {
     const xhsResizer = container.querySelector<HTMLElement>('[aria-label="调整小红书工具侧栏宽度"]')
     expect(xhsResizer?.getAttribute('role')).toBe('separator')
     expect(xhsResizer?.nextElementSibling?.id).toBe('xhs-tool-panel')
-    expect(container.querySelector('[aria-label="小红书排版调整"]')).not.toBeNull()
-    const largeFontButton = Array.from(container.querySelectorAll<HTMLButtonElement>('[aria-label="小红书排版调整"] [aria-label="选择文章字号"] button'))
+    expect(container.querySelector('[aria-label="小红书样式与排版"]')).not.toBeNull()
+    expect(Array.from(container.querySelectorAll('button')).some(button => button.textContent === '卡片样式')).toBe(false)
+    const largeFontButton = Array.from(container.querySelectorAll<HTMLButtonElement>('[aria-label="小红书样式与排版"] [aria-label="选择文章字号"] button'))
       .find(button => button.textContent === '大')!
     await act(async () => largeFontButton.click())
     expect(onFormattingChange).toHaveBeenCalledWith(expect.objectContaining({ fontSize: 'large' }))
@@ -270,8 +316,70 @@ describe('PlatformPreviews editor-to-preview locating', () => {
     expect(container.querySelector<HTMLElement>('#xhs-tool-panel')?.hidden).toBe(false)
   })
 
+  it('selects a Xiaohongshu image and edits its layout and width without editing the source body', async () => {
+    const onEditTarget = vi.fn()
+    const capture = vi.spyOn(xhsExport, 'captureXhsCard').mockImplementation(async element => {
+      expect(element.querySelector('.xhs-media-layout.image-left')).not.toBeNull()
+      expect(element.querySelector('.xhs-image-resize-handle')).toBeNull()
+      return new Blob(['layout-preview'], { type: 'image/png' })
+    })
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:xhs-layout-preview')
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
+    await act(async () => root.render(
+      <PlatformPreviews
+        activePlatform="xhs"
+        title="图片排版"
+        html={'<p><img src="data:image/png;base64,AAAA" alt="流程图"></p><p>这段文字需要和图片并排。</p>'}
+        formatting={DEFAULT_ARTICLE_FORMATTING}
+        previewDevice="desktop"
+        onPreviewDeviceChange={vi.fn()}
+        onEditTarget={onEditTarget}
+      />,
+    ))
+
+    const image = container.querySelector<HTMLImageElement>('.xhs-card-content img[data-xhs-image-key]')!
+    await act(async () => image.click())
+
+    expect(onEditTarget).not.toHaveBeenCalled()
+    expect(container.querySelectorAll('.xhs-image-resize-handle')).toHaveLength(4)
+    expect(container.querySelector('.xhs-image-tools')?.textContent).toContain('流程图')
+
+    const leftLayout = Array.from(container.querySelectorAll<HTMLButtonElement>('[aria-label="选择图片布局"] button'))
+      .find(button => button.textContent === '左图右文')!
+    await act(async () => leftLayout.click())
+
+    expect(container.querySelector('.xhs-media-layout.image-left')).not.toBeNull()
+    const width = container.querySelector<HTMLInputElement>('input[aria-label="调整选中图片宽度"]')!
+    expect(width.value).toBe('45')
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(width, '55')
+      width.dispatchEvent(new Event('input', { bubbles: true }))
+      width.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    expect(container.querySelector<HTMLOutputElement>('.xhs-image-width-control output')?.textContent).toBe('55%')
+
+    const previewButton = Array.from(container.querySelectorAll<HTMLButtonElement>('.xhs-current-page-actions button'))
+      .find(button => button.textContent?.includes('放大查看'))!
+    await act(async () => {
+      previewButton.click()
+      await vi.waitFor(() => expect(capture).toHaveBeenCalled(), { timeout: 500 })
+    })
+    expect(container.querySelector('.xhs-export-sheet')).toBeNull()
+    await act(async () => container.querySelector<HTMLButtonElement>('.xhs-image-preview-close')?.click())
+
+    await act(async () => container.querySelector<HTMLButtonElement>('.xhs-image-reset')?.click())
+    expect(container.querySelector('.xhs-media-layout')).toBeNull()
+    expect(container.querySelector<HTMLInputElement>('input[aria-label="调整选中图片宽度"]')?.value).toBe('100')
+
+    await act(async () => container.querySelector<HTMLElement>('.xhs-card-content [data-source-block="1"]')?.click())
+    expect(onEditTarget).toHaveBeenCalledWith({ kind: 'body', blockIndex: 1 })
+  })
+
   it('opens each Xiaohongshu card as an image with zoom controls', async () => {
-    vi.spyOn(xhsExport, 'captureXhsCard').mockResolvedValue(new Blob(['preview'], { type: 'image/png' }))
+    vi.spyOn(xhsExport, 'captureXhsCard').mockImplementation(async () => {
+      expect(document.body.querySelector('.xhs-export-sheet')).not.toBeNull()
+      return new Blob(['preview'], { type: 'image/png' })
+    })
     const createObjectUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:xhs-preview')
     const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
 
@@ -286,17 +394,20 @@ describe('PlatformPreviews editor-to-preview locating', () => {
       />,
     ))
 
+    expect(container.querySelector('.xhs-export-sheet')).toBeNull()
+
     const previewButton = Array.from(container.querySelectorAll<HTMLButtonElement>('.xhs-current-page-actions button'))
       .find(button => button.textContent?.includes('放大查看'))!
     await act(async () => {
       previewButton.click()
-      await Promise.resolve()
+      await vi.waitFor(() => expect(xhsExport.captureXhsCard).toHaveBeenCalled(), { timeout: 500 })
     })
 
     expect(xhsExport.captureXhsCard).toHaveBeenCalledWith(expect.any(HTMLElement))
     expect(createObjectUrl).toHaveBeenCalledWith(expect.any(Blob))
     expect(container.querySelector('[role="dialog"][aria-label="小红书第 1 张图片放大预览"]')).not.toBeNull()
     expect(container.querySelector('.xhs-image-zoom-value')?.textContent).toBe('100%')
+    expect(container.querySelector('.xhs-export-sheet')).toBeNull()
 
     await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="放大图片"]')?.click())
     expect(container.querySelector('.xhs-image-zoom-value')?.textContent).toBe('125%')

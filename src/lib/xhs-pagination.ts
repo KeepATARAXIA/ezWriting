@@ -2,7 +2,10 @@ export interface XhsPaginationOptions {
   title?: string
   hasCover?: boolean
   textScale?: number
+  showFooter?: boolean
 }
+
+export type XhsPageFits = (pageHtml: string, pageIndex: number) => boolean
 
 type ListTag = 'OL' | 'UL'
 
@@ -25,8 +28,9 @@ interface CardChunk {
 const CARD_WIDTH = 540
 const CARD_HORIZONTAL_PADDING = CARD_WIDTH * 0.0778 * 2
 const CARD_CONTENT_WIDTH = CARD_WIDTH - CARD_HORIZONTAL_PADDING
-const CARD_CONTENT_HEIGHT = 610
-const TEXT_CARD_CONTENT_HEIGHT = 628
+const CARD_CONTENT_HEIGHT = 580
+const TEXT_CARD_CONTENT_HEIGHT = 600
+const FOOTER_RECLAIM_HEIGHT = 22
 const IMAGE_MAX_HEIGHT = CARD_CONTENT_WIDTH * 0.4259
 const IMAGE_VERTICAL_MARGIN = 38
 const LIST_GROUP_VERTICAL_MARGIN = 33
@@ -41,6 +45,9 @@ const SOURCE_SPACER_HEIGHT = 26
 const HEADING_LINE_HEIGHT = 21
 const MIN_FIRST_PAGE_BODY_HEIGHT = 170
 const MAX_TEXT_FRAGMENT_HEIGHT = 165
+const MAX_TABLE_FRAGMENT_HEIGHT = 250
+const MAX_CONTAINER_FRAGMENT_HEIGHT = 145
+const PRE_LINES_PER_FRAGMENT = 10
 
 function parseHtml(html: string): Document {
   return new DOMParser().parseFromString(html, 'text/html')
@@ -142,10 +149,10 @@ function imageDimensions(image: Element): ImageDimensions | null {
   return readDataImageDimensions(image.getAttribute('src') || '')
 }
 
-function renderedImageHeight(image: Element): number {
+function renderedImageHeight(image: Element, availableWidth = CARD_CONTENT_WIDTH): number {
   const dimensions = imageDimensions(image)
   if (!dimensions) return IMAGE_MAX_HEIGHT
-  const scale = Math.min(1, CARD_CONTENT_WIDTH / dimensions.width)
+  const scale = Math.min(1, availableWidth / dimensions.width)
   return Math.min(IMAGE_MAX_HEIGHT, dimensions.height * scale)
 }
 
@@ -154,7 +161,38 @@ function imagesHeight(element: Element): number {
     ...(element.matches('img') ? [element] : []),
     ...Array.from(element.querySelectorAll('img')),
   ]
-  return images.reduce((total, image) => total + renderedImageHeight(image) + IMAGE_VERTICAL_MARGIN, 0)
+  return images.reduce((total, image) => {
+    const widthPercent = Number((image as HTMLElement).dataset.xhsImageWidth)
+    const availableWidth = Number.isFinite(widthPercent)
+      ? CARD_CONTENT_WIDTH * Math.min(100, Math.max(30, widthPercent)) / 100
+      : CARD_CONTENT_WIDTH
+    return total + renderedImageHeight(image, availableWidth) + IMAGE_VERTICAL_MARGIN
+  }, 0)
+}
+
+function estimateTableRowHeight(row: Element, textScale: number): number {
+  const cells = Array.from(row.querySelectorAll(':scope > th, :scope > td'))
+  if (!cells.length) return 34 * textScale
+  const unitsPerCell = Math.max(7, Math.floor((PARAGRAPH_UNITS_PER_LINE * 0.92) / cells.length))
+  const lines = Math.max(...cells.map(cell => textLineCount(cell.textContent?.trim() || '', unitsPerCell)))
+  return (lines * 18 + 17) * textScale
+}
+
+function estimateTableHeight(table: Element, textScale: number): number {
+  const rows = Array.from(table.querySelectorAll('tr'))
+  return 20 + rows.reduce((total, row) => total + estimateTableRowHeight(row, textScale), 0)
+}
+
+function estimateMediaLayoutHeight(element: Element, textScale: number): number {
+  const image = element.querySelector('img')
+  const text = element.querySelector('.xhs-media-text')?.textContent?.trim() || ''
+  const columnPercent = Math.min(70, Math.max(30, Number((element as HTMLElement).style.getPropertyValue('--xhs-image-column').replace('%', '')) || 45))
+  const imageWidth = CARD_CONTENT_WIDTH * columnPercent / 100
+  const textWidth = Math.max(120, CARD_CONTENT_WIDTH - imageWidth - 18)
+  const textUnits = Math.max(10, Math.floor(PARAGRAPH_UNITS_PER_LINE * textWidth / CARD_CONTENT_WIDTH))
+  const imageHeight = image ? renderedImageHeight(image, imageWidth) : 0
+  const textHeight = textLineCount(text, textUnits) * BODY_LINE_HEIGHT * textScale + 24
+  return Math.max(imageHeight, textHeight) + 22
 }
 
 function estimateElementHeight(element: Element, listItem = false, textScale = 1): number {
@@ -162,8 +200,9 @@ function estimateElementHeight(element: Element, listItem = false, textScale = 1
   const text = element.textContent?.trim() || ''
   const embeddedImagesHeight = imagesHeight(element)
 
+  if (element.hasAttribute('data-xhs-media-layout')) return estimateMediaLayoutHeight(element, textScale)
   if (element.tagName === 'IMG') return embeddedImagesHeight
-  if (element.tagName === 'TABLE') return Math.max(80, element.querySelectorAll('tr').length * 34 + 20) * textScale + embeddedImagesHeight
+  if (element.tagName === 'TABLE') return estimateTableHeight(element, textScale) + embeddedImagesHeight
   if (element.tagName === 'PRE') return (textLineCount(text, 34) * 21 + 34) * textScale + embeddedImagesHeight
   if (/^H[1-6]$/.test(element.tagName)) return (textLineCount(text, HEADING_UNITS_PER_LINE) * HEADING_LINE_HEIGHT + 35) * textScale + embeddedImagesHeight
   if (element.tagName === 'BLOCKQUOTE') return (textLineCount(text, CALLOUT_UNITS_PER_LINE) * BODY_LINE_HEIGHT + 56) * textScale + embeddedImagesHeight
@@ -174,7 +213,8 @@ function estimateElementHeight(element: Element, listItem = false, textScale = 1
 }
 
 function containsProtectedContent(element: Element): boolean {
-  return element.matches('img, table, pre') || Boolean(element.querySelector('img, table, pre'))
+  return element.matches('img, table, pre, blockquote, aside[data-callout], [data-xhs-media-layout]')
+    || Boolean(element.querySelector('img, table, pre, blockquote, aside[data-callout], [data-xhs-media-layout]'))
 }
 
 function textNodes(element: Element): Text[] {
@@ -279,6 +319,109 @@ function splitLongParagraph(element: Element, textScale: number): Element[] {
   return fragments.length ? fragments : [element.cloneNode(true) as Element]
 }
 
+function splitTable(table: Element, textScale: number): Element[] {
+  const body = table.querySelector(':scope > tbody')
+  const rows = body ? Array.from(body.querySelectorAll(':scope > tr')) : []
+  if (!rows.length || estimateTableHeight(table, textScale) <= MAX_TABLE_FRAGMENT_HEIGHT) {
+    return [table.cloneNode(true) as Element]
+  }
+
+  const fragments: Element[] = []
+  let currentRows: Element[] = []
+  let currentHeight = 20 + Array.from(table.querySelectorAll(':scope > thead > tr'))
+    .reduce((total, row) => total + estimateTableRowHeight(row, textScale), 0)
+
+  const pushFragment = () => {
+    if (!currentRows.length) return
+    const fragment = table.cloneNode(false) as Element
+    Array.from(table.children).forEach(child => {
+      if (child.tagName === 'TBODY' || child.tagName === 'TFOOT') return
+      fragment.append(child.cloneNode(true))
+    })
+    const fragmentBody = body!.cloneNode(false) as Element
+    currentRows.forEach(row => fragmentBody.append(row.cloneNode(true)))
+    fragment.append(fragmentBody)
+    fragments.push(fragment)
+    currentRows = []
+    currentHeight = 20 + Array.from(table.querySelectorAll(':scope > thead > tr'))
+      .reduce((total, row) => total + estimateTableRowHeight(row, textScale), 0)
+  }
+
+  rows.forEach(row => {
+    const rowHeight = estimateTableRowHeight(row, textScale)
+    if (currentRows.length && currentHeight + rowHeight > MAX_TABLE_FRAGMENT_HEIGHT) pushFragment()
+    currentRows.push(row)
+    currentHeight += rowHeight
+  })
+  pushFragment()
+
+  const footer = table.querySelector(':scope > tfoot')
+  if (footer && fragments.length) fragments.at(-1)?.append(footer.cloneNode(true))
+  return fragments
+}
+
+function splitPreformatted(pre: Element): Element[] {
+  const lines = (pre.textContent || '').split('\n')
+  if (lines.length <= PRE_LINES_PER_FRAGMENT) return [pre.cloneNode(true) as Element]
+  const code = pre.querySelector(':scope > code')
+  const fragments: Element[] = []
+  for (let index = 0; index < lines.length; index += PRE_LINES_PER_FRAGMENT) {
+    const fragment = pre.cloneNode(false) as Element
+    const content = lines.slice(index, index + PRE_LINES_PER_FRAGMENT).join('\n')
+    if (code) {
+      const fragmentCode = code.cloneNode(false) as Element
+      fragmentCode.textContent = content
+      fragment.append(fragmentCode)
+    } else {
+      fragment.textContent = content
+    }
+    fragments.push(fragment)
+  }
+  return fragments
+}
+
+function splitTextContainer(element: Element, textScale: number, groupId: number): Element[] {
+  const children = Array.from(element.children)
+  if (!children.length || estimateElementHeight(element, false, textScale) <= MAX_CONTAINER_FRAGMENT_HEIGHT) {
+    return [element.cloneNode(true) as Element]
+  }
+
+  const childFragments = children.flatMap(child => child.tagName === 'P'
+    ? splitLongParagraph(child, textScale)
+    : [child.cloneNode(true) as Element])
+  const fragments: Element[] = []
+  let current: Element[] = []
+  let currentHeight = 44
+
+  const pushFragment = () => {
+    if (!current.length) return
+    const fragment = element.cloneNode(false) as Element
+    fragment.setAttribute('data-xhs-fragment-group', `container-${groupId}`)
+    current.forEach(child => fragment.append(child))
+    fragments.push(fragment)
+    current = []
+    currentHeight = 44
+  }
+
+  childFragments.forEach(child => {
+    const childHeight = estimateElementHeight(child, false, textScale)
+    if (current.length && currentHeight + childHeight > MAX_CONTAINER_FRAGMENT_HEIGHT) pushFragment()
+    current.push(child)
+    currentHeight += childHeight
+  })
+  pushFragment()
+  return fragments.length ? fragments : [element.cloneNode(true) as Element]
+}
+
+function splitBlock(element: Element, textScale: number, blockIndex: number): Element[] {
+  if (element.tagName === 'TABLE') return splitTable(element, textScale)
+  if (element.tagName === 'PRE') return splitPreformatted(element)
+  if (element.tagName === 'BLOCKQUOTE' || (element.tagName === 'ASIDE' && element.hasAttribute('data-callout'))) {
+    return splitTextContainer(element, textScale, blockIndex)
+  }
+  return splitLongParagraph(element, textScale)
+}
+
 function createChunks(html: string, textScale: number): { chunks: CardChunk[]; document: Document } {
   const document = parseHtml(html)
   const blocks = Array.from(document.body.children)
@@ -304,7 +447,7 @@ function createChunks(html: string, textScale: number): { chunks: CardChunk[]; d
       return
     }
 
-    splitLongParagraph(block, textScale).forEach(fragment => {
+    splitBlock(block, textScale, blockIndex).forEach(fragment => {
       chunks.push({
         element: fragment,
         estimatedHeight: estimateElementHeight(fragment, false, textScale),
@@ -338,7 +481,8 @@ function pageHeight(page: CardChunk[]): number {
 }
 
 function standardPageBudget(index: number, options: XhsPaginationOptions): number {
-  return index === 0 ? firstPageBodyHeight(options) : CARD_CONTENT_HEIGHT
+  const contentHeight = CARD_CONTENT_HEIGHT + (options.showFooter === false ? FOOTER_RECLAIM_HEIGHT : 0)
+  return index === 0 ? firstPageBodyHeight(options, contentHeight) : contentHeight
 }
 
 function isTextOnlyPage(page: CardChunk[], index: number, options: XhsPaginationOptions): boolean {
@@ -346,19 +490,28 @@ function isTextOnlyPage(page: CardChunk[], index: number, options: XhsPagination
 }
 
 function textPageBudget(index: number, options: XhsPaginationOptions): number {
-  return index === 0 ? firstPageBodyHeight(options, TEXT_CARD_CONTENT_HEIGHT) : TEXT_CARD_CONTENT_HEIGHT
+  const contentHeight = TEXT_CARD_CONTENT_HEIGHT + (options.showFooter === false ? FOOTER_RECLAIM_HEIGHT : 0)
+  return index === 0 ? firstPageBodyHeight(options, contentHeight) : contentHeight
 }
 
-function paginateChunks(chunks: CardChunk[], options: XhsPaginationOptions): CardChunk[][] {
+function paginateChunks(
+  chunks: CardChunk[],
+  options: XhsPaginationOptions,
+  document: Document,
+  pageFits?: XhsPageFits,
+): CardChunk[][] {
   const pages: CardChunk[][] = []
   let current: CardChunk[] = []
 
+  const fits = (candidate: CardChunk[], pageIndex: number) => pageFits
+    ? pageFits(renderPage(candidate, document), pageIndex)
+    : pageHeight(candidate) <= standardPageBudget(pageIndex, options)
+
   for (let index = 0; index < chunks.length; index += 1) {
     const chunk = chunks[index]
-    const budget = standardPageBudget(pages.length, options)
     const linkedChunks = chunk.isHeading && chunks[index + 1] ? [chunk, chunks[index + 1]] : [chunk]
-    const wouldOverflowLinkedContent = current.length > 0 && pageHeight([...current, ...linkedChunks]) > budget
-    const wouldOverflowChunk = current.length > 0 && pageHeight([...current, chunk]) > budget
+    const wouldOverflowLinkedContent = current.length > 0 && !fits([...current, ...linkedChunks], pages.length)
+    const wouldOverflowChunk = current.length > 0 && !fits([...current, chunk], pages.length)
     const currentOnlyContainsHeading = current.length === 1 && current[0].isHeading
 
     if (wouldOverflowLinkedContent || (wouldOverflowChunk && !currentOnlyContainsHeading)) {
@@ -370,6 +523,28 @@ function paginateChunks(chunks: CardChunk[], options: XhsPaginationOptions): Car
 
   if (current.length) pages.push(current)
   return pages
+}
+
+function backfillMeasuredPages(
+  pages: CardChunk[][],
+  document: Document,
+  pageFits: XhsPageFits,
+): void {
+  let pageIndex = 0
+  while (pageIndex < pages.length - 1) {
+    const current = pages[pageIndex]
+    const next = pages[pageIndex + 1]
+    const moveCount = leadingContentUnitLength(next)
+    const moving = next.slice(0, moveCount)
+
+    if (!pageFits(renderPage([...current, ...moving], document), pageIndex)) {
+      pageIndex += 1
+      continue
+    }
+
+    current.push(...next.splice(0, moveCount))
+    if (!next.length) pages.splice(pageIndex + 1, 1)
+  }
 }
 
 function leadingContentUnitLength(page: CardChunk[]): number {
@@ -409,6 +584,20 @@ function renderPage(chunks: CardChunk[], document: Document): string {
   while (index < chunks.length) {
     const chunk = chunks[index]
     if (!chunk.list) {
+      const fragmentGroup = chunk.element.getAttribute('data-xhs-fragment-group')
+      if (fragmentGroup) {
+        const merged = chunk.element.cloneNode(false) as Element
+        let fragmentIndex = index
+        while (fragmentIndex < chunks.length
+          && chunks[fragmentIndex].element.getAttribute('data-xhs-fragment-group') === fragmentGroup) {
+          Array.from(chunks[fragmentIndex].element.childNodes).forEach(child => merged.append(child.cloneNode(true)))
+          fragmentIndex += 1
+        }
+        merged.removeAttribute('data-xhs-fragment-group')
+        container.append(merged)
+        index = fragmentIndex
+        continue
+      }
       container.append(chunk.element.cloneNode(true))
       index += 1
       continue
@@ -428,12 +617,17 @@ function renderPage(chunks: CardChunk[], document: Document): string {
   return container.innerHTML
 }
 
-export function paginateForXhsCards(html: string, options: XhsPaginationOptions = {}): string[] {
+export function paginateForXhsCards(
+  html: string,
+  options: XhsPaginationOptions = {},
+  pageFits?: XhsPageFits,
+): string[] {
   const textScale = Number.isFinite(options.textScale) ? Math.min(1.35, Math.max(0.75, options.textScale!)) : 1
   const { chunks, document } = createChunks(html, textScale)
   if (!chunks.length) return ['<p>暂无正文内容</p>']
 
-  const pages = paginateChunks(chunks, options)
-  compactTextPages(pages, options)
+  const pages = paginateChunks(chunks, options, document, pageFits)
+  if (pageFits) backfillMeasuredPages(pages, document, pageFits)
+  else compactTextPages(pages, options)
   return pages.map(page => renderPage(page, document))
 }

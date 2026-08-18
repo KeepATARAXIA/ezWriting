@@ -1,7 +1,7 @@
 import type { ArticleDraft } from '../domain/article'
 import { DEFAULT_ARTICLE_FORMATTING } from '../domain/formatting'
 import type { DraftSummary, PersistedDraft } from '../domain/saved-draft'
-import { DEFAULT_XHS_CARD_SETTINGS, SAVED_DRAFT_SCHEMA_VERSION, toDraftSummary } from '../domain/saved-draft'
+import { normalizeXhsCardSettings, SAVED_DRAFT_SCHEMA_VERSION, toDraftSummary } from '../domain/saved-draft'
 import type { DraftListOptions, DraftRepository } from './draft-repository'
 import { normalizeWechatThemeSettings } from '../lib/wechat-theme'
 
@@ -342,7 +342,7 @@ export class LocalDraftRepository implements DraftRepository {
         ...draft.formatting,
         wechat: normalizeWechatThemeSettings(draft.formatting.wechat),
       },
-      xhsSettings: { ...draft.xhsSettings },
+      xhsSettings: normalizeXhsCardSettings(draft.xhsSettings),
       updatedAt,
     }
     const retainedAssetIds = referencedAssetIds(nextDraft.article)
@@ -403,7 +403,7 @@ export class LocalDraftRepository implements DraftRepository {
         wechat: normalizeWechatThemeSettings(draft.formatting?.wechat),
       },
       kind: draft.kind === 'image' ? 'image' : 'longform',
-      xhsSettings: { ...DEFAULT_XHS_CARD_SETTINGS, ...draft.xhsSettings },
+      xhsSettings: normalizeXhsCardSettings(draft.xhsSettings),
       createdAt: draft.createdAt,
       updatedAt: draft.updatedAt,
       deletedAt: draft.deletedAt ?? null,

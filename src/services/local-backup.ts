@@ -1,8 +1,8 @@
 import type { ArticleDraft, ArticleSourceLanguage, SourceKind } from '../domain/article'
 import { DEFAULT_ARTICLE_FORMATTING, type ArticleFormatting } from '../domain/formatting'
 import {
-  DEFAULT_XHS_CARD_SETTINGS,
   SAVED_DRAFT_SCHEMA_VERSION,
+  normalizeXhsCardSettings,
   type DraftKind,
   type PersistedDraft,
   type XhsCardSettings,
@@ -72,13 +72,7 @@ function formatting(value: unknown): ArticleFormatting {
 }
 
 function xhsSettings(value: unknown): XhsCardSettings {
-  const candidate = isRecord(value) ? value : {}
-  return {
-    template: candidate.template === 'editorial' || candidate.template === 'clean' ? candidate.template : 'focus',
-    showPageNumber: typeof candidate.showPageNumber === 'boolean' ? candidate.showPageNumber : DEFAULT_XHS_CARD_SETTINGS.showPageNumber,
-    showFooter: typeof candidate.showFooter === 'boolean' ? candidate.showFooter : DEFAULT_XHS_CARD_SETTINGS.showFooter,
-    footerText: stringValue(candidate.footerText, DEFAULT_XHS_CARD_SETTINGS.footerText).slice(0, 80),
-  }
+  return normalizeXhsCardSettings(value)
 }
 
 function article(value: unknown, draftId: string, importedAt: string): ArticleDraft {

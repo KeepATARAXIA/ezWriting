@@ -4,7 +4,7 @@ import { basicSetup } from 'codemirror'
 import { html } from '@codemirror/lang-html'
 import { markdown } from '@codemirror/lang-markdown'
 import { redo, redoDepth, undo, undoDepth } from '@codemirror/commands'
-import { Annotation, Compartment, EditorState, Facet, Prec, StateField, type Transaction } from '@codemirror/state'
+import { Annotation, Compartment, EditorState, Facet, Prec, StateField, Transaction } from '@codemirror/state'
 import {
   Decoration,
   EditorView,
@@ -101,6 +101,8 @@ const MARKDOWN_IMAGE_SOURCE = /!\[([^\]\n]*)\]\(\s*(?:<([^>\n]+)>|([^\s)\n]+))(?
 const EMBEDDED_IMAGE_TOKEN = /dispatch-editor-image:\/\/[a-z0-9-]+/gi
 const EMBEDDED_IMAGE_PREFIX = 'dispatch-editor-image://image-'
 const controlledValueUpdate = Annotation.define<boolean>()
+const SOURCE_CHANGE_DEBOUNCE_MS = 240
+const IMAGE_SOURCE_CHANGE_DEBOUNCE_MS = 320
 
 interface EmbeddedImageContext {
   sources: Map<string, string>
@@ -198,6 +200,7 @@ class MarkdownImageWidget extends WidgetType {
       image.alt = this.alt
       image.loading = 'lazy'
       image.decoding = 'async'
+      image.fetchPriority = 'low'
       image.addEventListener('load', () => view.requestMeasure(), { once: true })
       image.addEventListener('error', () => {
         figure.classList.add('missing')
@@ -445,7 +448,55 @@ export function SourceEditor({ value, language, focusRequest, onChange, onActive
 
   const scheduleSourceChange = (view: EditorView) => {
     if (changeTimerRef.current !== null) window.clearTimeout(changeTimerRef.current)
-    changeTimerRef.current = window.setTimeout(() => emitSourceChange(view), 160)
+    const debounceMs = embeddedImagesRef.current.size > 0
+      ? IMAGE_SOURCE_CHANGE_DEBOUNCE_MS
+      : SOURCE_CHANGE_DEBOUNCE_MS
+    changeTimerRef.current = window.setTimeout(() => emitSourceChange(view), debounceMs)
+  }
+
+  const captureOuterScroll = (view: EditorView) => {
+    const elements: Array<{ element: HTMLElement; left: number; top: number }> = []
+    let parent = view.dom.parentElement
+    while (parent) {
+      if (parent !== view.scrollDOM && (parent.scrollTop !== 0 || parent.scrollLeft !== 0)) {
+        elements.push({ element: parent, left: parent.scrollLeft, top: parent.scrollTop })
+      }
+      parent = parent.parentElement
+    }
+    return {
+      elements,
+      windowLeft: window.scrollX,
+      windowTop: window.scrollY,
+    }
+  }
+
+  const restoreOuterScroll = (snapshot: ReturnType<typeof captureOuterScroll>) => {
+    snapshot.elements.forEach(({ element, left, top }) => {
+      if (element.scrollLeft !== left) element.scrollLeft = left
+      if (element.scrollTop !== top) element.scrollTop = top
+    })
+    if ((window.scrollX !== snapshot.windowLeft || window.scrollY !== snapshot.windowTop) && typeof window.scrollTo === 'function') {
+      window.scrollTo(snapshot.windowLeft, snapshot.windowTop)
+    }
+  }
+
+  const runStableHistoryCommand = (command: typeof undo) => {
+    const view = viewRef.current
+    if (!view) return false
+    const snapshot = captureOuterScroll(view)
+    const handled = command(view)
+    if (!handled) return false
+
+    restoreOuterScroll(snapshot)
+    window.requestAnimationFrame(() => {
+      restoreOuterScroll(snapshot)
+      window.requestAnimationFrame(() => restoreOuterScroll(snapshot))
+    })
+    return true
+  }
+
+  const focusEditorWithoutPageScroll = (view: EditorView) => {
+    view.contentDOM.focus({ preventScroll: true })
   }
 
   const insertText = (text: string, selectFrom = text.length, selectTo = selectFrom) => {
@@ -462,12 +513,12 @@ export function SourceEditor({ value, language, focusRequest, onChange, onActive
 
   const undoChange = () => {
     const view = viewRef.current
-    if (view && undo(view)) view.focus()
+    if (view && runStableHistoryCommand(undo)) focusEditorWithoutPageScroll(view)
   }
 
   const redoChange = () => {
     const view = viewRef.current
-    if (view && redo(view)) view.focus()
+    if (view && runStableHistoryCommand(redo)) focusEditorWithoutPageScroll(view)
   }
 
   const wrapSelection = (markdownBefore: string, markdownAfter: string, placeholderText: string, htmlTag: string) => {
@@ -674,8 +725,25 @@ export function SourceEditor({ value, language, focusRequest, onChange, onActive
           imagePreviewField,
           EditorView.atomicRanges.of(view => view.state.field(imagePreviewField)),
           languageCompartment.of(language === 'markdown' ? markdown() : html()),
+          Prec.high(EditorView.domEventHandlers({
+            keydown: event => {
+              const hasCommandModifier = event.ctrlKey || event.metaKey
+              if (!hasCommandModifier || event.altKey) return false
+              const key = event.key.toLocaleLowerCase()
+              if (key === 'z') {
+                event.preventDefault()
+                runStableHistoryCommand(event.shiftKey ? redo : undo)
+                return true
+              }
+              if (key === 'y' && !event.shiftKey) {
+                event.preventDefault()
+                runStableHistoryCommand(redo)
+                return true
+              }
+              return false
+            },
+          })),
           Prec.high(keymap.of([
-            { key: 'Mod-Shift-z', run: redo, preventDefault: true },
             { key: 'Mod-b', run: () => { wrapSelection('**', '**', '加粗文字', 'strong'); return true }, preventDefault: true },
             { key: 'Mod-i', run: () => { wrapSelection('*', '*', '斜体文字', 'em'); return true }, preventDefault: true },
             { key: 'Mod-k', run: () => { insertLink(); return true }, preventDefault: true },
@@ -755,23 +823,28 @@ export function SourceEditor({ value, language, focusRequest, onChange, onActive
   useEffect(() => {
     const view = viewRef.current
     if (!view) return
-    const compacted = compactEmbeddedImages(value, embeddedImagesRef.current)
+    const previousSources = embeddedImagesRef.current
+    const compacted = compactEmbeddedImages(value, previousSources)
     embeddedImagesRef.current = compacted.sources
     const current = view.state.doc.toString()
-    const imageSourceEffect = imageSourceCompartmentRef.current.reconfigure(
-      embeddedImageFacet.of({ sources: compacted.sources }),
-    )
-    if (current === compacted.text) {
-      view.dispatch({ effects: imageSourceEffect })
-      return
-    }
+    const sourcesChanged = compacted.sources !== previousSources
+    if (current === compacted.text && !sourcesChanged) return
+    const effects = sourcesChanged
+      ? imageSourceCompartmentRef.current.reconfigure(embeddedImageFacet.of({ sources: compacted.sources }))
+      : undefined
+    const scrollTop = view.scrollDOM.scrollTop
+    const scrollLeft = view.scrollDOM.scrollLeft
     const { anchor, head } = view.state.selection.main
     view.dispatch({
-      changes: { from: 0, to: current.length, insert: compacted.text },
-      selection: { anchor: Math.min(anchor, compacted.text.length), head: Math.min(head, compacted.text.length) },
-      effects: imageSourceEffect,
-      annotations: controlledValueUpdate.of(true),
+      ...(current === compacted.text ? {} : {
+        changes: { from: 0, to: current.length, insert: compacted.text },
+        selection: { anchor: Math.min(anchor, compacted.text.length), head: Math.min(head, compacted.text.length) },
+      }),
+      effects,
+      annotations: [controlledValueUpdate.of(true), Transaction.addToHistory.of(false)],
     })
+    view.scrollDOM.scrollTop = scrollTop
+    view.scrollDOM.scrollLeft = scrollLeft
   }, [value])
 
   useEffect(() => {

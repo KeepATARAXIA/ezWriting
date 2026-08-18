@@ -246,6 +246,66 @@ describe('App publishing engine onboarding', () => {
     expect(container.textContent).toContain('同步到 1 个平台')
   })
 
+  it('builds separate highlighted drafts for WeChat, Xiaohongshu, X, and generic platforms', async () => {
+    const accounts = [
+      { id: 'weixin', name: '微信公众号', username: '微信账号', raw: { type: 'weixin' } },
+      { id: 'xiaohongshu', name: '小红书', username: '小红书账号', raw: { type: 'xiaohongshu' } },
+      { id: 'x', name: 'X', username: '@writer', raw: { type: 'x' } },
+      { id: 'zhihu', name: '知乎', username: '知乎账号', raw: { type: 'zhihu' } },
+    ]
+    bridgeMocks.waitForBridge.mockResolvedValue(true)
+    bridgeMocks.getPlatformAccounts.mockResolvedValue(accounts)
+    bridgeMocks.publishDraft.mockImplementation(async (_article, selectedAccounts) => selectedAccounts.map((account: typeof accounts[number]) => ({
+      platform: account.id,
+      name: account.name,
+      status: 'done' as const,
+      delivery: 'draft' as const,
+    })))
+
+    await act(async () => {
+      root.render(<App />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const input = container.querySelector<HTMLInputElement>('input[accept=".md,.markdown,.html,.htm,.zip"]')!
+    Object.defineProperty(input, 'files', {
+      configurable: true,
+      value: [new File(['# 测试稿件\n\n正文 ==重点内容=='], 'highlight.md', { type: 'text/markdown' })],
+    })
+    await act(async () => {
+      input.dispatchEvent(new Event('change', { bubbles: true }))
+      await new Promise(resolve => window.setTimeout(resolve, 0))
+    })
+
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label^="打开发布面板"]')?.click())
+    for (const row of container.querySelectorAll<HTMLButtonElement>('.platform-row')) {
+      await act(async () => row.click())
+    }
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('.publish-button')?.click()
+      await vi.waitFor(() => expect(bridgeMocks.publishDraft).toHaveBeenCalledTimes(4))
+    })
+
+    const articleFor = (platform: string) => bridgeMocks.publishDraft.mock.calls.find(([, selected]) => (
+      selected as typeof accounts
+    )[0]?.id === platform)?.[0] as { html: string; markdown?: string }
+    const wechat = articleFor('weixin')
+    const xhs = articleFor('xiaohongshu')
+    const x = articleFor('x')
+    const generic = articleFor('zhihu')
+
+    expect(wechat.html).not.toContain('<mark')
+    expect(wechat.html).toContain('data-ez-format="highlight"')
+    expect(wechat.markdown).toContain('<span style=')
+    expect(xhs.html).toContain('font-weight: 750')
+    expect(xhs.markdown).toContain('**重点内容**')
+    expect(x.html).toContain('text-decoration-line: underline')
+    expect(x.html).not.toContain('background-color: rgb(255, 241, 168)')
+    expect(x.markdown).toContain('**重点内容**')
+    expect(generic.html).toContain('data-ez-format="highlight"')
+  })
+
   it('reconnects automatically after returning to the page', async () => {
     bridgeMocks.waitForBridge.mockResolvedValueOnce(false)
 
@@ -469,9 +529,8 @@ describe('App publishing engine onboarding', () => {
     expect(container.textContent).toContain('下载当前页')
     expect(container.textContent).toContain('下载全部图片')
 
-    const settingsButton = Array.from(container.querySelectorAll<HTMLButtonElement>('.xhs-tool-rail button'))
-      .find(button => button.textContent?.includes('卡片样式'))!
-    await act(async () => settingsButton.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    expect(container.querySelector('[aria-label="小红书样式与排版"]')).not.toBeNull()
+    expect(Array.from(container.querySelectorAll<HTMLButtonElement>('.xhs-tool-rail button')).some(button => button.textContent?.includes('卡片样式'))).toBe(false)
     expect(container.textContent).not.toContain('顶部色条')
     const cleanTemplate = Array.from(container.querySelectorAll<HTMLButtonElement>('.xhs-template-options button'))
       .find(button => button.textContent?.includes('纯净'))!

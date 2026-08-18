@@ -88,6 +88,7 @@ describe('draft workspace', () => {
           showPageNumber: false,
           showFooter: true,
           footerText: 'LOCAL',
+          imageOverrides: {},
         },
         sourceInfo: { name: '新版.zip', size: 4096, assetCount: 3 },
       }
@@ -137,6 +138,9 @@ describe('draft workspace', () => {
         showPageNumber: false,
         showFooter: true,
         footerText: '恢复测试',
+        imageOverrides: {
+          'xhs-img-test-1': { layout: 'image-right', widthPercent: 52 },
+        },
       },
       sourceInfo: { name: 'content.zip', size: 8192, assetCount: 4 },
     })

@@ -189,4 +189,76 @@ describe('paginateForXhsCards', () => {
     expect(enlargedPages.length).toBeGreaterThan(compactPages.length)
     expect(enlargedPages.join('')).toContain('第 12 段内容')
   })
+
+  it('splits tall Markdown tables by rows and repeats the table header', () => {
+    const rows = Array.from({ length: 18 }, (_, index) => (
+      `<tr><td>命令 ${index + 1}</td><td>${'需要换行的用途说明'.repeat(4)}</td><td>${'本工作流中的使用方式'.repeat(3)}</td></tr>`
+    )).join('')
+    const html = `<table data-source-block="12"><thead><tr><th>命令</th><th>用途</th><th>怎么用</th></tr></thead><tbody>${rows}</tbody></table>`
+
+    const pages = paginateForXhsCards(html, { title: '表格分页' })
+    const documents = pages.map(parsePage)
+    const tables = documents.flatMap(document => Array.from(document.querySelectorAll('table')))
+    const renderedRows = tables.reduce((total, table) => total + table.querySelectorAll('tbody tr').length, 0)
+
+    expect(pages.length).toBeGreaterThan(1)
+    expect(renderedRows).toBe(18)
+    expect(tables.every(table => table.querySelectorAll('thead tr').length === 1)).toBe(true)
+    expect(tables.every(table => table.querySelectorAll('tbody tr').length <= 6)).toBe(true)
+  })
+
+  it('splits long fenced-code output by lines instead of clipping one protected block', () => {
+    const lines = Array.from({ length: 48 }, (_, index) => `line-${String(index + 1).padStart(2, '0')} --value example`)
+    const pages = paginateForXhsCards(`<pre data-source-block="9"><code class="language-bash">${lines.join('\n')}</code></pre>`, { title: '代码分页' })
+    const renderedLines = pages
+      .flatMap(page => Array.from(parsePage(page).querySelectorAll('pre')).flatMap(pre => (pre.textContent || '').split('\n')))
+      .filter(Boolean)
+
+    expect(pages.length).toBeGreaterThan(1)
+    expect(renderedLines).toEqual(lines)
+    expect(pages.every(page => Array.from(parsePage(page).querySelectorAll('pre')).every(pre => (pre.textContent || '').split('\n').length <= 12))).toBe(true)
+  })
+
+  it('splits a long blockquote into safe fragments without losing its paragraphs', () => {
+    const paragraphs = Array.from({ length: 14 }, (_, index) => (
+      `<p>第 ${index + 1} 条镜头说明：${'画面中的文字和布局需要保持清晰。'.repeat(3)}</p>`
+    )).join('')
+    const pages = paginateForXhsCards(`<blockquote data-source-block="4">${paragraphs}</blockquote>`, { title: '引用分页' })
+    const renderedText = pages.map(page => parsePage(page).body.textContent || '').join('')
+
+    expect(pages.length).toBeGreaterThan(1)
+    expect(pages.flatMap(page => Array.from(parsePage(page).querySelectorAll('blockquote'))).length).toBeGreaterThan(1)
+    for (let index = 1; index <= 14; index += 1) expect(renderedText).toContain(`第 ${index} 条镜头说明`)
+  })
+
+  it('uses rendered page measurements to backfill protected table fragments', () => {
+    const rows = Array.from({ length: 18 }, (_, index) => (
+      `<tr><td>命令 ${index + 1}</td><td>${'真实渲染后只占较少高度'.repeat(3)}</td><td>使用说明</td></tr>`
+    )).join('')
+    const html = `<table><thead><tr><th>命令</th><th>用途</th><th>说明</th></tr></thead><tbody>${rows}</tbody></table>`
+    const estimatedPages = paginateForXhsCards(html, { title: '表格密度' })
+    const measuredPages = paginateForXhsCards(html, { title: '表格密度' }, pageHtml => {
+      const document = parsePage(pageHtml)
+      const bodyRows = document.querySelectorAll('tbody tr').length
+      const tables = document.querySelectorAll('table').length
+      return bodyRows * 38 + tables * 34 <= 560
+    })
+    const renderedRows = measuredPages.reduce(
+      (total, page) => total + parsePage(page).querySelectorAll('tbody tr').length,
+      0,
+    )
+
+    expect(measuredPages.length).toBeLessThan(estimatedPages.length)
+    expect(renderedRows).toBe(18)
+    expect(measuredPages.some(page => parsePage(page).querySelectorAll('table').length > 1)).toBe(true)
+  })
+
+  it('keeps the estimator as a deterministic fallback when no page measurer is supplied', () => {
+    const html = Array.from({ length: 10 }, (_, index) => (
+      `<p>第 ${index + 1} 段：${'回退分页必须保持稳定。'.repeat(6)}</p>`
+    )).join('')
+
+    expect(paginateForXhsCards(html, { title: '回退验证' }))
+      .toEqual(paginateForXhsCards(html, { title: '回退验证' }))
+  })
 })

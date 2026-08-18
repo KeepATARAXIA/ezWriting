@@ -124,7 +124,7 @@ describe('LocalDraftRepository', () => {
       kind: 'longform',
       article: article('newer', { title: '长文稿', sourceKind: 'html' }),
       formatting: { ...DEFAULT_ARTICLE_FORMATTING, theme: 'editorial', accent: 'purple' },
-      xhsSettings: { template: 'clean', showPageNumber: false, showFooter: false, footerText: '本地测试' },
+      xhsSettings: { template: 'clean', showPageNumber: false, showFooter: false, footerText: '本地测试', imageOverrides: {} },
     })
 
     await repository.saveDraft(older)
@@ -146,6 +146,7 @@ describe('LocalDraftRepository', () => {
       showPageNumber: false,
       showFooter: false,
       footerText: '本地测试',
+      imageOverrides: {},
     })
     expect(await repository.getDraft('missing')).toBeNull()
   })

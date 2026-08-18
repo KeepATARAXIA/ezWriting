@@ -55,6 +55,15 @@ describe('local backup', () => {
       accent: 'green',
     }, {
       kind: 'image',
+      xhsSettings: {
+        template: 'focus',
+        showPageNumber: true,
+        showFooter: true,
+        footerText: 'DISPATCH',
+        imageOverrides: {
+          'xhs-img-example-1': { layout: 'image-left', widthPercent: 48 },
+        },
+      },
       createdAt: '2026-08-15T08:00:00.000Z',
       updatedAt: '2026-08-15T09:00:00.000Z',
     })
@@ -78,6 +87,9 @@ describe('local backup', () => {
     })
     expect(restored?.article.html).toContain('data:image/png;base64,AQIDBA==')
     expect(restored?.article.markdown).toContain('data:image/png;base64,AQIDBA==')
+    expect(restored?.xhsSettings.imageOverrides).toEqual({
+      'xhs-img-example-1': { layout: 'image-left', widthPercent: 48 },
+    })
     expect(await target.getSetting(LAST_ACTIVE_DRAFT_SETTING)).toBe(original.id)
     expect(restored).not.toHaveProperty('syncState')
     expect(restored).not.toHaveProperty('cloudVersion')

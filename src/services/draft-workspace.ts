@@ -2,6 +2,7 @@ import { DEFAULT_ARTICLE_FORMATTING, type ArticleFormatting } from '../domain/fo
 import {
   DEFAULT_XHS_CARD_SETTINGS,
   createPersistedDraft,
+  normalizeXhsCardSettings,
   type DraftKind,
   type PersistedDraft,
   type XhsCardSettings,
@@ -31,7 +32,7 @@ export function snapshotFromPersistedDraft(draft: PersistedDraft): DraftWorkspac
       wechat: normalizeWechatThemeSettings(draft.formatting?.wechat),
     },
     kind: draft.kind ?? defaultDraftKind(draft.article),
-    xhsSettings: { ...DEFAULT_XHS_CARD_SETTINGS, ...draft.xhsSettings },
+    xhsSettings: normalizeXhsCardSettings(draft.xhsSettings),
     sourceInfo: draft.sourceInfo ? { ...draft.sourceInfo } : null,
   }
 }
@@ -47,7 +48,7 @@ export function createDraftSnapshot(
       wechat: normalizeWechatThemeSettings(DEFAULT_ARTICLE_FORMATTING.wechat),
     },
     kind: defaultDraftKind(article),
-    xhsSettings: { ...DEFAULT_XHS_CARD_SETTINGS },
+    xhsSettings: normalizeXhsCardSettings(DEFAULT_XHS_CARD_SETTINGS),
     sourceInfo,
   }
 }

@@ -1,8 +1,10 @@
 import {
   lazy,
+  startTransition,
   Suspense,
   useCallback,
   useEffect,
+  useDeferredValue,
   useMemo,
   useRef,
   useState,
@@ -40,6 +42,7 @@ import type { SourceEditorFocusRequest } from './components/source-editor'
 import type { PreviewDevice, PreviewEditTarget, PreviewLocateRequest, PreviewPlatform } from './components/platform-previews'
 import {
   DEFAULT_XHS_CARD_SETTINGS,
+  normalizeXhsCardSettings,
   type DraftKind,
   type DraftSummary,
   type PersistedDraft,
@@ -62,6 +65,11 @@ import {
   updateArticleFromSource,
 } from './lib/article-source'
 import { applyWechatTheme } from './lib/wechat-theme'
+import {
+  applyPlatformCompatibility,
+  applyPlatformMarkdownCompatibility,
+  type PlatformContentTarget,
+} from './lib/platform-compatibility'
 import { FileParseError, parseContentFile, pickPrimaryContentFile, sanitizeEditedHtml } from './lib/file-parser'
 import { extractMissingImageTargets } from './lib/missing-assets'
 import { getBrowserExtensionGuide } from './lib/browser-extension-install'
@@ -360,7 +368,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   const [hydrationPhase, setHydrationPhase] = useState<HydrationPhase>(() => draftRepository ? 'loading' : 'ready')
   const [drafts, setDrafts] = useState<DraftSummary[]>([])
   const [draftKind, setDraftKind] = useState<DraftKind>('longform')
-  const [xhsSettings, setXhsSettings] = useState<XhsCardSettings>({ ...DEFAULT_XHS_CARD_SETTINGS })
+  const [xhsSettings, setXhsSettings] = useState<XhsCardSettings>(() => normalizeXhsCardSettings(DEFAULT_XHS_CARD_SETTINGS))
   const [draftRevision, setDraftRevision] = useState(0)
   const [historyFilter, setHistoryFilter] = useState<HistoryFilter>('all')
   const [historyExpanded, setHistoryExpanded] = useState(readHistorySidebarExpanded)
@@ -592,7 +600,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
       article: null,
       formatting: { ...DEFAULT_ARTICLE_FORMATTING },
       kind: 'longform',
-      xhsSettings: { ...DEFAULT_XHS_CARD_SETTINGS },
+      xhsSettings: normalizeXhsCardSettings(DEFAULT_XHS_CARD_SETTINGS),
       sourceInfo: null,
     }
     autosave.markSaved(emptySnapshot, draftRevisionRef.current)
@@ -1073,10 +1081,12 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   }
 
   const updateArticleSource = (sourceText: string) => {
-    setArticle(current => current
-      ? reconcileSourceUpdate(current, updateArticleFromSource(current, sourceText))
-      : current)
-    markDraftDirty()
+    startTransition(() => {
+      setArticle(current => current
+        ? reconcileSourceUpdate(current, updateArticleFromSource(current, sourceText))
+        : current)
+      markDraftDirty()
+    })
   }
 
   const updateArticleFormatting = (nextFormatting: ArticleFormatting) => {
@@ -1179,14 +1189,33 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     const selectedAccounts = accounts.filter(account => selectedIds.includes(account.id))
     const sanitizedHtml = sanitizeEditedHtml(article.html)
     const normalizedArticle = { ...article, html: sanitizedHtml }
-    const formattedArticle = { ...normalizedArticle, html: applyArticleFormatting(sanitizedHtml, formatting) }
-    const wechatArticle = { ...formattedArticle, html: applyWechatTheme(formattedArticle.html, formatting.wechat, formatting) }
-    const wechatAccounts = selectedAccounts.filter(account => accountMatchesPreview(account, 'wechat'))
-    const otherAccounts = selectedAccounts.filter(account => !accountMatchesPreview(account, 'wechat'))
-    const groups = [
-      { accounts: wechatAccounts, article: wechatArticle },
-      { accounts: otherAccounts, article: formattedArticle },
-    ].filter(group => group.accounts.length > 0)
+    const formattedHtml = applyArticleFormatting(sanitizedHtml, formatting)
+    const targetForAccount = (account: PlatformAccount): PlatformContentTarget => {
+      if (accountMatchesPreview(account, 'wechat')) return 'wechat'
+      if (accountMatchesPreview(account, 'xhs')) return 'xhs'
+      if (accountMatchesPreview(account, 'x')) return 'x'
+      return 'generic'
+    }
+    const buildPlatformArticle = (target: PlatformContentTarget): ArticleDraft => {
+      const themedHtml = target === 'wechat'
+        ? applyWechatTheme(formattedHtml, formatting.wechat, formatting)
+        : formattedHtml
+      return {
+        ...normalizedArticle,
+        html: applyPlatformCompatibility(themedHtml, target),
+        markdown: applyPlatformMarkdownCompatibility(normalizedArticle.markdown, target),
+      }
+    }
+    const groups = (['wechat', 'xhs', 'x', 'generic'] as const)
+      .map(target => ({
+        target,
+        accounts: selectedAccounts.filter(account => targetForAccount(account) === target),
+      }))
+      .filter(group => group.accounts.length > 0)
+      .map(group => ({
+        accounts: group.accounts,
+        article: buildPlatformArticle(group.target),
+      }))
     setArticle(normalizedArticle)
     if (normalizedArticle.html !== article.html) markDraftDirty()
     setWorkState('publishing')
@@ -1225,17 +1254,23 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   }
 
   const isPublishing = workState === 'publishing'
+  const articleHtml = article?.html ?? ''
+  const deferredArticleHtml = useDeferredValue(articleHtml)
+  const deferredFormatting = useDeferredValue(formatting)
+  const isPreviewUpdating = deferredArticleHtml !== articleHtml || deferredFormatting !== formatting
   const previewHtml = useMemo(
-    () => article ? applyArticleFormatting(sanitizeEditedHtml(article.html), formatting) : '',
-    [article, formatting],
+    () => deferredArticleHtml
+      ? applyArticleFormatting(sanitizeEditedHtml(deferredArticleHtml), deferredFormatting)
+      : '',
+    [deferredArticleHtml, deferredFormatting],
   )
   const articleSource = useMemo(
     () => article ? resolveArticleSource(article) : null,
-    [article],
+    [article?.html, article?.markdown, article?.sourceLanguage, article?.sourceText],
   )
   const articleContent = useMemo(
     () => article ? analyzeArticleContent(article.html, article.cover) : { characterCount: 0, bodyImageCount: 0, resources: [] },
-    [article],
+    [article?.cover, article?.html],
   )
   const previewAccount = useMemo(
     () => accounts.find(account => accountMatchesPreview(account, activePlatform)),
@@ -1720,6 +1755,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                             onXhsSettingsChange={updateXhsCardSettings}
                             previewAccount={previewAccount}
                             previewDevice={previewDevice}
+                            isUpdating={isPreviewUpdating}
                             onPreviewDeviceChange={setPreviewDevice}
                             locateRequest={previewLocateRequest}
                             onEditTarget={editPreviewTarget}

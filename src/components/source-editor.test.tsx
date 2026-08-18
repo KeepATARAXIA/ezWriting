@@ -144,4 +144,46 @@ describe('SourceEditor', () => {
     await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="重做"]')?.click())
     await vi.waitFor(() => expect(onChange).toHaveBeenLastCalledWith('**快捷键正文**'), { timeout: 500 })
   })
+
+  it('keeps controlled source refreshes out of the local undo history', async () => {
+    await act(async () => root.render(
+      <SourceEditor value="第一版正文" language="markdown" onChange={vi.fn()} />,
+    ))
+    await act(async () => new Promise(resolve => window.setTimeout(resolve, 0)))
+
+    await act(async () => root.render(
+      <SourceEditor value="父级恢复的第二版正文" language="markdown" onChange={vi.fn()} />,
+    ))
+    await act(async () => new Promise(resolve => window.setTimeout(resolve, 0)))
+
+    expect(container.querySelector('.cm-content')?.textContent).toBe('父级恢复的第二版正文')
+    expect(container.querySelector<HTMLButtonElement>('button[aria-label="撤销"]')?.disabled).toBe(true)
+  })
+
+  it('preserves the outer workspace scroll position while undoing repeatedly', async () => {
+    const onChange = vi.fn()
+    await act(async () => root.render(
+      <SourceEditor value="撤销稳定性正文" language="markdown" onChange={onChange} />,
+    ))
+    await act(async () => new Promise(resolve => window.setTimeout(resolve, 0)))
+
+    const editor = container.querySelector<HTMLElement>('.cm-content')!
+    editor.focus()
+    await act(async () => {
+      editor.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'a', ctrlKey: true }))
+      editor.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'b', ctrlKey: true }))
+      await vi.waitFor(() => expect(onChange).toHaveBeenCalled(), { timeout: 600 })
+    })
+
+    container.scrollTop = 420
+    for (let index = 0; index < 3; index += 1) {
+      await act(async () => {
+        const event = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'z', ctrlKey: true })
+        editor.dispatchEvent(event)
+        expect(event.defaultPrevented).toBe(true)
+        await new Promise(resolve => window.setTimeout(resolve, 40))
+      })
+      expect(container.scrollTop).toBe(420)
+    }
+  })
 })
