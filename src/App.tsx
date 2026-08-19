@@ -37,7 +37,7 @@ import {
 import type { ArticleDraft, MissingImageAction, MissingImageTarget, PlatformAccount, PublishResult } from './domain/article'
 import { DEFAULT_ARTICLE_FORMATTING, type ArticleFormatting } from './domain/formatting'
 import { DispatchControls, type BridgeState, type WorkState } from './components/dispatch-controls'
-import { HistorySidebar, type HistoryFilter, type HistoryUndoDraft } from './components/history-sidebar'
+import { HistorySidebar, type HistoryUndoDraft } from './components/history-sidebar'
 import type { SourceEditorFocusRequest } from './components/source-editor'
 import type { PreviewDevice, PreviewEditTarget, PreviewLocateRequest, PreviewPlatform } from './components/platform-previews'
 import {
@@ -98,7 +98,8 @@ interface ArticleResource {
   id: string
   src: string
   name: string
-  kind: 'cover' | 'body'
+  kind: 'body'
+  blockIndex?: number
   missingTarget?: MissingImageTarget
 }
 
@@ -306,7 +307,6 @@ function appendImportedArticle(current: ArticleDraft, imported: ArticleDraft): A
     sourceText: combinedSource,
     sourceLanguage: combinedLanguage,
     markdown: combinedLanguage === 'markdown' ? combinedSource : undefined,
-    cover: current.cover || imported.cover,
     summary: current.summary || imported.summary,
     tags: [...new Set([...current.tags, ...imported.tags])],
     warnings: [...new Set([...current.warnings, ...imported.warnings])],
@@ -315,25 +315,28 @@ function appendImportedArticle(current: ArticleDraft, imported: ArticleDraft): A
   return reconcileSourceUpdate(current, updateArticleFromSource(base, combinedSource))
 }
 
-function analyzeArticleContent(html: string, cover?: string): { characterCount: number; bodyImageCount: number; resources: ArticleResource[] } {
+function analyzeArticleContent(html: string): { characterCount: number; bodyImageCount: number; resources: ArticleResource[] } {
   const document = new DOMParser().parseFromString(html, 'text/html')
   const text = (document.body.textContent || '').replace(/\s+/g, '')
+  const bodyBlocks = Array.from(document.body.children).filter(element => !element.hasAttribute('data-source-spacer'))
   const bodyResources = Array.from(document.body.querySelectorAll('img')).map((image, index) => {
     const src = image.getAttribute('src') || ''
     const missingId = image.dataset.missingId
     const missingReference = image.dataset.missingAsset
+    let sourceBlock: Element = image
+    while (sourceBlock.parentElement && sourceBlock.parentElement !== document.body) {
+      sourceBlock = sourceBlock.parentElement
+    }
     return {
       id: `body-${index}`,
       src,
       name: getResourceName(src, image.getAttribute('alt'), index),
       kind: 'body' as const,
+      blockIndex: bodyBlocks.indexOf(sourceBlock),
       missingTarget: missingId && missingReference ? { id: missingId, reference: missingReference } : undefined,
     }
   })
-  const resources: ArticleResource[] = cover
-    ? [{ id: 'cover', src: cover, name: '随稿封面', kind: 'cover' }, ...bodyResources]
-    : bodyResources
-  return { characterCount: Array.from(text).length, bodyImageCount: bodyResources.length, resources }
+  return { characterCount: Array.from(text).length, bodyImageCount: bodyResources.length, resources: bodyResources }
 }
 
 function mergeResolvedAssets(current: ArticleDraft, previousHtml: string, nextHtml: string): ArticleDraft {
@@ -370,7 +373,6 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   const [draftKind, setDraftKind] = useState<DraftKind>('longform')
   const [xhsSettings, setXhsSettings] = useState<XhsCardSettings>(() => normalizeXhsCardSettings(DEFAULT_XHS_CARD_SETTINGS))
   const [draftRevision, setDraftRevision] = useState(0)
-  const [historyFilter, setHistoryFilter] = useState<HistoryFilter>('all')
   const [historyExpanded, setHistoryExpanded] = useState(readHistorySidebarExpanded)
   const [historyOverlayOpen, setHistoryOverlayOpen] = useState(false)
   const [historyError, setHistoryError] = useState<string | null>(null)
@@ -916,7 +918,6 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
         return {
           ...mergeResolvedAssets(current, previousParsed.html, nextParsed.html),
           title: current.title,
-          cover: nextParsed.cover || current.cover,
         }
       })
       markDraftDirty()
@@ -1047,14 +1048,6 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
       locateEditorField(titleInputRef.current, titleInputRef.current)
       return
     }
-    if (target.kind === 'cover') {
-      setEditorView('resources')
-      window.requestAnimationFrame(() => {
-        const coverResource = resourcesPanelRef.current?.querySelector<HTMLElement>('[data-resource-kind="cover"]')
-        locateEditorField(coverResource || resourcesPanelRef.current)
-      })
-      return
-    }
     if (!article) return
     const source = resolveArticleSource(article)
     focusRequestIdRef.current += 1
@@ -1071,6 +1064,17 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     previewLocateRequestIdRef.current += 1
     setPreviewLocateRequest({
       blockIndex: activeEditorBlockIndex,
+      requestId: previewLocateRequestIdRef.current,
+    })
+  }
+
+  const locateResourceInPreview = (resource: ArticleResource) => {
+    if (resource.kind !== 'body' || resource.blockIndex === undefined || resource.blockIndex < 0) return
+    setWorkspaceMode('split')
+    setPreviewDevice('desktop')
+    previewLocateRequestIdRef.current += 1
+    setPreviewLocateRequest({
+      blockIndex: resource.blockIndex,
       requestId: previewLocateRequestIdRef.current,
     })
   }
@@ -1269,8 +1273,8 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     [article?.html, article?.markdown, article?.sourceLanguage, article?.sourceText],
   )
   const articleContent = useMemo(
-    () => article ? analyzeArticleContent(article.html, article.cover) : { characterCount: 0, bodyImageCount: 0, resources: [] },
-    [article?.cover, article?.html],
+    () => article ? analyzeArticleContent(article.html) : { characterCount: 0, bodyImageCount: 0, resources: [] },
+    [article?.html],
   )
   const previewAccount = useMemo(
     () => accounts.find(account => accountMatchesPreview(account, activePlatform)),
@@ -1462,10 +1466,8 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
             drafts={drafts}
             activeDraftId={article?.id}
             isExpanded={historyOverlayOpen || historyExpanded}
-            filter={historyFilter}
             undoDraft={undoDraft}
             onToggleExpanded={toggleHistorySidebar}
-            onFilterChange={setHistoryFilter}
             onSelectDraft={id => void selectHistoryDraft(id)}
             onChangeKind={(id, kind) => void changeHistoryDraftKind(id, kind)}
             onDeleteDraft={id => void deleteHistoryDraft(id)}
@@ -1663,7 +1665,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                         <div>
                           <p>DOCUMENT ASSETS</p>
                           <h2 id="resource-panel-heading">文档资源</h2>
-                          <span>集中预览正文图片；缺图时可一次选择多张图片或整个文件夹补齐。</span>
+                          <span>点击正文图片可在右侧定位上下文；缺图时可一次选择多张图片或整个文件夹补齐。</span>
                         </div>
                         <div className="resource-actions">
                           <input ref={assetInputRef} type="file" accept="image/*" multiple onChange={event => void supplementAssets(Array.from(event.target.files || []))} hidden />
@@ -1688,16 +1690,24 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                         <div className="resource-grid" aria-label={`共 ${articleContent.resources.length} 张图片`}>
                           {articleContent.resources.map((resource, index) => (
                             <figure className={`article-resource-card ${resource.missingTarget ? 'missing' : ''}`} data-resource-kind={resource.kind} key={resource.id}>
-                              <div className="resource-thumbnail">
-                                {resource.missingTarget
-                                  ? <div className="resource-missing-thumbnail"><ImagePlus size={22} /><span>图片待处理</span></div>
-                                  : <img src={resource.src} alt={resource.name} />}
-                              </div>
-                              <figcaption>
-                                <strong>{resource.name}</strong>
-                                <span>{resource.missingTarget ? resource.missingTarget.reference : resource.kind === 'cover' ? '封面资源' : resource.src.startsWith('data:image/') ? '本地图片' : /^https?:\/\//i.test(resource.src) ? '外链图片' : '文档路径'}</span>
-                              </figcaption>
-                              <small>{String(index + 1).padStart(2, '0')}</small>
+                              <button
+                                type="button"
+                                className="resource-card-locate"
+                                aria-label={`在右侧定位：${resource.name}`}
+                                disabled={resource.blockIndex === undefined || resource.blockIndex < 0}
+                                onClick={() => locateResourceInPreview(resource)}
+                              >
+                                <span className="resource-thumbnail">
+                                  {resource.missingTarget
+                                    ? <span className="resource-missing-thumbnail"><ImagePlus size={22} /><span>图片待处理</span></span>
+                                    : <img src={resource.src} alt={resource.name} />}
+                                </span>
+                                <span className="resource-card-copy">
+                                  <strong>{resource.name}</strong>
+                                  <span>{resource.missingTarget ? resource.missingTarget.reference : resource.src.startsWith('data:image/') ? '本地图片' : /^https?:\/\//i.test(resource.src) ? '外链图片' : '文档路径'}</span>
+                                </span>
+                                <small>{String(index + 1).padStart(2, '0')}</small>
+                              </button>
                               {resource.missingTarget && (
                                 <div className="resource-card-actions">
                                   <button type="button" onClick={() => requestMissingImageAction(resource.missingTarget!, 'relink')}>重新链接</button>
@@ -1748,7 +1758,6 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                             html={previewHtml}
                             sourceText={articleSource?.text}
                             sourceLanguage={articleSource?.language}
-                            cover={article.cover}
                             formatting={formatting}
                             onFormattingChange={updateArticleFormatting}
                             xhsSettings={xhsSettings}

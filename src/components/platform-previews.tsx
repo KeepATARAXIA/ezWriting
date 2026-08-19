@@ -22,7 +22,6 @@ import {
   Copy,
   Download,
   Heart,
-  ImagePlus,
   Layers3,
   LayoutGrid,
   LoaderCircle,
@@ -82,7 +81,6 @@ export type PreviewPlatform = 'wechat' | 'xhs' | 'x'
 export type PreviewDevice = 'desktop' | 'mobile'
 export type PreviewEditTarget =
   | { kind: 'title' }
-  | { kind: 'cover' }
   | { kind: 'body'; blockIndex: number; line?: number }
 export interface PreviewLocateRequest {
   blockIndex: number
@@ -92,13 +90,18 @@ export interface PreviewLocateRequest {
 type XhsPreviewMode = 'single' | 'spread' | 'all'
 type WechatCopyState = 'idle' | 'copying' | 'success' | 'error'
 
+interface XhsImagePopoverPosition {
+  key: string
+  left: number
+  top: number
+}
+
 interface PlatformPreviewsProps {
   activePlatform: PreviewPlatform
   title: string
   html: string
   sourceText?: string
   sourceLanguage?: ArticleSourceLanguage
-  cover?: string
   formatting: ArticleFormatting
   onFormattingChange?: (formatting: ArticleFormatting) => void
   xhsSettings?: XhsCardSettings
@@ -134,6 +137,9 @@ const XHS_PREVIEW_ZOOM_STEP = 25
 const XHS_IMAGE_FULL_MIN_WIDTH = 35
 const XHS_IMAGE_SPLIT_MIN_WIDTH = 30
 const XHS_IMAGE_SPLIT_MAX_WIDTH = 70
+const XHS_IMAGE_POPOVER_WIDTH = 300
+const XHS_IMAGE_POPOVER_HEIGHT = 205
+const XHS_IMAGE_POPOVER_GAP = 12
 
 interface XhsImageResizeSession {
   pointerId: number
@@ -349,7 +355,7 @@ function ArticleFormattingControls({
   )
 }
 
-export function PlatformPreviews({ activePlatform, title, html, sourceText, sourceLanguage, cover, formatting, onFormattingChange, xhsSettings: controlledXhsSettings, onXhsSettingsChange, previewAccount, previewDevice, isUpdating = false, onPreviewDeviceChange, locateRequest, onEditTarget, onMissingImageAction }: PlatformPreviewsProps) {
+export function PlatformPreviews({ activePlatform, title, html, sourceText, sourceLanguage, formatting, onFormattingChange, xhsSettings: controlledXhsSettings, onXhsSettingsChange, previewAccount, previewDevice, isUpdating = false, onPreviewDeviceChange, locateRequest, onEditTarget, onMissingImageAction }: PlatformPreviewsProps) {
   const [uncontrolledXhsSettings, setUncontrolledXhsSettings] = useState<XhsCardSettings>(DEFAULT_XHS_CARD_SETTINGS)
   const xhsSettings = controlledXhsSettings ?? uncontrolledXhsSettings
   const updateXhsSettings = onXhsSettingsChange ?? setUncontrolledXhsSettings
@@ -357,6 +363,7 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
   const [activeCard, setActiveCard] = useState(0)
   const [xhsPreviewMode, setXhsPreviewMode] = useState<XhsPreviewMode>('single')
   const [selectedXhsImageKey, setSelectedXhsImageKey] = useState<string | null>(null)
+  const [xhsImagePopover, setXhsImagePopover] = useState<XhsImagePopoverPosition | null>(null)
   const [xhsImageResizeSession, setXhsImageResizeSession] = useState<XhsImageResizeSession | null>(null)
   const [wechatThemeCategory, setWechatThemeCategory] = useState<WechatThemeCategory>('简约')
   const [toolRailWidth, setToolRailWidth] = useState(readToolRailWidth)
@@ -391,7 +398,6 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
   const visibleWechatThemes = WECHAT_THEMES.filter(
     theme => wechatThemeCategory === '全部' || getWechatThemeCategory(theme.id) === wechatThemeCategory,
   )
-  const hasCover = Boolean(cover)
   const preparedXhsLayout = useMemo(
     () => activePlatform === 'xhs'
       ? prepareXhsImageLayout(mappedPreview.html, xhsSettings.imageOverrides)
@@ -400,10 +406,9 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
   )
   const xhsPaginationOptions = useMemo(() => ({
     title,
-    hasCover,
     textScale: XHS_FONT_SIZE_SCALE[formatting.fontSize] * XHS_LINE_HEIGHT_SCALE[formatting.lineHeight],
     showFooter: xhsSettings.showFooter,
-  }), [formatting.fontSize, formatting.lineHeight, hasCover, title, xhsSettings.showFooter])
+  }), [formatting.fontSize, formatting.lineHeight, title, xhsSettings.showFooter])
   const estimatedCardPages = useMemo(
     () => activePlatform === 'xhs'
       ? paginateForXhsCards(preparedXhsLayout.html, xhsPaginationOptions)
@@ -413,7 +418,6 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
   const paginationKey = useMemo(() => [
     preparedXhsLayout.html,
     title,
-    cover || '',
     formatting.font,
     formatting.fontSize,
     formatting.lineHeight,
@@ -422,7 +426,6 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
     String(xhsSettings.showFooter),
     xhsSettings.footerText,
   ].join('\u0001'), [
-    cover,
     formatting.accent,
     formatting.font,
     formatting.fontSize,
@@ -448,6 +451,8 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
       : mappedPreview.html
   const workbenchRef = useRef<HTMLElement>(null)
   const previewStageRef = useRef<HTMLDivElement>(null)
+  const xhsLayoutRef = useRef<HTMLDivElement>(null)
+  const xhsImagePopoverRef = useRef<HTMLElement>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
   const mobilePreviewButtonRef = useRef<HTMLButtonElement>(null)
   const mobileDialogRef = useRef<HTMLDivElement>(null)
@@ -476,6 +481,59 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
   }), [formatting.accent, formatting.font, formatting.fontSize, formatting.lineHeight])
 
   const selectedXhsImage = preparedXhsLayout.images.find(image => image.key === selectedXhsImageKey) ?? null
+
+  const closeXhsImagePopover = useCallback(() => {
+    setSelectedXhsImageKey(null)
+    setXhsImagePopover(null)
+    setXhsImageResizeSession(null)
+  }, [])
+
+  const positionXhsImagePopover = (key: string, image: HTMLImageElement, clientX: number, clientY: number) => {
+    const layoutBounds = xhsLayoutRef.current?.getBoundingClientRect()
+    if (!layoutBounds) return
+
+    const anchorBounds = image.closest<HTMLElement>('.xhs-card-page')?.getBoundingClientRect() ?? image.getBoundingClientRect()
+    const minLeft = XHS_IMAGE_POPOVER_GAP
+    const minTop = XHS_IMAGE_POPOVER_GAP
+    const maxLeft = Math.max(minLeft, layoutBounds.width - XHS_IMAGE_POPOVER_WIDTH - XHS_IMAGE_POPOVER_GAP)
+    const maxTop = Math.max(minTop, layoutBounds.height - XHS_IMAGE_POPOVER_HEIGHT - XHS_IMAGE_POPOVER_GAP)
+    const anchor = {
+      left: anchorBounds.left - layoutBounds.left,
+      top: anchorBounds.top - layoutBounds.top,
+      right: anchorBounds.right - layoutBounds.left,
+      bottom: anchorBounds.bottom - layoutBounds.top,
+    }
+    const alignedLeft = clientX - layoutBounds.left - XHS_IMAGE_POPOVER_WIDTH / 2
+    const alignedTop = clientY - layoutBounds.top - XHS_IMAGE_POPOVER_HEIGHT / 2
+    const clampLeft = (value: number) => Math.min(maxLeft, Math.max(minLeft, value))
+    const clampTop = (value: number) => Math.min(maxTop, Math.max(minTop, value))
+    const candidates = [
+      { left: anchor.right + XHS_IMAGE_POPOVER_GAP, top: alignedTop },
+      { left: anchor.left - XHS_IMAGE_POPOVER_WIDTH - XHS_IMAGE_POPOVER_GAP, top: alignedTop },
+      { left: alignedLeft, top: anchor.bottom + XHS_IMAGE_POPOVER_GAP },
+      { left: alignedLeft, top: anchor.top - XHS_IMAGE_POPOVER_HEIGHT - XHS_IMAGE_POPOVER_GAP },
+    ].map(candidate => ({ left: clampLeft(candidate.left), top: clampTop(candidate.top) }))
+    const overlapArea = (candidate: { left: number; top: number }) => {
+      const overlapWidth = Math.max(0, Math.min(candidate.left + XHS_IMAGE_POPOVER_WIDTH, anchor.right) - Math.max(candidate.left, anchor.left))
+      const overlapHeight = Math.max(0, Math.min(candidate.top + XHS_IMAGE_POPOVER_HEIGHT, anchor.bottom) - Math.max(candidate.top, anchor.top))
+      return overlapWidth * overlapHeight
+    }
+    const distanceFromClick = (candidate: { left: number; top: number }) => {
+      const centerX = candidate.left + XHS_IMAGE_POPOVER_WIDTH / 2
+      const centerY = candidate.top + XHS_IMAGE_POPOVER_HEIGHT / 2
+      const clickX = clientX - layoutBounds.left
+      const clickY = clientY - layoutBounds.top
+      return Math.hypot(centerX - clickX, centerY - clickY)
+    }
+    const bestPosition = candidates.reduce((best, candidate) => {
+      const bestOverlap = overlapArea(best)
+      const candidateOverlap = overlapArea(candidate)
+      if (candidateOverlap !== bestOverlap) return candidateOverlap < bestOverlap ? candidate : best
+      return distanceFromClick(candidate) < distanceFromClick(best) ? candidate : best
+    })
+
+    setXhsImagePopover({ key, ...bestPosition })
+  }
 
   const updateXhsImageOverride = (key: string, layout: XhsImageLayout, widthPercent: number) => {
     const normalized = normalizeXhsImageOverride({ layout, widthPercent })
@@ -644,7 +702,6 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
       if (cancelled) return
       const measurer = createXhsCardPageMeasurer({
         title,
-        cover,
         template: xhsSettings.template,
         showFooter: xhsSettings.showFooter,
         footerText: xhsSettings.footerText,
@@ -663,7 +720,7 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
       }
     }
 
-    void waitForXhsPaginationAssets(preparedXhsLayout.html, cover).then(() => {
+    void waitForXhsPaginationAssets(preparedXhsLayout.html).then(() => {
       if (cancelled) return
       assetFrame = window.requestAnimationFrame(measure)
     })
@@ -674,7 +731,6 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
     }
   }, [
     activePlatform,
-    cover,
     paginationKey,
     preparedXhsLayout.html,
     title,
@@ -696,15 +752,37 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
 
   useEffect(() => {
     setSelectedXhsImageKey(null)
+    setXhsImagePopover(null)
     setXhsImageResizeSession(null)
     setExportError(null)
   }, [activePlatform])
 
   useEffect(() => {
     if (selectedXhsImageKey && !preparedXhsLayout.images.some(image => image.key === selectedXhsImageKey)) {
-      setSelectedXhsImageKey(null)
+      closeXhsImagePopover()
     }
-  }, [preparedXhsLayout.images, selectedXhsImageKey])
+  }, [closeXhsImagePopover, preparedXhsLayout.images, selectedXhsImageKey])
+
+  useEffect(() => {
+    if (!xhsImagePopover) return
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!(event.target instanceof Element)) return
+      if (xhsImagePopoverRef.current?.contains(event.target)) return
+      if (event.target.closest('img[data-xhs-image-key], [data-xhs-resize-handle]')) return
+      closeXhsImagePopover()
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      closeXhsImagePopover()
+    }
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [closeXhsImagePopover, xhsImagePopover])
 
   useEffect(() => {
     if (!xhsImageResizeSession) return
@@ -845,6 +923,7 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
 
   const rememberScroll = (event: UIEvent<HTMLDivElement>) => {
     scrollPositionsRef.current[activePlatform] = event.currentTarget.scrollTop
+    if (activePlatform === 'xhs' && xhsImagePopover) closeXhsImagePopover()
   }
 
   const selectTarget = (target: PreviewEditTarget) => {
@@ -864,16 +943,22 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
     }
   }
 
-  const selectXhsImage = (target: EventTarget | null): boolean => {
+  const selectXhsImage = (target: EventTarget | null, point?: { clientX: number; clientY: number }): boolean => {
     if (activePlatform !== 'xhs' || !(target instanceof Element)) return false
     const image = target.closest<HTMLImageElement>('img[data-xhs-image-key]')
     const key = image?.dataset.xhsImageKey
     if (!key) return false
     const pageIndex = Number(image.closest<HTMLElement>('[data-xhs-page]')?.dataset.xhsPage)
     if (Number.isInteger(pageIndex)) setActiveCard(pageIndex)
-    if (xhsPreviewMode !== 'single') setXhsPreviewMode('single')
     setSelectedTarget(null)
     setSelectedXhsImageKey(key)
+    const imageBounds = image.getBoundingClientRect()
+    positionXhsImagePopover(
+      key,
+      image,
+      point?.clientX ?? imageBounds.right,
+      point?.clientY ?? imageBounds.top + imageBounds.height / 2,
+    )
     return true
   }
 
@@ -913,7 +998,7 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
       return
     }
     if (event.target instanceof Element && event.target.closest('[data-xhs-resize-handle]')) return
-    if (selectXhsImage(event.target)) {
+    if (selectXhsImage(event.target, { clientX: event.clientX, clientY: event.clientY })) {
       event.preventDefault()
       return
     }
@@ -929,7 +1014,7 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
     selectBodyBlock(event.target, event.currentTarget)
   }
 
-  const selectStandaloneTargetWithKeyboard = (event: ReactKeyboardEvent<HTMLElement>, kind: 'title' | 'cover') => {
+  const selectStandaloneTargetWithKeyboard = (event: ReactKeyboardEvent<HTMLElement>, kind: 'title') => {
     if (event.key !== 'Enter' && event.key !== ' ') return
     event.preventDefault()
     selectTarget({ kind })
@@ -937,6 +1022,7 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
 
   const changeActiveCard = (index: number) => {
     setActiveCard(Math.max(0, Math.min(cardPages.length - 1, index)))
+    closeXhsImagePopover()
     clearSelectedTarget()
   }
 
@@ -1047,7 +1133,7 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
 
   const changeXhsPreviewMode = (mode: XhsPreviewMode) => {
     setXhsPreviewMode(mode)
-    if (mode !== 'single') setSelectedXhsImageKey(null)
+    closeXhsImagePopover()
     clearSelectedTarget()
   }
 
@@ -1070,16 +1156,6 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
         onClick={options.interactive ? () => selectTarget({ kind: 'title' }) : undefined}
         onKeyDown={options.interactive ? event => selectStandaloneTargetWithKeyboard(event, 'title') : undefined}
       >{title || '未命名文章'}</h1>}
-      {index === 0 && cover && <img
-        className="xhs-card-cover"
-        data-edit-target={options.interactive ? 'cover' : undefined}
-        src={cover}
-        alt="文章封面"
-        role={options.interactive ? 'button' : undefined}
-        tabIndex={options.interactive ? 0 : undefined}
-        onClick={options.interactive ? () => selectTarget({ kind: 'cover' }) : undefined}
-        onKeyDown={options.interactive ? event => selectStandaloneTargetWithKeyboard(event, 'cover') : undefined}
-      />}
       <div
         className="xhs-card-content"
         onClick={options.interactive ? handleBodyClick : undefined}
@@ -1093,6 +1169,25 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
       ? card
       : <div className="xhs-card-frame" key={index}>{card}</div>
   }
+
+  const renderXhsCardWithActions = (pageHtml: string, index: number, variant: 'focused' | 'spread' | 'overview') => (
+    <figure className={`xhs-card-item ${variant}${variant === 'overview' ? ' xhs-overview-item' : ''}`} key={index}>
+      {renderXhsCard(pageHtml, index, { interactive: true })}
+      <figcaption>
+        <span>图片 {String(index + 1).padStart(2, '0')}</span>
+        <span className="xhs-card-footer-actions">
+          <button type="button" onClick={() => void openCardPreview(index)} disabled={previewingCard !== null} aria-label={`放大查看第 ${index + 1} 张卡片`}>
+            {previewingCard === index ? <LoaderCircle className="spin" size={14} /> : <Maximize2 size={14} />}
+            <span>放大查看</span>
+          </button>
+          <button type="button" onClick={() => void downloadCard(index)} disabled={exporting !== null} aria-label={`下载第 ${index + 1} 张卡片`}>
+            {exporting === index ? <LoaderCircle className="spin" size={14} /> : <Download size={14} />}
+            <span>下载当前页</span>
+          </button>
+        </span>
+      </figcaption>
+    </figure>
+  )
 
   const profileName = previewAccount?.username || previewAccount?.name || '创作者账号'
   const profileHandle = previewAccount?.username
@@ -1172,16 +1267,6 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
                     onKeyDown={event => selectStandaloneTargetWithKeyboard(event, 'title')}
                   >{title || '未命名文章'}</h1>
                   <p className="wechat-meta">Dispatch Preview　·　公众号草稿</p>
-                  {cover && <img
-                    className="wechat-cover"
-                    data-edit-target="cover"
-                    src={cover}
-                    alt="文章封面"
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => selectTarget({ kind: 'cover' })}
-                    onKeyDown={event => selectStandaloneTargetWithKeyboard(event, 'cover')}
-                  />}
                   <div className="wechat-content" onClick={handleBodyClick} onKeyDown={handleBodyKeyDown} dangerouslySetInnerHTML={{ __html: mappedWechatPreview.html }} />
                 </div>
               </div>
@@ -1257,13 +1342,13 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
 
         {activePlatform === 'xhs' && (
           <article className="single-platform-preview xhs-preview">
-            <div className={`xhs-layout ${toolRailOpen.xhs ? 'tool-rail-open' : ''}`}>
+            <div ref={xhsLayoutRef} className={`xhs-layout ${toolRailOpen.xhs ? 'tool-rail-open' : ''}`}>
               <div ref={viewportRef} className={`platform-preview-viewport xhs-viewport mode-${xhsPreviewMode}`} onScroll={rememberScroll}>
                 {xhsPreviewMode === 'single' && (
                   <>
                     <div className="xhs-stage">
                       <button type="button" className="card-nav previous" onClick={() => changeActiveCard(activeCard - 1)} disabled={activeCard === 0} aria-label="上一张卡片"><ChevronLeft size={20} /></button>
-                      {renderXhsCard(cardPages[activeCard], activeCard, { interactive: true })}
+                      {renderXhsCardWithActions(cardPages[activeCard], activeCard, 'focused')}
                       <button type="button" className="card-nav next" onClick={() => changeActiveCard(activeCard + 1)} disabled={activeCard === cardPages.length - 1} aria-label="下一张卡片"><ChevronRight size={20} /></button>
                     </div>
                     <div className="card-pagination" aria-label="选择图文卡片">
@@ -1279,7 +1364,7 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
                     <div className="xhs-spread-stage">
                       <button type="button" className="card-nav previous" onClick={() => changeActiveCard(spreadStart - 2)} disabled={spreadStart === 0} aria-label="上一组卡片"><ChevronLeft size={20} /></button>
                       <div className="xhs-card-spread">
-                        {cardPages.slice(spreadStart, spreadStart + 2).map((page, offset) => renderXhsCard(page, spreadStart + offset, { interactive: true }))}
+                        {cardPages.slice(spreadStart, spreadStart + 2).map((page, offset) => renderXhsCardWithActions(page, spreadStart + offset, 'spread'))}
                       </div>
                       <button type="button" className="card-nav next" onClick={() => changeActiveCard(spreadStart + 2)} disabled={spreadStart + 2 >= cardPages.length} aria-label="下一组卡片"><ChevronRight size={20} /></button>
                     </div>
@@ -1294,25 +1379,53 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
 
                 {xhsPreviewMode === 'all' && (
                   <div className="xhs-overview" aria-label="全部小红书卡片预览">
-                    {cardPages.map((page, index) => (
-                      <figure className="xhs-overview-item" key={index}>
-                        {renderXhsCard(page, index, { interactive: true })}
-                        <figcaption>
-                          <span>图片 {String(index + 1).padStart(2, '0')}</span>
-                          <span className="xhs-overview-actions">
-                            <button type="button" onClick={() => void openCardPreview(index)} disabled={previewingCard !== null} aria-label={`放大查看第 ${index + 1} 张卡片`}>
-                              {previewingCard === index ? <LoaderCircle className="spin" size={15} /> : <Maximize2 size={15} />}
-                            </button>
-                            <button type="button" onClick={() => void downloadCard(index)} disabled={exporting !== null} aria-label={`下载第 ${index + 1} 张卡片`}>
-                              {exporting === index ? <LoaderCircle className="spin" size={15} /> : <Download size={15} />}
-                            </button>
-                          </span>
-                        </figcaption>
-                      </figure>
-                    ))}
+                    {cardPages.map((page, index) => renderXhsCardWithActions(page, index, 'overview'))}
                   </div>
                 )}
               </div>
+
+              {selectedXhsImage && xhsImagePopover?.key === selectedXhsImage.key && (
+                <section
+                  ref={xhsImagePopoverRef}
+                  className="xhs-image-popover"
+                  role="dialog"
+                  aria-label={`调整图片：${selectedXhsImage.alt}`}
+                  style={{ left: xhsImagePopover.left, top: xhsImagePopover.top }}
+                >
+                  <header>
+                    <span><strong>图片调整</strong><small title={selectedXhsImage.alt}>{selectedXhsImage.alt}</small></span>
+                    <button type="button" aria-label="关闭图片调整" onClick={closeXhsImagePopover}><CloseIcon size={15} /></button>
+                  </header>
+                  <div className="xhs-image-controls">
+                    <div className="xhs-image-layout-options" role="radiogroup" aria-label="选择图片布局">
+                      {([['full', '通栏'], ['image-left', '左图右文'], ['image-right', '左文右图']] as const).map(([layout, label]) => (
+                        <button
+                          type="button"
+                          role="radio"
+                          aria-checked={selectedXhsImage.layout === layout}
+                          className={selectedXhsImage.layout === layout ? 'selected' : ''}
+                          disabled={layout !== 'full' && !selectedXhsImage.canPair}
+                          title={layout !== 'full' && !selectedXhsImage.canPair ? '图片后需要有可配对的正文段落' : undefined}
+                          key={layout}
+                          onClick={() => changeSelectedXhsImageLayout(layout)}
+                        >{label}</button>
+                      ))}
+                    </div>
+                    <label className="xhs-image-width-control">
+                      <span><strong>图片宽度</strong><output>{Math.round(selectedXhsImage.widthPercent)}%</output></span>
+                      <input
+                        type="range"
+                        min={selectedXhsImage.layout === 'full' ? XHS_IMAGE_FULL_MIN_WIDTH : XHS_IMAGE_SPLIT_MIN_WIDTH}
+                        max={selectedXhsImage.layout === 'full' ? 100 : XHS_IMAGE_SPLIT_MAX_WIDTH}
+                        value={selectedXhsImage.widthPercent}
+                        aria-label="调整选中图片宽度"
+                        onChange={event => changeSelectedXhsImageWidth(Number(event.target.value))}
+                      />
+                    </label>
+                    <button type="button" className="xhs-image-reset" onClick={() => resetXhsImageOverride(selectedXhsImage.key)}>恢复默认</button>
+                  </div>
+                </section>
+              )}
 
               {toolRailOpen.xhs && (
                 <div
@@ -1346,42 +1459,6 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
                   </div>
                 </section>
 
-                <section className="xhs-tool-section xhs-image-tools" aria-label="小红书图片调整">
-                  <div className="xhs-tool-heading"><strong>图片调整</strong><small>{selectedXhsImage ? selectedXhsImage.alt : '在卡片中选择图片'}</small></div>
-                  {selectedXhsImage ? (
-                    <div className="xhs-image-controls">
-                      <div className="xhs-image-layout-options" role="radiogroup" aria-label="选择图片布局">
-                        {([['full', '通栏'], ['image-left', '左图右文'], ['image-right', '左文右图']] as const).map(([layout, label]) => (
-                          <button
-                            type="button"
-                            role="radio"
-                            aria-checked={selectedXhsImage.layout === layout}
-                            className={selectedXhsImage.layout === layout ? 'selected' : ''}
-                            disabled={layout !== 'full' && !selectedXhsImage.canPair}
-                            title={layout !== 'full' && !selectedXhsImage.canPair ? '图片后需要有可配对的正文段落' : undefined}
-                            key={layout}
-                            onClick={() => changeSelectedXhsImageLayout(layout)}
-                          >{label}</button>
-                        ))}
-                      </div>
-                      <label className="xhs-image-width-control">
-                        <span><strong>图片宽度</strong><output>{Math.round(selectedXhsImage.widthPercent)}%</output></span>
-                        <input
-                          type="range"
-                          min={selectedXhsImage.layout === 'full' ? XHS_IMAGE_FULL_MIN_WIDTH : XHS_IMAGE_SPLIT_MIN_WIDTH}
-                          max={selectedXhsImage.layout === 'full' ? 100 : XHS_IMAGE_SPLIT_MAX_WIDTH}
-                          value={selectedXhsImage.widthPercent}
-                          aria-label="调整选中图片宽度"
-                          onChange={event => changeSelectedXhsImageWidth(Number(event.target.value))}
-                        />
-                      </label>
-                      <button type="button" className="xhs-image-reset" onClick={() => resetXhsImageOverride(selectedXhsImage.key)}>恢复图片默认排版</button>
-                    </div>
-                  ) : (
-                    <p className="xhs-image-empty">点击卡片中的图片后，可调整左右图文布局，也可以拖动四角等比缩放。</p>
-                  )}
-                </section>
-
                 <section className="xhs-tool-section xhs-style-tools" aria-label="小红书样式与排版">
                   <div className="xhs-tool-heading"><strong>样式与排版</strong><small>同步到图片</small></div>
                   <div className="xhs-card-settings">
@@ -1404,10 +1481,6 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
 
                 <section className="xhs-tool-section xhs-download-tools">
                   <div className="xhs-tool-heading"><strong>下载图片</strong><small>PNG / ZIP</small></div>
-                  <div className="xhs-current-page-actions">
-                    <button type="button" className="xhs-rail-action" onClick={() => void openCardPreview(activeCard)} disabled={previewingCard !== null}>{previewingCard === activeCard ? <LoaderCircle className="spin" size={15} /> : <Maximize2 size={15} />}<span>放大查看</span></button>
-                    <button type="button" className="xhs-rail-action" onClick={() => void downloadCard(activeCard)} disabled={exporting !== null}>{exporting === activeCard ? <LoaderCircle className="spin" size={15} /> : <Download size={15} />}<span>下载当前页</span></button>
-                  </div>
                   <button type="button" className="xhs-rail-action primary" onClick={() => void downloadAllCards()} disabled={exporting !== null}>{exporting === 'all' ? <LoaderCircle className="spin" size={15} /> : <Layers3 size={15} />}<span>下载全部图片</span></button>
                   {exportError && <div className="xhs-export-error" role="alert">{exportError}</div>}
                 </section>
@@ -1489,7 +1562,6 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
                     <div className="mobile-article-scroll">
                       <h1>{title || '未命名文章'}</h1>
                       <p className="mobile-wechat-meta">{profileName} · 公众号草稿</p>
-                      {cover && <img className="mobile-article-cover" src={cover} alt="文章封面" />}
                       <div className="mobile-wechat-content" dangerouslySetInnerHTML={{ __html: mappedWechatPreview.html }} />
                     </div>
                   </div>
@@ -1520,7 +1592,6 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
                   <div className="mobile-x-preview">
                     <header className="mobile-x-header"><button type="button" onClick={closeMobilePreview} aria-label="返回工作台"><ChevronLeft size={22} /></button><img src={xLogo} alt="" /><strong>Article</strong><span><Share2 size={18} /><MoreHorizontal size={18} /></span></header>
                     <div className="mobile-x-scroll">
-                      {cover ? <img className="mobile-x-cover" src={cover} alt="文章封面" /> : <div className="mobile-x-cover-placeholder"><ImagePlus size={22} /></div>}
                       <h1>{title || '未命名文章'}</h1>
                       <div className="mobile-x-author"><span>{profileAvatar}</span><strong>{profileName}</strong><small>{profileHandle}</small></div>
                       <div className="mobile-x-content" dangerouslySetInnerHTML={{ __html: mappedPreview.html }} />

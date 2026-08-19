@@ -87,7 +87,6 @@ function article(value: unknown, draftId: string, importedAt: string): ArticleDr
     ...(typeof value.markdown === 'string' ? { markdown: value.markdown } : {}),
     ...(typeof value.sourceText === 'string' ? { sourceText: value.sourceText } : {}),
     ...(language ? { sourceLanguage: language } : {}),
-    ...(typeof value.cover === 'string' ? { cover: value.cover } : {}),
     ...(typeof value.summary === 'string' ? { summary: value.summary } : {}),
     tags: stringArray(value.tags),
     sourceFile: stringValue(value.sourceFile, '备份恢复稿件'),

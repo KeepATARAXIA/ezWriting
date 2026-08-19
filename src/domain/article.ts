@@ -8,7 +8,6 @@ export interface ArticleDraft {
   markdown?: string
   sourceText?: string
   sourceLanguage?: ArticleSourceLanguage
-  cover?: string
   summary?: string
   tags: string[]
   sourceFile: string

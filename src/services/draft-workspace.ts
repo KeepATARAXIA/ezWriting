@@ -19,7 +19,7 @@ export interface DraftWorkspaceSnapshot {
 }
 
 export function defaultDraftKind(article: ArticleDraft): DraftKind {
-  if (article.cover || /<img\b/i.test(article.html)) return 'image'
+  if (/<img\b/i.test(article.html)) return 'image'
   return 'longform'
 }
 

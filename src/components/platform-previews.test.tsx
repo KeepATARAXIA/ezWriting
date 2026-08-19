@@ -305,7 +305,13 @@ describe('PlatformPreviews editor-to-preview locating', () => {
       .find(button => button.textContent === '大')!
     await act(async () => largeFontButton.click())
     expect(onFormattingChange).toHaveBeenCalledWith(expect.objectContaining({ fontSize: 'large' }))
-    expect(Array.from(container.querySelectorAll<HTMLButtonElement>('.xhs-current-page-actions button')).map(button => button.textContent)).toEqual(['放大查看', '下载当前页'])
+    expect(Array.from(container.querySelectorAll<HTMLButtonElement>('.xhs-card-footer-actions button')).map(button => button.textContent)).toEqual(['放大查看', '下载当前页'])
+    expect(container.querySelector('.xhs-download-tools .xhs-card-footer-actions')).toBeNull()
+    expect(Array.from(container.querySelectorAll<HTMLButtonElement>('.xhs-download-tools button')).map(button => button.textContent)).toEqual(['下载全部图片'])
+
+    await act(async () => Array.from(container.querySelectorAll<HTMLButtonElement>('[aria-label="切换小红书预览方式"] button'))
+      .find(button => button.textContent === '双页')?.click())
+    expect(container.querySelectorAll('.xhs-card-spread .xhs-card-footer-actions')).toHaveLength(1)
 
     await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="收起小红书工具侧栏"]')?.click())
     expect(container.querySelector('.xhs-layout')?.classList.contains('tool-rail-open')).toBe(false)
@@ -337,12 +343,30 @@ describe('PlatformPreviews editor-to-preview locating', () => {
       />,
     ))
 
+    vi.spyOn(container.querySelector<HTMLElement>('.xhs-layout')!, 'getBoundingClientRect').mockReturnValue({
+      left: 0, top: 0, right: 1000, bottom: 800, width: 1000, height: 800, x: 0, y: 0, toJSON: () => ({}),
+    })
+    vi.spyOn(container.querySelector<HTMLElement>('.xhs-viewport')!, 'getBoundingClientRect').mockReturnValue({
+      left: 0, top: 0, right: 820, bottom: 800, width: 820, height: 800, x: 0, y: 0, toJSON: () => ({}),
+    })
+    vi.spyOn(container.querySelector<HTMLElement>('.xhs-card-page')!, 'getBoundingClientRect').mockReturnValue({
+      left: 150, top: 40, right: 650, bottom: 707, width: 500, height: 667, x: 150, y: 40, toJSON: () => ({}),
+    })
     const image = container.querySelector<HTMLImageElement>('.xhs-card-content img[data-xhs-image-key]')!
-    await act(async () => image.click())
+    vi.spyOn(image, 'getBoundingClientRect').mockReturnValue({
+      left: 200, top: 150, right: 600, bottom: 400, width: 400, height: 250, x: 200, y: 150, toJSON: () => ({}),
+    })
+    await act(async () => image.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 320, clientY: 240 })))
 
     expect(onEditTarget).not.toHaveBeenCalled()
     expect(container.querySelectorAll('.xhs-image-resize-handle')).toHaveLength(4)
-    expect(container.querySelector('.xhs-image-tools')?.textContent).toContain('流程图')
+    expect(container.querySelector('.xhs-image-tools')).toBeNull()
+    const popover = container.querySelector<HTMLElement>('.xhs-image-popover')!
+    expect(popover).not.toBeNull()
+    expect(popover.textContent).toContain('流程图')
+    expect(popover.getAttribute('role')).toBe('dialog')
+    expect(popover.style.left).toBe('662px')
+    expect(popover.style.top).toBe('137.5px')
 
     const leftLayout = Array.from(container.querySelectorAll<HTMLButtonElement>('[aria-label="选择图片布局"] button'))
       .find(button => button.textContent === '左图右文')!
@@ -358,7 +382,7 @@ describe('PlatformPreviews editor-to-preview locating', () => {
     })
     expect(container.querySelector<HTMLOutputElement>('.xhs-image-width-control output')?.textContent).toBe('55%')
 
-    const previewButton = Array.from(container.querySelectorAll<HTMLButtonElement>('.xhs-current-page-actions button'))
+    const previewButton = Array.from(container.querySelectorAll<HTMLButtonElement>('.xhs-card-footer-actions button'))
       .find(button => button.textContent?.includes('放大查看'))!
     await act(async () => {
       previewButton.click()
@@ -370,6 +394,9 @@ describe('PlatformPreviews editor-to-preview locating', () => {
     await act(async () => container.querySelector<HTMLButtonElement>('.xhs-image-reset')?.click())
     expect(container.querySelector('.xhs-media-layout')).toBeNull()
     expect(container.querySelector<HTMLInputElement>('input[aria-label="调整选中图片宽度"]')?.value).toBe('100')
+
+    await act(async () => document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })))
+    expect(container.querySelector('.xhs-image-popover')).toBeNull()
 
     await act(async () => container.querySelector<HTMLElement>('.xhs-card-content [data-source-block="1"]')?.click())
     expect(onEditTarget).toHaveBeenCalledWith({ kind: 'body', blockIndex: 1 })
@@ -396,7 +423,7 @@ describe('PlatformPreviews editor-to-preview locating', () => {
 
     expect(container.querySelector('.xhs-export-sheet')).toBeNull()
 
-    const previewButton = Array.from(container.querySelectorAll<HTMLButtonElement>('.xhs-current-page-actions button'))
+    const previewButton = Array.from(container.querySelectorAll<HTMLButtonElement>('.xhs-card-footer-actions button'))
       .find(button => button.textContent?.includes('放大查看'))!
     await act(async () => {
       previewButton.click()

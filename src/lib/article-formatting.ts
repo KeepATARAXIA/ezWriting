@@ -180,16 +180,18 @@ export function applyArticleFormatting(html: string, formatting: ArticleFormatti
 
       const input = item.querySelector<HTMLInputElement>(':scope > label input[type="checkbox"]')
       const label = item.querySelector<HTMLElement>(':scope > label')
-      if (label) {
-        const marker = document.createElement('span')
-        marker.textContent = checked ? '☑' : '☐'
-        marker.style.color = checked ? accent : '#87919b'
-        marker.style.fontFamily = 'sans-serif'
-        marker.style.fontSize = ARTICLE_FONT_SIZES[formatting.fontSize]
-        label.replaceWith(marker)
-      } else if (input) {
-        input.replaceWith(document.createTextNode(checked ? '☑' : '☐'))
+      let marker = item.querySelector<HTMLElement>(':scope > [data-ez-task-marker]')
+      if (!marker) {
+        marker = document.createElement('span')
+        marker.dataset.ezTaskMarker = 'true'
+        if (label) label.replaceWith(marker)
+        else if (input) input.replaceWith(marker)
+        else item.prepend(marker)
       }
+      marker.textContent = checked ? '☑' : '☐'
+      marker.style.color = checked ? accent : '#87919b'
+      marker.style.fontFamily = 'sans-serif'
+      marker.style.fontSize = ARTICLE_FONT_SIZES[formatting.fontSize]
 
       const content = item.querySelector<HTMLElement>(':scope > div')
       if (content && checked) {

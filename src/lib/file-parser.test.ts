@@ -51,7 +51,7 @@ describe('parseContentFile', () => {
     expect(article.warnings).toEqual([])
   })
 
-  it('resolves a front-matter cover from a ZIP content package', async () => {
+  it('ignores a front-matter cover from a ZIP content package', async () => {
     const zip = new JSZip()
     zip.file('article.md', '---\ntitle: 封面测试\ncover: assets/cover.png\n---\n\n正文')
     zip.file('assets/cover.png', new Uint8Array([137, 80, 78, 71]))
@@ -60,8 +60,9 @@ describe('parseContentFile', () => {
 
     const article = await parseContentFile(file)
 
-    expect(article.cover).toMatch(/^data:image\/png;base64,/)
+    expect(article).not.toHaveProperty('cover')
     expect(article.warnings).toEqual([])
+    expect(article.missingAssets).toEqual([])
   })
 
   it('reports local Markdown images that were not selected', async () => {
@@ -75,13 +76,14 @@ describe('parseContentFile', () => {
     expect(article.html).toContain('data-missing-id="missing-image-0"')
   })
 
-  it('reports a local front-matter cover that was not selected', async () => {
+  it('does not request a local front-matter cover that was not selected', async () => {
     const file = new File(['---\ntitle: 缺封面测试\ncover: assets/cover.png\n---\n\n正文'], 'article.md', { type: 'text/markdown' })
 
     const article = await parseContentFile(file)
 
-    expect(article.missingAssets).toEqual(['assets/cover.png'])
-    expect(article.warnings).toContain('未找到封面图片：assets/cover.png')
+    expect(article).not.toHaveProperty('cover')
+    expect(article.missingAssets).toEqual([])
+    expect(article.warnings).toEqual([])
   })
 
   it('resolves standard Markdown images from a selected article folder', async () => {

@@ -24,7 +24,6 @@ interface ParsedSource {
   markdown?: string
   sourceText: string
   sourceLanguage: ArticleSourceLanguage
-  cover?: string
   summary?: string
   tags: string[]
   warnings: string[]
@@ -35,8 +34,6 @@ type AssetSource = File | Uint8Array
 
 interface FrontMatter {
   title?: string
-  cover?: string
-  image?: string
   summary?: string
   description?: string
   tags?: string[] | string
@@ -182,23 +179,6 @@ async function assetDataUri(path: string, source: AssetSource): Promise<string> 
   return toDataUri(await assetBytes(source), mimeFor(path))
 }
 
-async function resolveCoverAsset(
-  source: ParsedSource,
-  articlePath: string,
-  assets: Map<string, AssetSource>,
-): Promise<void> {
-  if (!source.cover || isExternalAsset(source.cover)) return
-  const reference = decodeReference(source.cover)
-  const resolved = findAsset(reference, articlePath, assets)
-  if (resolved.path && resolved.source) {
-    source.cover = await assetDataUri(resolved.path, resolved.source)
-    return
-  }
-  if (!source.missingAssets.includes(reference)) source.missingAssets.push(reference)
-  const warning = resolved.ambiguous ? `封面图片存在重名，无法确定：${reference}` : `未找到封面图片：${reference}`
-  if (!source.warnings.includes(warning)) source.warnings.push(warning)
-}
-
 function buildFileAssets(files: File[]): Map<string, AssetSource> {
   const imageFiles = files.filter(file => IMAGE_EXTENSIONS.has(extensionOf(file.name)))
   if (imageFiles.length > MAX_ARCHIVE_FILES) {
@@ -282,7 +262,6 @@ function parseMarkdown(markdown: string, fallbackTitle: string, warnings: string
     markdown: body,
     sourceText: body,
     sourceLanguage: 'markdown',
-    cover: metadata.cover || metadata.image,
     summary: metadata.summary || metadata.description,
     tags: normalizeTags(metadata.tags),
     warnings,
@@ -295,7 +274,6 @@ function parseHtml(html: string, fallbackTitle: string, warnings: string[]): Par
   const title = document.querySelector('h1')?.textContent?.trim()
     || document.querySelector('title')?.textContent?.trim()
     || fallbackTitle
-  const cover = document.querySelector<HTMLMetaElement>('meta[property="og:image"], meta[name="cover"]')?.content
   const summary = document.querySelector<HTMLMetaElement>('meta[name="description"], meta[property="og:description"]')?.content
   const content = document.querySelector('article') || document.querySelector('main') || document.body
 
@@ -309,7 +287,6 @@ function parseHtml(html: string, fallbackTitle: string, warnings: string[]): Par
     html: safeHtml,
     sourceText: safeHtml,
     sourceLanguage: 'html',
-    cover,
     summary,
     tags: [],
     warnings,
@@ -358,7 +335,6 @@ async function parseZip(file: File): Promise<ParsedSource> {
     const parsed = parseMarkdown(replaced.markdown, fallback, warnings)
     parsed.missingAssets = replaced.missingAssets
     parsed.html = markMissingImages(parsed.html, replaced.missingAssets)
-    await resolveCoverAsset(parsed, normalizePath(articleEntry.name), assets)
     return parsed
   }
 
@@ -366,7 +342,6 @@ async function parseZip(file: File): Promise<ParsedSource> {
   const parsed = parseHtml(replaced.html, fallback, warnings)
   parsed.missingAssets = replaced.missingAssets
   parsed.html = markMissingImages(parsed.html, replaced.missingAssets)
-  await resolveCoverAsset(parsed, normalizePath(articleEntry.name), assets)
   return parsed
 }
 
@@ -397,7 +372,6 @@ export async function parseContentFile(file: File, relatedFiles: File[] = []): P
     source = parseMarkdown(replaced.markdown, titleFromFile(file.name), warnings)
     source.missingAssets = replaced.missingAssets
     source.html = markMissingImages(source.html, replaced.missingAssets)
-    await resolveCoverAsset(source, sourcePath, assets)
   } else if (extension === 'html' || extension === 'htm') {
     sourceKind = 'html'
     const warnings: string[] = []
@@ -405,7 +379,6 @@ export async function parseContentFile(file: File, relatedFiles: File[] = []): P
     source = parseHtml(replaced.html, titleFromFile(file.name), warnings)
     source.missingAssets = replaced.missingAssets
     source.html = markMissingImages(source.html, replaced.missingAssets)
-    await resolveCoverAsset(source, sourcePath, assets)
   } else if (extension === 'zip') {
     sourceKind = 'zip'
     source = await parseZip(file)

@@ -420,6 +420,15 @@ describe('App publishing engine onboarding', () => {
     expect(container.textContent).toContain('文档资源')
     expect(container.textContent).toContain('还差 1 张本地图片')
     expect(container.querySelectorAll('.article-resource-card')).toHaveLength(1)
+    const scrollIntoView = vi.fn()
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView })
+    await act(async () => container.querySelector<HTMLButtonElement>('.resource-card-locate')?.click())
+    const locatedMissingImage = container.querySelector<HTMLElement>('.wechat-content .missing-image-card')
+    expect(container.querySelector('.editor-grid')?.classList.contains('workspace-mode-split')).toBe(true)
+    expect(container.querySelector('.preview-device-frame')?.classList.contains('desktop')).toBe(true)
+    expect(locatedMissingImage?.classList.contains('preview-located-target')).toBe(true)
+    expect(locatedMissingImage?.getAttribute('data-preview-selected')).toBe('true')
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'center', inline: 'nearest', behavior: 'smooth' })
     await act(async () => editTab.dispatchEvent(new MouseEvent('click', { bubbles: true })))
 
     const separator = container.querySelector<HTMLDivElement>('[role="separator"]')!
@@ -545,6 +554,7 @@ describe('App publishing engine onboarding', () => {
     const spreadButton = container.querySelector<HTMLButtonElement>('button[aria-label="双页预览"]')!
     await act(async () => spreadButton.dispatchEvent(new MouseEvent('click', { bubbles: true })))
     expect(container.querySelectorAll('.xhs-card-spread .xhs-card-page')).toHaveLength(2)
+    expect(container.querySelectorAll('.xhs-card-spread .xhs-card-footer-actions')).toHaveLength(2)
 
     const mobilePreview = Array.from(container.querySelectorAll<HTMLButtonElement>('.device-preview-switcher button'))
       .find(button => button.textContent?.includes('手机预览'))!

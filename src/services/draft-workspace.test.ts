@@ -43,7 +43,6 @@ function persisted(overrides: Partial<PersistedDraft> = {}): PersistedDraft {
 describe('draft workspace', () => {
   describe('defaultDraftKind', () => {
     it.each([
-      ['封面稿件', article({ cover: 'data:image/png;base64,AQID' }), 'image'],
       ['正文图片稿件', article({ html: '<p>正文</p><IMG src="cover.png">' }), 'image'],
       ['纯文本稿件', article(), 'longform'],
       ['空白稿件', article({ html: '' }), 'longform'],
@@ -116,7 +115,6 @@ describe('draft workspace', () => {
       article: article({
         title: '恢复后的稿件',
         html: '<h1>恢复后的稿件</h1><p>正文</p>',
-        cover: 'data:image/png;base64,AQID',
       }),
       formatting: {
         ...DEFAULT_ARTICLE_FORMATTING,

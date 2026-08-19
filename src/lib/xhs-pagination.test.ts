@@ -33,8 +33,8 @@ describe('paginateForXhsCards', () => {
   })
 
   it('splits long ordered lists while keeping numbering continuous', () => {
-    const items = Array.from({ length: 5 }, (_, index) => `<li>第 ${index + 1} 项：${'这是一段需要保留编号的列表内容。'.repeat(7)}</li>`).join('')
-    const pages = paginateForXhsCards(`<ol data-source-block="4">${items}</ol>`, { title: '长列表', hasCover: true })
+    const items = Array.from({ length: 5 }, (_, index) => `<li>第 ${index + 1} 项：${'这是一段需要保留编号的列表内容。'.repeat(12)}</li>`).join('')
+    const pages = paginateForXhsCards(`<ol data-source-block="4">${items}</ol>`, { title: '长列表' })
     const documents = pages.map(parsePage)
     const renderedItems = documents.flatMap(document => Array.from(document.querySelectorAll('li')).map(item => item.textContent))
     const starts = documents.flatMap(document => Array.from(document.querySelectorAll('ol')).map(list => Number(list.getAttribute('start') || 1)))

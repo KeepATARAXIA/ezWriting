@@ -129,6 +129,7 @@ async function storedAssetFromDataUri(dataUri: string): Promise<Omit<StoredAsset
 }
 
 async function extractArticleAssets(article: ArticleDraft): Promise<ExtractedArticle> {
+  const { cover: _legacyCover, ...articleWithoutCover } = article as ArticleDraft & { cover?: unknown }
   const assets = new Map<string, Omit<StoredAsset, 'key' | 'draftId' | 'updatedAt'>>()
   const replacements = new Map<string, string>()
 
@@ -142,7 +143,7 @@ async function extractArticleAssets(article: ArticleDraft): Promise<ExtractedArt
     return reference
   }
 
-  let html = article.html
+  let html = articleWithoutCover.html
   if (/data:image\//i.test(html)) {
     const document = new DOMParser().parseFromString(html, 'text/html')
     for (const image of document.body.querySelectorAll<HTMLImageElement>('img[src]')) {
@@ -152,28 +153,24 @@ async function extractArticleAssets(article: ArticleDraft): Promise<ExtractedArt
     html = document.body.innerHTML
   }
 
-  let cover = article.cover
-  if (isImageDataUri(cover)) cover = await register(cover)
-
-  let markdown = article.markdown
+  let markdown = articleWithoutCover.markdown
   if (markdown) {
     for (const [dataUri, reference] of replacements) markdown = markdown.replaceAll(dataUri, reference)
   }
-  let sourceText = article.sourceText
+  let sourceText = articleWithoutCover.sourceText
   if (sourceText) {
     for (const [dataUri, reference] of replacements) sourceText = sourceText.replaceAll(dataUri, reference)
   }
 
   return {
     article: {
-      ...article,
+      ...articleWithoutCover,
       html,
-      cover,
       markdown,
       sourceText,
-      tags: [...article.tags],
-      warnings: [...article.warnings],
-      missingAssets: article.missingAssets ? [...article.missingAssets] : undefined,
+      tags: [...articleWithoutCover.tags],
+      warnings: [...articleWithoutCover.warnings],
+      missingAssets: articleWithoutCover.missingAssets ? [...articleWithoutCover.missingAssets] : undefined,
     },
     assets,
   }
@@ -187,8 +184,6 @@ function referencedAssetIds(article: ArticleDraft): Set<string> {
     if (id) ids.add(id)
   })
 
-  const coverId = assetIdFromReference(article.cover)
-  if (coverId) ids.add(coverId)
   if (article.markdown) {
     const pattern = new RegExp(`${DRAFT_ASSET_PROTOCOL}([a-z0-9-]+)`, 'gi')
     for (const match of article.markdown.matchAll(pattern)) ids.add(match[1])
@@ -230,12 +225,13 @@ async function blobToDataUri(asset: StoredAsset): Promise<string> {
 }
 
 async function hydrateArticle(article: ArticleDraft, assets: StoredAsset[]): Promise<ArticleDraft> {
+  const { cover: _legacyCover, ...articleWithoutCover } = article as ArticleDraft & { cover?: unknown }
   const replacements = new Map<string, string>()
   await Promise.all(assets.map(async asset => {
     replacements.set(assetReference(asset.id), await blobToDataUri(asset))
   }))
 
-  let html = article.html
+  let html = articleWithoutCover.html
   if (html.includes(DRAFT_ASSET_PROTOCOL)) {
     const document = new DOMParser().parseFromString(html, 'text/html')
     document.body.querySelectorAll<HTMLImageElement>('img[src]').forEach(image => {
@@ -246,27 +242,23 @@ async function hydrateArticle(article: ArticleDraft, assets: StoredAsset[]): Pro
     html = document.body.innerHTML
   }
 
-  let cover = article.cover
-  if (cover) cover = replacements.get(cover) ?? cover
-
-  let markdown = article.markdown
+  let markdown = articleWithoutCover.markdown
   if (markdown) {
     for (const [reference, dataUri] of replacements) markdown = markdown.replaceAll(reference, dataUri)
   }
-  let sourceText = article.sourceText
+  let sourceText = articleWithoutCover.sourceText
   if (sourceText) {
     for (const [reference, dataUri] of replacements) sourceText = sourceText.replaceAll(reference, dataUri)
   }
 
   return {
-    ...article,
+    ...articleWithoutCover,
     html,
-    cover,
     markdown,
     sourceText,
-    tags: [...article.tags],
-    warnings: [...article.warnings],
-    missingAssets: article.missingAssets ? [...article.missingAssets] : undefined,
+    tags: [...articleWithoutCover.tags],
+    warnings: [...articleWithoutCover.warnings],
+    missingAssets: articleWithoutCover.missingAssets ? [...articleWithoutCover.missingAssets] : undefined,
   }
 }
 

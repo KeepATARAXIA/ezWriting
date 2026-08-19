@@ -161,7 +161,7 @@ describe('LocalDraftRepository', () => {
         sourceText: `正文\n\n![配图](${dataUri})`,
         sourceLanguage: 'markdown',
         cover: dataUri,
-      }),
+      } as Partial<ArticleDraft> & { cover: string }),
     })
 
     const saved = await repository.saveDraft(draft)
@@ -169,7 +169,7 @@ describe('LocalDraftRepository', () => {
     expect(saved.article.html).toContain(dataUri)
     expect(saved.article.markdown).toContain(dataUri)
     expect(saved.article.sourceText).toContain(dataUri)
-    expect(saved.article.cover).toBe(dataUri)
+    expect(saved.article).not.toHaveProperty('cover')
 
     const database = await openDatabase(databaseName)
     const transaction = database.transaction(['drafts', 'assets'], 'readonly')
@@ -179,7 +179,7 @@ describe('LocalDraftRepository', () => {
 
     expect(rawDraft.article.html).not.toContain('data:image/')
     expect(rawDraft.article.html).toContain(DRAFT_ASSET_PROTOCOL)
-    expect(rawDraft.article.cover).toMatch(new RegExp(`^${DRAFT_ASSET_PROTOCOL}`))
+    expect(rawDraft.article).not.toHaveProperty('cover')
     expect(rawDraft.article.markdown).toContain(DRAFT_ASSET_PROTOCOL)
     expect(rawDraft.article.sourceText).toContain(DRAFT_ASSET_PROTOCOL)
     expect(assets).toHaveLength(1)

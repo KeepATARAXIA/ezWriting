@@ -22,8 +22,6 @@ import {
 } from 'lucide-react'
 import type { DraftKind, DraftSummary } from '../domain/saved-draft'
 
-export type HistoryFilter = 'all' | DraftKind
-
 export interface HistoryUndoDraft {
   id: string
   title: string
@@ -33,10 +31,8 @@ export interface HistorySidebarProps {
   drafts: readonly DraftSummary[]
   activeDraftId?: string | null
   isExpanded: boolean
-  filter: HistoryFilter
   undoDraft?: HistoryUndoDraft | null
   onToggleExpanded: () => void
-  onFilterChange: (filter: HistoryFilter) => void
   onSelectDraft: (id: string) => void
   onChangeKind: (id: string, kind: DraftKind) => void
   onDeleteDraft: (id: string) => void
@@ -50,12 +46,6 @@ export interface HistorySidebarProps {
 }
 
 type HistoryGroupKey = 'today' | 'yesterday' | 'recent' | 'older'
-
-const FILTER_OPTIONS: Array<{ value: HistoryFilter; label: string }> = [
-  { value: 'all', label: '全部' },
-  { value: 'image', label: '图文' },
-  { value: 'longform', label: '长文' },
-]
 
 const HISTORY_GROUPS: Array<{ key: HistoryGroupKey; label: string }> = [
   { key: 'today', label: '今天' },
@@ -145,10 +135,8 @@ export function HistorySidebar({
   drafts,
   activeDraftId = null,
   isExpanded,
-  filter,
   undoDraft = null,
   onToggleExpanded,
-  onFilterChange,
   onSelectDraft,
   onChangeKind,
   onDeleteDraft,
@@ -164,11 +152,10 @@ export function HistorySidebar({
   const menuButtonRefs = useRef(new Map<string, HTMLButtonElement>())
   const menuRefs = useRef(new Map<string, HTMLDivElement>())
   const draftButtonRefs = useRef(new Map<string, HTMLButtonElement>())
-  const filterButtonRefs = useRef(new Map<HistoryFilter, HTMLButtonElement>())
 
   const visibleDrafts = useMemo(() => drafts
-    .filter(draft => !draft.deletedAt && (filter === 'all' || draft.kind === filter))
-    .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()), [drafts, filter])
+    .filter(draft => !draft.deletedAt)
+    .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()), [drafts])
 
   const groupedDrafts = useMemo(() => {
     const groups: Record<HistoryGroupKey, DraftSummary[]> = {
@@ -207,20 +194,6 @@ export function HistorySidebar({
     setOpenMenuId(null)
   }
 
-  const handleFilterKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
-    event.preventDefault()
-    const currentIndex = FILTER_OPTIONS.findIndex(option => option.value === filter)
-    let targetIndex = currentIndex
-    if (event.key === 'Home') targetIndex = 0
-    if (event.key === 'End') targetIndex = FILTER_OPTIONS.length - 1
-    if (event.key === 'ArrowLeft') targetIndex = (currentIndex - 1 + FILTER_OPTIONS.length) % FILTER_OPTIONS.length
-    if (event.key === 'ArrowRight') targetIndex = (currentIndex + 1) % FILTER_OPTIONS.length
-    const target = FILTER_OPTIONS[targetIndex].value
-    onFilterChange(target)
-    filterButtonRefs.current.get(target)?.focus()
-  }
-
   const handleDraftKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>, draftId: string) => {
     if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return
     event.preventDefault()
@@ -252,7 +225,6 @@ export function HistorySidebar({
     items[targetIndex]?.focus()
   }
 
-  const activeFilterId = `history-filter-${filter}`
   const draftCount = drafts.filter(draft => !draft.deletedAt).length
   const rootClassName = ['history-sidebar', isExpanded ? 'expanded' : 'collapsed', className].filter(Boolean).join(' ')
 
@@ -303,43 +275,15 @@ export function HistorySidebar({
           </button>
         </header>
 
-        <div className="history-filter-tabs" role="tablist" aria-label="筛选历史稿件" onKeyDown={handleFilterKeyDown}>
-          {FILTER_OPTIONS.map(option => (
-            <button
-              type="button"
-              role="tab"
-              id={`history-filter-${option.value}`}
-              key={option.value}
-              className={filter === option.value ? 'selected' : ''}
-              aria-selected={filter === option.value}
-              aria-controls="history-draft-list"
-              tabIndex={filter === option.value ? 0 : -1}
-              ref={element => {
-                if (element) filterButtonRefs.current.set(option.value, element)
-                else filterButtonRefs.current.delete(option.value)
-              }}
-              onClick={() => onFilterChange(option.value)}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
-
         <div
           id="history-draft-list"
           className="history-draft-list"
-          role="tabpanel"
-          aria-labelledby={activeFilterId}
-          tabIndex={-1}
         >
           {visibleDrafts.length === 0 ? (
             <div className="history-empty-state">
               <History size={22} aria-hidden="true" />
-              <strong>{draftCount === 0 ? '还没有历史稿件' : `没有${KIND_LABELS[filter as DraftKind]}稿件`}</strong>
-              <p>{draftCount === 0 ? '新建或导入稿件后，会自动保存在这里。' : '切换到“全部”查看其他稿件。'}</p>
-              {draftCount > 0 && filter !== 'all' && (
-                <button type="button" onClick={() => onFilterChange('all')}>查看全部</button>
-              )}
+              <strong>还没有历史稿件</strong>
+              <p>新建或导入稿件后，会自动保存在这里。</p>
             </div>
           ) : (
             HISTORY_GROUPS.map(group => {

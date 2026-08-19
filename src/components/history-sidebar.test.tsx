@@ -36,9 +36,7 @@ describe('HistorySidebar', () => {
       drafts: [],
       activeDraftId: null,
       isExpanded: true,
-      filter: 'all',
       onToggleExpanded: vi.fn(),
-      onFilterChange: vi.fn(),
       onSelectDraft: vi.fn(),
       onChangeKind: vi.fn(),
       onDeleteDraft: vi.fn(),
@@ -85,44 +83,27 @@ describe('HistorySidebar', () => {
     expect(container.textContent).toContain('已保存')
   })
 
-  it('keeps filtering controlled and offers a route back from a filtered empty state', async () => {
-    const onFilterChange = vi.fn()
+  it('shows every draft without category filters', async () => {
     await render({
-      drafts: [draft({ id: 'image', title: '图文稿件', kind: 'image' })],
-      onFilterChange,
+      drafts: [
+        draft({ id: 'image', title: '图文稿件', kind: 'image' }),
+        draft({ id: 'longform', title: '长文稿件', kind: 'longform' }),
+      ],
     })
 
-    const longformTab = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="tab"]'))
-      .find(button => button.textContent === '长文')!
-    await act(async () => longformTab.dispatchEvent(new MouseEvent('click', { bubbles: true })))
-    expect(onFilterChange).toHaveBeenCalledWith('longform')
+    expect(container.querySelector('.history-filter-tabs')).toBeNull()
+    expect(container.querySelector('[aria-label="筛选历史稿件"]')).toBeNull()
     expect(container.textContent).toContain('图文稿件')
-
-    await render({ filter: 'longform' })
-    expect(container.textContent).not.toContain('图文稿件')
-    expect(container.textContent).toContain('没有长文稿件')
-    const showAll = Array.from(container.querySelectorAll<HTMLButtonElement>('button'))
-      .find(button => button.textContent === '查看全部')!
-    await act(async () => showAll.dispatchEvent(new MouseEvent('click', { bubbles: true })))
-    expect(onFilterChange).toHaveBeenLastCalledWith('all')
+    expect(container.textContent).toContain('长文稿件')
   })
 
-  it('supports arrow-key navigation across filters and draft rows', async () => {
-    const onFilterChange = vi.fn()
+  it('supports arrow-key navigation across draft rows', async () => {
     await render({
-      onFilterChange,
       drafts: [
         draft({ id: 'first', title: '第一篇', updatedAt: at(13, 11) }),
         draft({ id: 'second', title: '第二篇', updatedAt: at(13, 10) }),
       ],
     })
-
-    const tablist = container.querySelector<HTMLElement>('[role="tablist"]')!
-    const filterEvent = new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true })
-    await act(async () => tablist.dispatchEvent(filterEvent))
-    expect(filterEvent.defaultPrevented).toBe(true)
-    expect(onFilterChange).toHaveBeenCalledWith('image')
-    expect(document.activeElement?.textContent).toBe('图文')
 
     const openButtons = Array.from(container.querySelectorAll<HTMLButtonElement>('.history-draft-open'))
     openButtons[0].focus()

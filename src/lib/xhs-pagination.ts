@@ -1,6 +1,5 @@
 export interface XhsPaginationOptions {
   title?: string
-  hasCover?: boolean
   textScale?: number
   showFooter?: boolean
 }
@@ -460,10 +459,9 @@ function createChunks(html: string, textScale: number): { chunks: CardChunk[]; d
   return { chunks, document }
 }
 
-function firstPageBodyHeight({ title = '', hasCover = false }: XhsPaginationOptions, contentHeight = CARD_CONTENT_HEIGHT): number {
+function firstPageBodyHeight({ title = '' }: XhsPaginationOptions, contentHeight = CARD_CONTENT_HEIGHT): number {
   const titleHeight = Math.max(54, textLineCount(title || '未命名文章', TITLE_UNITS_PER_LINE) * 36 + 17)
-  const coverHeight = hasCover ? 200 : 0
-  return Math.max(MIN_FIRST_PAGE_BODY_HEIGHT, contentHeight - titleHeight - coverHeight)
+  return Math.max(MIN_FIRST_PAGE_BODY_HEIGHT, contentHeight - titleHeight)
 }
 
 function pageHeight(page: CardChunk[]): number {
@@ -485,8 +483,8 @@ function standardPageBudget(index: number, options: XhsPaginationOptions): numbe
   return index === 0 ? firstPageBodyHeight(options, contentHeight) : contentHeight
 }
 
-function isTextOnlyPage(page: CardChunk[], index: number, options: XhsPaginationOptions): boolean {
-  return !(index === 0 && options.hasCover) && page.every(chunk => !chunk.hasProtectedContent)
+function isTextOnlyPage(page: CardChunk[]): boolean {
+  return page.every(chunk => !chunk.hasProtectedContent)
 }
 
 function textPageBudget(index: number, options: XhsPaginationOptions): number {
@@ -559,8 +557,8 @@ function compactTextPages(pages: CardChunk[][], options: XhsPaginationOptions): 
   while (pageIndex < pages.length - 1) {
     const current = pages[pageIndex]
     const next = pages[pageIndex + 1]
-    if (!isTextOnlyPage(current, pageIndex, options)
-      || !isTextOnlyPage(next, pageIndex + 1, options)) {
+    if (!isTextOnlyPage(current)
+      || !isTextOnlyPage(next)) {
       pageIndex += 1
       continue
     }

@@ -3,7 +3,6 @@ import type { XhsPageFits } from './xhs-pagination'
 
 export interface XhsCardMeasurementOptions {
   title: string
-  cover?: string
   template: XhsCardTemplate
   showFooter: boolean
   footerText: string
@@ -76,13 +75,6 @@ export function createXhsCardPageMeasurer(options: XhsCardMeasurementOptions): X
       const title = document.createElement('h1')
       title.textContent = options.title || '未命名文章'
       page.append(title)
-      if (options.cover) {
-        const cover = document.createElement('img')
-        cover.className = 'xhs-card-cover'
-        cover.src = options.cover
-        cover.alt = ''
-        page.append(cover)
-      }
     }
 
     const content = document.createElement('div')
@@ -116,10 +108,9 @@ export function createXhsCardPageMeasurer(options: XhsCardMeasurementOptions): X
   }
 }
 
-function imageSources(html: string, cover?: string): string[] {
+function imageSources(html: string): string[] {
   const parsed = new DOMParser().parseFromString(html, 'text/html')
   const sources = Array.from(parsed.images, image => image.getAttribute('src') || '').filter(Boolean)
-  if (cover) sources.push(cover)
   return Array.from(new Set(sources))
 }
 
@@ -149,12 +140,12 @@ function waitForImage(source: string): Promise<void> {
   })
 }
 
-export async function waitForXhsPaginationAssets(html: string, cover?: string): Promise<void> {
+export async function waitForXhsPaginationAssets(html: string): Promise<void> {
   const fontsReady = 'fonts' in document
     ? Promise.race([
       document.fonts.ready.then(() => undefined),
       new Promise<void>(resolve => window.setTimeout(resolve, 1200)),
     ])
     : Promise.resolve()
-  await Promise.all([fontsReady, ...imageSources(html, cover).map(waitForImage)])
+  await Promise.all([fontsReady, ...imageSources(html).map(waitForImage)])
 }

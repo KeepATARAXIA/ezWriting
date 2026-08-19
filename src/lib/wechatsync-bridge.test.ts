@@ -57,6 +57,26 @@ describe('Wechatsync bridge', () => {
     expect(onProgress).toHaveBeenCalledTimes(3)
   })
 
+  it('leaves cover selection to the destination platform', async () => {
+    const raw = { type: 'weixin', displayName: '微信公众号', title: '测试账号' }
+    const account: PlatformAccount = { id: 'weixin', name: '微信公众号', raw }
+    let submittedTask: unknown
+
+    window.$syncer = {
+      getAccounts() {},
+      addTask(task, statusHandler) {
+        submittedTask = task
+        statusHandler({ accounts: [{ ...raw, status: 'done' }] })
+      },
+    }
+
+    await publishDraft({ ...article, cover: 'data:image/png;base64,AQID' } as ArticleDraft, [account], vi.fn())
+
+    expect(submittedTask).toEqual(expect.objectContaining({
+      post: expect.not.objectContaining({ thumb: expect.anything() }),
+    }))
+  })
+
   it('falls back to the extension window message protocol', async () => {
     const raw = { type: 'juejin', displayName: '掘金', title: '消息桥账号' }
     const extensionSimulator = (event: MessageEvent) => {

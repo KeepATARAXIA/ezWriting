@@ -225,7 +225,6 @@ export async function publishDraft(
         desc: article.summary || '',
         content: article.html,
         markdown: article.markdown,
-        thumb: article.cover,
       },
       accounts: accounts.map(account => account.raw),
     }, task => {

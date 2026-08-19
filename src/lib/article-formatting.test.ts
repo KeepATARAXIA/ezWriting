@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_ARTICLE_FORMATTING } from '../domain/formatting'
 import { applyArticleFormatting } from './article-formatting'
+import { renderMarkdownToSafeHtml } from './markdown-compatibility'
 
 describe('applyArticleFormatting', () => {
   it('applies the selected typography and accent to publishable HTML', () => {
@@ -44,6 +45,30 @@ describe('applyArticleFormatting', () => {
     expect(task?.textContent).toContain('☑')
     expect(task?.querySelector('input')).toBeNull()
     expect(task?.querySelector<HTMLElement>(':scope > div')?.style.textDecoration).toBe('line-through')
+  })
+
+  it('restores task markers after Markdown normalization so content stays in the wide grid column', () => {
+    const normalizedHtml = renderMarkdownToSafeHtml([
+      '- [x] 已完成：导入文档。',
+      '- [ ] 待检查：Markdown 样式。',
+      '- [ ] 待检查：小红书分页和图片布局。',
+    ].join('\n'))
+    const html = applyArticleFormatting(normalizedHtml, DEFAULT_ARTICLE_FORMATTING)
+    const document = new DOMParser().parseFromString(html, 'text/html')
+    const tasks = Array.from(document.querySelectorAll<HTMLElement>('li[data-type="taskItem"]'))
+
+    expect(tasks).toHaveLength(3)
+    expect(tasks.map(task => task.querySelector<HTMLElement>(':scope > [data-ez-task-marker]')?.textContent)).toEqual(['☑', '☐', '☐'])
+    expect(tasks.every(task => task.firstElementChild?.hasAttribute('data-ez-task-marker'))).toBe(true)
+    expect(tasks.every(task => task.children[1]?.tagName === 'DIV')).toBe(true)
+    expect(tasks.every(task => task.style.gridTemplateColumns === '1.4em minmax(0, 1fr)')).toBe(true)
+    expect(document.querySelector('input')).toBeNull()
+
+    const reapplied = new DOMParser().parseFromString(
+      applyArticleFormatting(html, DEFAULT_ARTICLE_FORMATTING),
+      'text/html',
+    )
+    expect(reapplied.querySelectorAll('[data-ez-task-marker]')).toHaveLength(3)
   })
 
   it('inlines resilient code, link, mark, and table styles for platform drafts', () => {
