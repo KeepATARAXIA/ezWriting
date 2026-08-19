@@ -10,7 +10,7 @@
 
 把一份 Markdown、HTML 或 ZIP 稿件带进浏览器，在同一个页面完成编辑、图片整理、平台预览和草稿同步。
 
-[在线体验](https://ezwriting-dev.a2976916992.workers.dev/) · [快速开始](#快速开始) · [平台支持](./docs/PLATFORM_SUPPORT.md) · [路线图](./ROADMAP.md) · [English](./README.md)
+[在线体验](https://ezwriting.online/) · [快速开始](#快速开始) · [平台支持](./docs/PLATFORM_SUPPORT.md) · [路线图](./ROADMAP.md) · [English](./README.md)
 
 [![CI](https://github.com/KeepATARAXIA/ezWriting/actions/workflows/ci.yml/badge.svg)](https://github.com/KeepATARAXIA/ezWriting/actions/workflows/ci.yml)
 [![Version](https://img.shields.io/badge/version-0.1.0-2457FF)](./CHANGELOG.md)
@@ -95,7 +95,7 @@ flowchart LR
 
 ### 只使用本地功能
 
-打开 [EZWRITING 公开测试版](https://ezwriting-dev.a2976916992.workers.dev/) 后即可：
+打开 [EZWRITING 公开测试版](https://ezwriting.online/) 后即可：
 
 1. 新建文档，或导入文章文件。
 2. 在左侧编辑正文、补齐图片。

@@ -10,7 +10,7 @@
 
 Bring a Markdown, HTML, or ZIP article into the browser, then edit, organize images, preview platform-specific layouts, and create drafts from one workspace.
 
-[Live demo](https://ezwriting-dev.a2976916992.workers.dev/) · [Quick start](#quick-start) · [Platform support](./docs/PLATFORM_SUPPORT.md) · [Roadmap](./ROADMAP.md) · [简体中文](./README_ZH.md)
+[Live demo](https://ezwriting.online/) · [Quick start](#quick-start) · [Platform support](./docs/PLATFORM_SUPPORT.md) · [Roadmap](./ROADMAP.md) · [简体中文](./README_ZH.md)
 
 [![CI](https://github.com/KeepATARAXIA/ezWriting/actions/workflows/ci.yml/badge.svg)](https://github.com/KeepATARAXIA/ezWriting/actions/workflows/ci.yml)
 [![Version](https://img.shields.io/badge/version-0.1.0-2457FF)](./CHANGELOG.md)
@@ -95,7 +95,7 @@ After Wechatsync is installed and the target platforms are signed in, EZWRITING 
 
 ### Use the local workspace only
 
-Open the [EZWRITING public demo](https://ezwriting-dev.a2976916992.workers.dev/), then:
+Open the [EZWRITING public demo](https://ezwriting.online/), then:
 
 1. Create a document or import an existing article.
 2. Edit the source and resolve its images.
