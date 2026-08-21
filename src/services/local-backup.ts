@@ -7,7 +7,8 @@ import {
   type PersistedDraft,
   type XhsCardSettings,
 } from '../domain/saved-draft'
-import { sanitizeEditedHtml } from '../lib/file-parser'
+import { annotateLocalImagesAsMissing } from '../lib/article-source'
+import { sanitizeContentHtml } from '../lib/markdown-compatibility'
 import { normalizeWechatThemeSettings } from '../lib/wechat-theme'
 import type { DraftRepository } from './draft-repository'
 
@@ -80,10 +81,12 @@ function article(value: unknown, draftId: string, importedAt: string): ArticleDr
   const html = stringValue(value.html)
   if (!html) throw new Error('备份中存在缺少正文的稿件。')
   const language = sourceLanguage(value.sourceLanguage)
+  const sanitized = sanitizeContentHtml(html)
+  const annotated = annotateLocalImagesAsMissing(sanitized)
   return {
     id: draftId,
     title: stringValue(value.title).slice(0, 500),
-    html: sanitizeEditedHtml(html),
+    html: annotated.html,
     ...(typeof value.markdown === 'string' ? { markdown: value.markdown } : {}),
     ...(typeof value.sourceText === 'string' ? { sourceText: value.sourceText } : {}),
     ...(language ? { sourceLanguage: language } : {}),
@@ -93,7 +96,7 @@ function article(value: unknown, draftId: string, importedAt: string): ArticleDr
     sourceKind: sourceKind(value.sourceKind),
     importedAt: timestamp(value.importedAt, importedAt),
     warnings: stringArray(value.warnings),
-    missingAssets: stringArray(value.missingAssets),
+    missingAssets: annotated.references,
   }
 }
 
@@ -120,7 +123,7 @@ function normalizeDraft(value: unknown, fallbackTimestamp: string): PersistedDra
     xhsSettings: xhsSettings(value.xhsSettings),
     createdAt,
     updatedAt: timestamp(value.updatedAt, createdAt),
-    deletedAt: value.deletedAt === null ? null : timestamp(value.deletedAt, createdAt),
+    deletedAt: value.deletedAt == null ? null : timestamp(value.deletedAt, createdAt),
     sourceInfo: sourceInfo(value.sourceInfo),
   }
 }
@@ -129,11 +132,19 @@ export function localBackupFileName(now = new Date()): string {
   return `ezwriting-${now.toISOString().replaceAll(':', '-').replace(/\.\d{3}Z$/, 'Z')}${LOCAL_BACKUP_FILE_EXTENSION}`
 }
 
-export async function createLocalBackup(repository: DraftRepository, now = new Date()): Promise<LocalBackupPayload> {
+export async function createLocalBackup(
+  repository: DraftRepository,
+  now = new Date(),
+  draftOverride?: PersistedDraft,
+): Promise<LocalBackupPayload> {
   const summaries = await repository.listDrafts({ includeDeleted: true })
-  const drafts = (await Promise.all(summaries.map(summary => repository.getDraft(summary.id))))
+  let drafts = (await Promise.all(summaries.map(summary => repository.getDraft(summary.id))))
     .filter((draft): draft is PersistedDraft => Boolean(draft))
-  const activeDraftId = await repository.getSetting<string>(LAST_ACTIVE_DRAFT_SETTING)
+  if (draftOverride) {
+    drafts = [...drafts.filter(draft => draft.id !== draftOverride.id), draftOverride]
+  }
+  const storedActiveDraftId = await repository.getSetting<string>(LAST_ACTIVE_DRAFT_SETTING)
+  const activeDraftId = draftOverride?.id ?? storedActiveDraftId
   return {
     format: LOCAL_BACKUP_FORMAT,
     version: LOCAL_BACKUP_VERSION,
@@ -171,10 +182,14 @@ export async function parseLocalBackup(file: File): Promise<LocalBackupPayload> 
 }
 
 export async function importLocalBackup(repository: DraftRepository, payload: LocalBackupPayload): Promise<LocalBackupImportResult> {
-  for (const draft of payload.drafts) {
-    await repository.saveDraft(draft, { preserveUpdatedAt: true, replaceDeletionState: true })
+  if (typeof repository.importDraftsAtomically !== 'function') {
+    throw new Error('当前稿件仓库不支持原子整库导入，已停止且未写入任何稿件。')
   }
-  if (payload.activeDraftId) await repository.putSetting(LAST_ACTIVE_DRAFT_SETTING, payload.activeDraftId)
+  await repository.importDraftsAtomically(payload.drafts, {
+    settingMutations: payload.activeDraftId
+      ? [{ type: 'put', key: LAST_ACTIVE_DRAFT_SETTING, value: payload.activeDraftId }]
+      : [{ type: 'delete', key: LAST_ACTIVE_DRAFT_SETTING }],
+  })
   return { draftCount: payload.drafts.length, activeDraftId: payload.activeDraftId }
 }
 

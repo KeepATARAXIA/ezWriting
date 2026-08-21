@@ -59,6 +59,182 @@ const CALLOUT_ALIASES: Record<string, MarkdownCalloutType> = {
   cite: 'quote',
 }
 
+// Content semantics only. Preview actions and other application control attributes must never enter imported HTML.
+const SAFE_CONTENT_DATA_ATTRIBUTES = [
+  'data-callout',
+  'data-callout-content',
+  'data-callout-fold',
+  'data-callout-title',
+  'data-checked',
+  'data-ez-format',
+  'data-ez-task-marker',
+  'data-source-spacer',
+  'data-type',
+]
+
+const INTERNAL_MISSING_ASSET_DATA_ATTRIBUTES = [
+  'data-missing-asset',
+  'data-missing-id',
+]
+
+const FORBIDDEN_CONTENT_TAGS = [
+  'script',
+  'style',
+  'iframe',
+  'object',
+  'embed',
+  'form',
+  'base',
+  'link',
+  'meta',
+  'audio',
+  'video',
+  'source',
+  'track',
+  'input',
+  'button',
+  'select',
+  'textarea',
+]
+
+const FORBIDDEN_CONTENT_ATTRIBUTES = [
+  'srcdoc',
+  'srcset',
+  'background',
+  'poster',
+  'autoplay',
+  'preload',
+  'ping',
+  'action',
+  'formaction',
+]
+
+// Keep article typography and box formatting, but exclude page-level positioning, stacking, and transforms.
+const SAFE_INLINE_STYLE_PROPERTIES = new Set([
+  '-webkit-box-decoration-break',
+  'align-items',
+  'background',
+  'background-color',
+  'border',
+  'border-bottom',
+  'border-bottom-color',
+  'border-bottom-left-radius',
+  'border-bottom-right-radius',
+  'border-bottom-style',
+  'border-bottom-width',
+  'border-collapse',
+  'border-color',
+  'border-left',
+  'border-left-color',
+  'border-left-style',
+  'border-left-width',
+  'border-radius',
+  'border-right',
+  'border-right-color',
+  'border-right-style',
+  'border-right-width',
+  'border-style',
+  'border-top',
+  'border-top-color',
+  'border-top-left-radius',
+  'border-top-right-radius',
+  'border-top-style',
+  'border-top-width',
+  'border-width',
+  'box-decoration-break',
+  'box-sizing',
+  'clear',
+  'color',
+  'column-gap',
+  'display',
+  'font-family',
+  'font-size',
+  'font-style',
+  'font-variant',
+  'font-weight',
+  'gap',
+  'grid-template-columns',
+  'height',
+  'letter-spacing',
+  'line-height',
+  'list-style',
+  'list-style-position',
+  'list-style-type',
+  'margin',
+  'margin-bottom',
+  'margin-left',
+  'margin-right',
+  'margin-top',
+  'max-height',
+  'max-width',
+  'min-height',
+  'min-width',
+  'object-fit',
+  'opacity',
+  'overflow',
+  'overflow-wrap',
+  'overflow-x',
+  'overflow-y',
+  'padding',
+  'padding-bottom',
+  'padding-left',
+  'padding-right',
+  'padding-top',
+  'row-gap',
+  'table-layout',
+  'text-align',
+  'text-decoration',
+  'text-decoration-color',
+  'text-decoration-line',
+  'text-decoration-style',
+  'text-decoration-thickness',
+  'text-indent',
+  'text-overflow',
+  'text-transform',
+  'text-underline-offset',
+  'vertical-align',
+  'white-space',
+  'width',
+  'word-break',
+  'word-spacing',
+])
+
+const NETWORK_CAPABLE_CSS_VALUE = /(?:url|image-set|cross-fade)\s*\(|(?:expression|javascript)\s*:|(?:https?|data|blob):/i
+
+function normalizeCssValueForSecurityCheck(value: string): string {
+  const withoutCommentsOrContinuations = value
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\\(?:\r\n|[\n\r\f])/g, '')
+  return withoutCommentsOrContinuations.replace(
+    /\\([0-9a-f]{1,6})\s?|\\([^\r\n\f])/gi,
+    (_match, hexadecimal: string | undefined, escaped: string | undefined) => {
+      if (!hexadecimal) return escaped || ''
+      const codePoint = Number.parseInt(hexadecimal, 16)
+      return codePoint === 0 || codePoint > 0x10ffff ? '\uFFFD' : String.fromCodePoint(codePoint)
+    },
+  )
+}
+
+function filterInlineStyles(html: string): string {
+  const document = new DOMParser().parseFromString(html, 'text/html')
+
+  document.body.querySelectorAll<HTMLElement>('[style]').forEach(element => {
+    const declarations = Array.from({ length: element.style.length }, (_, index) => element.style.item(index))
+    const safeDeclarations: Array<{ property: string; value: string; priority: string }> = []
+    declarations.forEach(property => {
+      const value = element.style.getPropertyValue(property)
+      if (!SAFE_INLINE_STYLE_PROPERTIES.has(property.toLocaleLowerCase())) return
+      if (NETWORK_CAPABLE_CSS_VALUE.test(normalizeCssValueForSecurityCheck(value))) return
+      safeDeclarations.push({ property, value, priority: element.style.getPropertyPriority(property) })
+    })
+    element.removeAttribute('style')
+    safeDeclarations.forEach(({ property, value, priority }) => element.style.setProperty(property, value, priority))
+    if (!safeDeclarations.length) element.removeAttribute('style')
+  })
+
+  return document.body.innerHTML
+}
+
 export function normalizeMarkdownCalloutType(value: string): MarkdownCalloutType {
   const normalized = value.trim().toLocaleLowerCase()
   if ((MARKDOWN_CALLOUT_TYPES as readonly string[]).includes(normalized)) {
@@ -67,12 +243,24 @@ export function normalizeMarkdownCalloutType(value: string): MarkdownCalloutType
   return CALLOUT_ALIASES[normalized] || 'note'
 }
 
-export function sanitizeContentHtml(html: string): string {
-  return DOMPurify.sanitize(html, {
+function sanitizeContentHtmlWithAttributes(html: string, additionalAttributes: string[]): string {
+  const sanitized = DOMPurify.sanitize(html, {
     USE_PROFILES: { html: true },
-    FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form'],
-    FORBID_ATTR: ['srcdoc'],
+    FORBID_TAGS: FORBIDDEN_CONTENT_TAGS,
+    FORBID_ATTR: FORBIDDEN_CONTENT_ATTRIBUTES,
+    ALLOW_DATA_ATTR: false,
+    ADD_ATTR: [...SAFE_CONTENT_DATA_ATTRIBUTES, ...additionalAttributes],
   })
+  return filterInlineStyles(sanitized)
+}
+
+export function sanitizeContentHtml(html: string): string {
+  return sanitizeContentHtmlWithAttributes(html, [])
+}
+
+// Only app-generated or revalidated missing-image state may use this internal boundary.
+export function sanitizeInternalContentHtml(html: string): string {
+  return sanitizeContentHtmlWithAttributes(html, INTERNAL_MISSING_ASSET_DATA_ATTRIBUTES)
 }
 
 export function normalizeObsidianImages(markdown: string): string {

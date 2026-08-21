@@ -24,6 +24,7 @@ interface DispatchControlsProps {
   bridgeState: BridgeState
   hasArticle: boolean
   installGuide: BrowserExtensionGuide
+  interactionLocked?: boolean
   isOpen: boolean
   results: PublishResult[]
   selectedIds: string[]
@@ -51,6 +52,7 @@ export function DispatchControls({
   bridgeState,
   hasArticle,
   installGuide,
+  interactionLocked = false,
   isOpen,
   results,
   selectedIds,
@@ -97,7 +99,7 @@ export function DispatchControls({
             title={hasArticle ? '选择平台并发布' : '请先导入稿件'}
             aria-expanded={isOpen}
             aria-haspopup="dialog"
-            disabled={!hasArticle}
+            disabled={!hasArticle || interactionLocked}
             onClick={() => {
               if (hasArticle) onOpenChange(true)
             }}
@@ -148,7 +150,7 @@ export function DispatchControls({
                   {installGuide.secondaryUrl && (
                     <a href={installGuide.secondaryUrl} target="_blank" rel="noreferrer" className="soft-button" style={{ textDecoration: 'none' }}>{installGuide.secondaryLabel} <ExternalLink size={14} /></a>
                   )}
-                  <button type="button" className="soft-button" onClick={onRefresh}><RefreshCw size={14} /> 已安装，重新连接</button>
+                  <button type="button" className="soft-button" disabled={interactionLocked} onClick={onRefresh}><RefreshCw size={14} /> 已安装，重新连接</button>
                 </div>
                 <p className="privacy-note"><ShieldCheck size={13} /> {installGuide.compatibilityNote}</p>
               </div>
@@ -156,13 +158,13 @@ export function DispatchControls({
               <div className="bridge-recovery">
                 <strong>当前稿件已保留，可以安全重试。</strong>
                 <p>{bridgeError || '扩展没有返回可识别的平台数据。请确认扩展已启用后重新连接。'}</p>
-                <button type="button" className="outline-button" onClick={onRefresh}>重新连接 <RefreshCw size={14} /></button>
+                <button type="button" className="outline-button" disabled={interactionLocked} onClick={onRefresh}>重新连接 <RefreshCw size={14} /></button>
               </div>
             ) : accounts.length === 0 ? (
               <div className="bridge-empty">
                 <strong>引擎已经连接，还差平台登录。</strong>
                 <p>请在当前浏览器登录目标内容平台，返回后重新读取账号。</p>
-                <button type="button" className="soft-button" onClick={onRefresh}><RefreshCw size={14} /> 重新读取账号</button>
+                <button type="button" className="soft-button" disabled={interactionLocked} onClick={onRefresh}><RefreshCw size={14} /> 重新读取账号</button>
               </div>
             ) : (
               <div className="drawer-platform-picker" aria-label="选择发布平台">
@@ -182,8 +184,8 @@ export function DispatchControls({
                         type="button"
                         key={account.id}
                         className={`platform-row ${selected ? 'selected' : ''}`}
-                        onClick={() => !isPublishing && onTogglePlatform(account.id)}
-                        disabled={isPublishing}
+                        onClick={() => !interactionLocked && onTogglePlatform(account.id)}
+                        disabled={interactionLocked}
                         aria-pressed={selected}
                       >
                         <span className="platform-check">{selected && <Check size={13} />}</span>
@@ -240,7 +242,7 @@ export function DispatchControls({
                   <span>{selectedIds.length > 0 ? `已选择 ${selectedIds.length} 个平台` : hasConnectedAccounts ? '请选择至少一个平台' : '等待可用平台'}</span>
                 </div>
               </div>
-              <button type="button" className="publish-button" onClick={onPublish} disabled={!hasArticle || selectedIds.length === 0 || bridgeState !== 'connected' || isPublishing}>
+              <button type="button" className="publish-button" onClick={onPublish} disabled={!hasArticle || selectedIds.length === 0 || bridgeState !== 'connected' || interactionLocked}>
                 {isPublishing ? <><LoaderCircle className="spin" size={18} /> 正在同步草稿</> : <><Send size={18} /> 同步到 {selectedIds.length} 个平台</>}
               </button>
               <p className="draft-policy">只创建草稿，不会自动公开发布</p>

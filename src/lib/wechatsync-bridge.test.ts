@@ -34,6 +34,28 @@ describe('Wechatsync bridge', () => {
     expect(accounts[0]).toMatchObject({ id: 'zhihu', name: '知乎', username: '测试账号' })
   })
 
+  it('uses the platform uid for same-platform accounts and filters malformed entries', async () => {
+    window.$syncer = {
+      getAccounts(callback) {
+        callback([
+          { type: 'zhihu', uid: 'writer-a', displayName: '知乎 A', title: '账号 A' },
+          null,
+          { type: '', uid: 'missing-type', displayName: '无效账号' },
+          { type: 'zhihu', uid: 'writer-b', displayName: '知乎 B', title: '账号 B' },
+        ])
+      },
+      addTask() {},
+    }
+
+    const accounts = await getPlatformAccounts()
+
+    expect(accounts.map(account => account.id)).toEqual(['zhihu:writer-a', 'zhihu:writer-b'])
+    expect(accounts.map(account => account.raw)).toEqual([
+      expect.objectContaining({ type: 'zhihu', uid: 'writer-a' }),
+      expect.objectContaining({ type: 'zhihu', uid: 'writer-b' }),
+    ])
+  })
+
   it('resolves when every selected platform reaches a terminal state', async () => {
     const raw = { type: 'zhihu', displayName: '知乎', title: '测试账号' }
     const account: PlatformAccount = { id: 'zhihu', name: '知乎', raw }
@@ -55,6 +77,52 @@ describe('Wechatsync bridge', () => {
       draftUrl: 'https://example.com/draft/1',
     })])
     expect(onProgress).toHaveBeenCalledTimes(3)
+  })
+
+  it('merges partial updates and ignores malformed, stale, duplicate, and post-settlement updates', async () => {
+    const rawA = { type: 'zhihu', uid: 'writer-a', displayName: '知乎 A', title: '账号 A' }
+    const rawB = { type: 'zhihu', uid: 'writer-b', displayName: '知乎 B', title: '账号 B' }
+    const accounts: PlatformAccount[] = [
+      { id: 'zhihu:writer-a', name: '知乎 A', raw: rawA },
+      { id: 'zhihu:writer-b', name: '知乎 B', raw: rawB },
+    ]
+    const onProgress = vi.fn()
+    let statusHandler: ((task: { accounts?: Array<Record<string, unknown>> }) => void) | undefined
+
+    window.$syncer = {
+      getAccounts() {},
+      addTask(_task, nextStatusHandler) {
+        statusHandler = nextStatusHandler as typeof statusHandler
+      },
+    }
+
+    let resolved = false
+    const publishing = publishDraft(article, accounts, onProgress).then(results => {
+      resolved = true
+      return results
+    })
+
+    statusHandler?.({ accounts: [{ ...rawA, status: 'uploading', msg: '上传 A' }] })
+    statusHandler?.({ accounts: [{ ...rawA, status: 'done' }] })
+    await Promise.resolve()
+    expect(resolved).toBe(false)
+
+    statusHandler?.({ accounts: [{ ...rawA, status: 'uploading', msg: '迟到状态' }] })
+    statusHandler?.({ accounts: [{ ...rawB, status: 'unexpected-status' }] })
+    statusHandler?.({ accounts: [null as unknown as Record<string, unknown>] })
+    expect(onProgress).toHaveBeenCalledTimes(3)
+
+    statusHandler?.({ accounts: [{ ...rawB, status: 'failed', error: 'B 失败' }] })
+    const results = await publishing
+
+    expect(results).toEqual([
+      expect.objectContaining({ platform: 'zhihu:writer-a', status: 'done' }),
+      expect.objectContaining({ platform: 'zhihu:writer-b', status: 'failed', error: 'B 失败' }),
+    ])
+    expect(onProgress).toHaveBeenCalledTimes(4)
+
+    statusHandler?.({ accounts: [{ ...rawB, status: 'done' }] })
+    expect(onProgress).toHaveBeenCalledTimes(4)
   })
 
   it('leaves cover selection to the destination platform', async () => {
@@ -94,6 +162,7 @@ describe('Wechatsync bridge', () => {
       if (message.method === 'addTask') {
         window.postMessage(JSON.stringify({
           method: 'taskUpdate',
+          eventID: message.eventID,
           task: {
             accounts: [{
               ...raw,
@@ -117,6 +186,151 @@ describe('Wechatsync bridge', () => {
         status: 'done',
         draftUrl: 'https://example.com/draft/message-bridge',
       })
+    } finally {
+      window.removeEventListener('message', extensionSimulator)
+    }
+  })
+
+  it('routes window-message task updates by task id and drops late callbacks', async () => {
+    const rawA = { type: 'alpha', uid: 'account-a', displayName: '平台 A' }
+    const rawB = { type: 'beta', uid: 'account-b', displayName: '平台 B' }
+    const taskMessages: Array<{ eventID: number; task: unknown }> = []
+    const extensionSimulator = (event: MessageEvent) => {
+      if (typeof event.data !== 'string') return
+      const message = JSON.parse(event.data)
+
+      if (message.method === 'getAccounts') {
+        window.postMessage(JSON.stringify({
+          callReturn: true,
+          eventID: message.eventID,
+          result: [rawA, rawB],
+        }), '*')
+      }
+
+      if (message.method === 'addTask') {
+        taskMessages.push({ eventID: message.eventID, task: message.task })
+      }
+    }
+    window.addEventListener('message', extensionSimulator)
+
+    try {
+      expect(await waitForBridge(500)).toBe(true)
+      const accounts = await getPlatformAccounts()
+      const progressA = vi.fn()
+      const progressB = vi.fn()
+      const publishingA = publishDraft(article, [accounts[0]], progressA)
+      const publishingB = publishDraft(article, [accounts[1]], progressB)
+
+      await vi.waitFor(() => expect(taskMessages).toHaveLength(2))
+      const [taskA, taskB] = taskMessages
+
+      window.postMessage(JSON.stringify({
+        method: 'taskUpdate',
+        eventID: taskA.eventID,
+        task: { accounts: [{ ...rawA, status: 'done' }] },
+      }), '*')
+      await expect(publishingA).resolves.toEqual([
+        expect.objectContaining({ platform: 'alpha:account-a', status: 'done' }),
+      ])
+      expect(progressA).toHaveBeenCalledTimes(2)
+      expect(progressB).toHaveBeenCalledTimes(1)
+
+      window.postMessage(JSON.stringify({
+        method: 'taskUpdate',
+        eventID: taskA.eventID,
+        task: { accounts: [{ ...rawA, status: 'uploading' }] },
+      }), '*')
+      await new Promise(resolve => window.setTimeout(resolve, 0))
+      expect(progressA).toHaveBeenCalledTimes(2)
+      expect(progressB).toHaveBeenCalledTimes(1)
+
+      window.postMessage(JSON.stringify({
+        method: 'taskUpdate',
+        eventID: taskB.eventID,
+        task: { accounts: [{ ...rawB, status: 'done' }] },
+      }), '*')
+      await expect(publishingB).resolves.toEqual([
+        expect.objectContaining({ platform: 'beta:account-b', status: 'done' }),
+      ])
+      expect(progressB).toHaveBeenCalledTimes(2)
+    } finally {
+      window.removeEventListener('message', extensionSimulator)
+    }
+  })
+
+  it('fails active tasks when a legacy task update has no task id', async () => {
+    const rawA = { type: 'juejin', uid: 'same-account', displayName: '掘金账号' }
+    const rawB = { type: 'zhihu', uid: 'other-account', displayName: '知乎账号' }
+    const taskMessages: Array<{ eventID: number; task: unknown }> = []
+    const extensionSimulator = (event: MessageEvent) => {
+      if (typeof event.data !== 'string') return
+      const message = JSON.parse(event.data)
+
+      if (message.method === 'getAccounts') {
+        window.postMessage(JSON.stringify({
+          callReturn: true,
+          eventID: message.eventID,
+          result: [rawA, rawB],
+        }), '*')
+      }
+
+      if (message.method === 'addTask') {
+        taskMessages.push({ eventID: message.eventID, task: message.task })
+      }
+    }
+    window.addEventListener('message', extensionSimulator)
+
+    try {
+      expect(await waitForBridge(500)).toBe(true)
+      const accounts = await getPlatformAccounts()
+
+      const firstPublish = publishDraft(article, [accounts[0]], vi.fn())
+      await vi.waitFor(() => expect(taskMessages).toHaveLength(1))
+      window.postMessage(JSON.stringify({
+        method: 'taskUpdate',
+        eventID: taskMessages[0].eventID,
+        task: { accounts: [{ ...rawA, status: 'done' }] },
+      }), '*')
+      await expect(firstPublish).resolves.toEqual([
+        expect.objectContaining({ platform: 'juejin:same-account', status: 'done' }),
+      ])
+
+      const secondProgress = vi.fn()
+      const secondPublish = publishDraft(article, [accounts[0]], secondProgress)
+      await vi.waitFor(() => expect(taskMessages).toHaveLength(2))
+      window.postMessage(JSON.stringify({
+        method: 'taskUpdate',
+        task: { accounts: [{ ...rawA, status: 'done' }] },
+      }), '*')
+      await expect(secondPublish).resolves.toEqual([
+        expect.objectContaining({
+          platform: 'juejin:same-account',
+          status: 'failed',
+          error: expect.stringContaining('eventID'),
+        }),
+      ])
+      expect(secondProgress).toHaveBeenCalledTimes(2)
+
+      window.postMessage(JSON.stringify({
+        method: 'taskUpdate',
+        eventID: taskMessages[1].eventID,
+        task: { accounts: [{ ...rawA, status: 'done' }] },
+      }), '*')
+      await new Promise(resolve => window.setTimeout(resolve, 0))
+      expect(secondProgress).toHaveBeenCalledTimes(2)
+
+      const concurrentA = publishDraft(article, [accounts[0]], vi.fn())
+      const concurrentB = publishDraft(article, [accounts[1]], vi.fn())
+      await vi.waitFor(() => expect(taskMessages).toHaveLength(4))
+      window.postMessage(JSON.stringify({
+        method: 'taskUpdate',
+        task: { accounts: [{ ...rawA, status: 'done' }] },
+      }), '*')
+
+      await expect(Promise.all([concurrentA, concurrentB])).resolves.toEqual([
+        [expect.objectContaining({ platform: 'juejin:same-account', status: 'failed' })],
+        [expect.objectContaining({ platform: 'zhihu:other-account', status: 'failed' })],
+      ])
     } finally {
       window.removeEventListener('message', extensionSimulator)
     }

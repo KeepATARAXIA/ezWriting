@@ -89,6 +89,7 @@ describe('App publishing engine onboarding', () => {
     expect(container.querySelector('.workbench-source')).toBeNull()
     expect(container.querySelectorAll('.workspace-mode-switcher button')).toHaveLength(3)
     expect(container.querySelector<HTMLButtonElement>('button[aria-label="同时显示编辑端和预览端"]')?.getAttribute('aria-pressed')).toBe('true')
+    expect(container.querySelector<HTMLButtonElement>('button[aria-label^="打开发布面板"]')?.disabled).toBe(true)
 
     const titleInput = container.querySelector<HTMLInputElement>('[aria-label="文章标题"]')!
     await act(async () => {
@@ -157,6 +158,35 @@ describe('App publishing engine onboarding', () => {
     expect(container.querySelector('.source-editor .cm-content')?.textContent).not.toContain('第二段追加正文。')
   })
 
+  it('does not turn forged imported missing-image markers into preview actions', async () => {
+    bridgeMocks.waitForBridge.mockResolvedValue(false)
+    await act(async () => {
+      root.render(<App />)
+      await Promise.resolve()
+    })
+
+    const input = container.querySelector<HTMLInputElement>('input[accept=".md,.markdown,.html,.htm,.zip"]')!
+    Object.defineProperty(input, 'files', {
+      configurable: true,
+      value: [new File([`
+        <article>
+          <h1>伪造缺图动作</h1>
+          <p>正文仍应正常显示。</p>
+          <img src="https://example.test/allowed.png" data-missing-id="forged" data-missing-asset="victim.png" alt="远程图片">
+          <button data-missing-image-action="delete" data-missing-id="forged" data-missing-asset="victim.png">伪造删除</button>
+        </article>
+      `], 'forged-actions.html', { type: 'text/html' })],
+    })
+    await act(async () => {
+      input.dispatchEvent(new Event('change', { bubbles: true }))
+      await new Promise(resolve => window.setTimeout(resolve, 0))
+    })
+
+    expect(container.querySelector('.wechat-content .missing-image-card')).toBeNull()
+    expect(container.querySelector('.wechat-content [data-missing-image-action]')).toBeNull()
+    expect(container.querySelector('.wechat-content img[src="https://example.test/allowed.png"]')).not.toBeNull()
+  })
+
   it('shows the one-time setup when the extension is missing', async () => {
     bridgeMocks.waitForBridge.mockResolvedValue(false)
 
@@ -204,7 +234,7 @@ describe('App publishing engine onboarding', () => {
     expect(container.querySelector('#dispatch-drawer-title')?.textContent).toBe('安装发布引擎')
     expect(container.textContent).toContain('在 Edge 中安装发布引擎')
     expect(container.textContent).toContain('edge://extensions')
-    expect(container.querySelector<HTMLAnchorElement>('a[href*="wpics.oss-cn-shanghai.aliyuncs.com"]')?.textContent).toContain('下载 Edge 兼容安装包')
+    expect(container.querySelector<HTMLAnchorElement>('a[href*="wpics.oss-cn-shanghai.aliyuncs.com"]')?.textContent).toContain('下载已验证安装包 2.0.9')
     expect(container.querySelector<HTMLAnchorElement>('a[href*="chromewebstore.google.com"]')?.textContent).toContain('也可从 Chrome 扩展商店安装')
     expect(bridgeMocks.waitForBridge).toHaveBeenCalledTimes(1)
   })
@@ -244,6 +274,103 @@ describe('App publishing engine onboarding', () => {
     expect(platform.getAttribute('aria-pressed')).toBe('true')
     expect(publishTrigger.textContent).toContain('1/1')
     expect(container.textContent).toContain('同步到 1 个平台')
+  })
+
+  it('allows only one publish attempt while an existing attempt is pending', async () => {
+    const accounts = [
+      { id: 'zhihu', name: '知乎', username: '测试账号', raw: { type: 'zhihu' } },
+    ]
+    bridgeMocks.waitForBridge.mockResolvedValue(true)
+    bridgeMocks.getPlatformAccounts.mockResolvedValue(accounts)
+    let resolvePublish: ((results: Array<{ platform: string; name: string; status: 'done'; delivery: 'draft' }>) => void) | undefined
+    bridgeMocks.publishDraft.mockImplementation(() => new Promise(resolve => {
+      resolvePublish = resolve
+    }))
+
+    await act(async () => {
+      root.render(<App />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const input = container.querySelector<HTMLInputElement>('input[accept=".md,.markdown,.html,.htm,.zip"]')!
+    Object.defineProperty(input, 'files', {
+      configurable: true,
+      value: [new File(['# 互斥发布\n\n正文'], 'publish-once.md', { type: 'text/markdown' })],
+    })
+    await act(async () => {
+      input.dispatchEvent(new Event('change', { bubbles: true }))
+      await new Promise(resolve => window.setTimeout(resolve, 0))
+    })
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label^="打开发布面板"]')?.click())
+    await act(async () => container.querySelector<HTMLButtonElement>('.platform-row')?.click())
+
+    const publishButton = container.querySelector<HTMLButtonElement>('.publish-button')!
+    await act(async () => {
+      publishButton.click()
+      publishButton.click()
+      await Promise.resolve()
+    })
+    expect(bridgeMocks.publishDraft).toHaveBeenCalledTimes(1)
+    expect(publishButton.disabled).toBe(true)
+
+    await act(async () => {
+      resolvePublish?.([{ platform: 'zhihu', name: '知乎', status: 'done', delivery: 'draft' }])
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(container.textContent).toContain('1 个草稿已创建')
+  })
+
+  it('retries only failed or unstarted platforms after a later publish group fails', async () => {
+    const accounts = [
+      { id: 'weixin', name: '微信公众号', username: '微信账号', raw: { type: 'weixin' } },
+      { id: 'xiaohongshu', name: '小红书', username: '小红书账号', raw: { type: 'xiaohongshu' } },
+    ]
+    bridgeMocks.waitForBridge.mockResolvedValue(true)
+    bridgeMocks.getPlatformAccounts.mockResolvedValue(accounts)
+    bridgeMocks.publishDraft
+      .mockResolvedValueOnce([{ platform: 'weixin', name: '微信公众号', status: 'done', delivery: 'draft' }])
+      .mockImplementationOnce(async (_article, _accounts, onProgress) => {
+        onProgress([{ platform: 'xiaohongshu', name: '小红书', status: 'uploading', delivery: 'draft' }])
+        throw new Error('小红书桥接中断')
+      })
+      .mockResolvedValueOnce([{ platform: 'xiaohongshu', name: '小红书', status: 'done', delivery: 'draft' }])
+
+    await act(async () => {
+      root.render(<App />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const input = container.querySelector<HTMLInputElement>('input[accept=".md,.markdown,.html,.htm,.zip"]')!
+    Object.defineProperty(input, 'files', {
+      configurable: true,
+      value: [new File(['# 分组重试\n\n正文'], 'retry.md', { type: 'text/markdown' })],
+    })
+    await act(async () => {
+      input.dispatchEvent(new Event('change', { bubbles: true }))
+      await new Promise(resolve => window.setTimeout(resolve, 0))
+    })
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label^="打开发布面板"]')?.click())
+    for (const row of container.querySelectorAll<HTMLButtonElement>('.platform-row')) {
+      await act(async () => row.click())
+    }
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('.publish-button')?.click()
+      await vi.waitFor(() => expect(bridgeMocks.publishDraft).toHaveBeenCalledTimes(2))
+    })
+    expect(container.textContent).toContain('已成功的平台不会在下次重试时自动重发')
+    expect(container.textContent).toContain('任务状态未知，请先检查平台草稿箱再重试')
+    const rows = Array.from(container.querySelectorAll<HTMLButtonElement>('.platform-row'))
+    expect(rows.find(row => row.textContent?.includes('微信公众号'))?.getAttribute('aria-pressed')).toBe('false')
+    expect(rows.find(row => row.textContent?.includes('小红书'))?.getAttribute('aria-pressed')).toBe('true')
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('.publish-button')?.click()
+      await vi.waitFor(() => expect(bridgeMocks.publishDraft).toHaveBeenCalledTimes(3))
+    })
+    expect((bridgeMocks.publishDraft.mock.calls[2][1] as typeof accounts).map(account => account.id)).toEqual(['xiaohongshu'])
   })
 
   it('builds separate highlighted drafts for WeChat, Xiaohongshu, X, and generic platforms', async () => {
@@ -328,7 +455,7 @@ describe('App publishing engine onboarding', () => {
     expect(container.textContent).toContain('发布引擎已就绪 · 1 平台')
   })
 
-  it('switches a single large platform preview and lets users supplement missing Markdown images', async () => {
+  it('switches a single large platform preview and supplements missing Markdown images from a mixed folder', async () => {
     bridgeMocks.waitForBridge.mockResolvedValue(false)
     window.localStorage.setItem('dispatch.editor-pane-percent', '42')
 
@@ -488,13 +615,31 @@ describe('App publishing engine onboarding', () => {
     expect(container.querySelector<HTMLElement>('.platform-preview-viewport')?.scrollTop).toBe(90)
 
     await act(async () => resourceTab.dispatchEvent(new MouseEvent('click', { bubbles: true })))
-    const assetInput = container.querySelector<HTMLInputElement>('.resource-panel input[accept="image/*"]')!
-    Object.defineProperty(assetInput, 'files', {
+    const assetDirectoryInput = container.querySelector<HTMLInputElement>('.resource-panel input[webkitdirectory]')!
+    Object.defineProperty(assetDirectoryInput, 'files', {
       configurable: true,
-      value: [new File([new Uint8Array([137, 80, 78, 71])], 'flow.png', { type: 'image/png' })],
+      value: [
+        new File(['# ignored article'], 'article.md', { type: 'text/markdown' }),
+        new File(['ignored metadata'], '.DS_Store', { type: 'application/octet-stream' }),
+      ],
     })
     await act(async () => {
-      assetInput.dispatchEvent(new Event('change', { bubbles: true }))
+      assetDirectoryInput.dispatchEvent(new Event('change', { bubbles: true }))
+      await new Promise(resolve => window.setTimeout(resolve, 0))
+    })
+    expect(container.textContent).toContain('没有找到支持的图片文件')
+    expect(container.textContent).toContain('还差 1 张本地图片')
+
+    Object.defineProperty(assetDirectoryInput, 'files', {
+      configurable: true,
+      value: [
+        new File(['# ignored article'], 'article.md', { type: 'text/markdown' }),
+        new File(['ignored metadata'], '.DS_Store', { type: 'application/octet-stream' }),
+        new File([new Uint8Array([137, 80, 78, 71])], 'flow.png', { type: 'image/png' }),
+      ],
+    })
+    await act(async () => {
+      assetDirectoryInput.dispatchEvent(new Event('change', { bubbles: true }))
       await new Promise(resolve => window.setTimeout(resolve, 0))
     })
 

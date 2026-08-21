@@ -2,7 +2,12 @@ import type { ArticleDraft } from '../domain/article'
 import { DEFAULT_ARTICLE_FORMATTING } from '../domain/formatting'
 import type { DraftSummary, PersistedDraft } from '../domain/saved-draft'
 import { normalizeXhsCardSettings, SAVED_DRAFT_SCHEMA_VERSION, toDraftSummary } from '../domain/saved-draft'
-import type { DraftListOptions, DraftRepository } from './draft-repository'
+import type {
+  AtomicDraftImportOptions,
+  DraftListOptions,
+  DraftRepository,
+  DraftSaveOptions,
+} from './draft-repository'
 import { normalizeWechatThemeSettings } from '../lib/wechat-theme'
 
 export const LOCAL_DRAFT_DATABASE_NAME = 'dispatch-workbench-local'
@@ -36,6 +41,21 @@ export interface LocalDraftRepositoryOptions {
   now?: () => Date
 }
 
+export class DraftConflictError extends Error {
+  readonly code = 'draft-conflict'
+  readonly draftId: string
+  readonly expectedUpdatedAt: string | null
+  readonly actualUpdatedAt: string | null
+
+  constructor(draftId: string, expectedUpdatedAt: string | null, actualUpdatedAt: string | null) {
+    super('这篇稿件已在其他标签页中更新，请重新载入后再保存。')
+    this.name = 'DraftConflictError'
+    this.draftId = draftId
+    this.expectedUpdatedAt = expectedUpdatedAt
+    this.actualUpdatedAt = actualUpdatedAt
+  }
+}
+
 interface ExtractedArticle {
   article: ArticleDraft
   assets: Map<string, Omit<StoredAsset, 'key' | 'draftId' | 'updatedAt'>>
@@ -56,12 +76,33 @@ function transactionDone(transaction: IDBTransaction): Promise<void> {
   })
 }
 
+async function abortTransaction(transaction: IDBTransaction, done: Promise<void>): Promise<void> {
+  try {
+    transaction.abort()
+  } catch {
+    // The transaction may already be aborted or complete.
+  }
+  try {
+    await done
+  } catch {
+    // The original operation error is more useful to the caller.
+  }
+}
+
 function assetKey(draftId: string, assetId: string): string {
   return `${draftId}:${assetId}`
 }
 
 function assetReference(assetId: string): string {
   return `${DRAFT_ASSET_PROTOCOL}${assetId}`
+}
+
+function monotonicUpdatedAt(candidate: string, previous: string | undefined): string {
+  if (!previous) return candidate
+  const candidateTime = Date.parse(candidate)
+  const previousTime = Date.parse(previous)
+  if (!Number.isFinite(candidateTime) || !Number.isFinite(previousTime) || candidateTime > previousTime) return candidate
+  return new Date(previousTime + 1).toISOString()
 }
 
 function assetIdFromReference(value: string | undefined): string | null {
@@ -322,7 +363,7 @@ export class LocalDraftRepository implements DraftRepository {
     return this.databasePromise
   }
 
-  async saveDraft(draft: PersistedDraft, options: { preserveUpdatedAt?: boolean; replaceDeletionState?: boolean } = {}): Promise<PersistedDraft> {
+  async saveDraft(draft: PersistedDraft, options: DraftSaveOptions = {}): Promise<PersistedDraft> {
     const database = await this.openDatabase()
     const updatedAt = options.preserveUpdatedAt ? draft.updatedAt : this.now().toISOString()
     const extracted = await extractArticleAssets({ ...draft.article, id: draft.id })
@@ -349,8 +390,17 @@ export class LocalDraftRepository implements DraftRepository {
       requestResult(existingDraftRequest),
       requestResult(existingKeysRequest),
     ])
+    if (options.expectedUpdatedAt !== undefined) {
+      const actualUpdatedAt = existingDraft?.updatedAt ?? null
+      if (actualUpdatedAt !== options.expectedUpdatedAt) {
+        const conflict = new DraftConflictError(draft.id, options.expectedUpdatedAt, actualUpdatedAt)
+        await abortTransaction(transaction, done)
+        throw conflict
+      }
+    }
     const storedDraft: PersistedDraft = {
       ...nextDraft,
+      updatedAt: options.preserveUpdatedAt ? nextDraft.updatedAt : monotonicUpdatedAt(nextDraft.updatedAt, existingDraft?.updatedAt),
       deletedAt: existingDraft && !options.replaceDeletionState ? existingDraft.deletedAt : nextDraft.deletedAt,
     }
     drafts.put(storedDraft)
@@ -359,7 +409,7 @@ export class LocalDraftRepository implements DraftRepository {
         ...asset,
         key: assetKey(draft.id, asset.id),
         draftId: draft.id,
-        updatedAt,
+        updatedAt: storedDraft.updatedAt,
       } satisfies StoredAsset)
     }
 
@@ -373,6 +423,77 @@ export class LocalDraftRepository implements DraftRepository {
     const saved = await this.getDraft(draft.id)
     if (!saved) throw new Error('本地稿件保存后无法读取。')
     return saved
+  }
+
+  async importDraftsAtomically(
+    draftsToImport: readonly PersistedDraft[],
+    options: AtomicDraftImportOptions = {},
+  ): Promise<void> {
+    const draftIds = new Set<string>()
+    for (const draft of draftsToImport) {
+      if (draftIds.has(draft.id)) throw new Error(`原子导入包含重复稿件：${draft.id}`)
+      draftIds.add(draft.id)
+    }
+
+    const preparedDrafts = await Promise.all(draftsToImport.map(async draft => {
+      const extracted = await extractArticleAssets({ ...draft.article, id: draft.id })
+      const storedDraft: PersistedDraft = {
+        ...draft,
+        id: draft.id,
+        article: extracted.article,
+        formatting: {
+          ...draft.formatting,
+          wechat: normalizeWechatThemeSettings(draft.formatting.wechat),
+        },
+        xhsSettings: normalizeXhsCardSettings(draft.xhsSettings),
+      }
+      return {
+        storedDraft,
+        assets: extracted.assets,
+        retainedAssetIds: referencedAssetIds(storedDraft.article),
+      }
+    }))
+
+    const database = await this.openDatabase()
+    const transaction = database.transaction([DRAFTS_STORE, ASSETS_STORE, SETTINGS_STORE], 'readwrite')
+    const done = transactionDone(transaction)
+    const drafts = transaction.objectStore(DRAFTS_STORE)
+    const assets = transaction.objectStore(ASSETS_STORE)
+    const settings = transaction.objectStore(SETTINGS_STORE)
+
+    try {
+      const existingKeysByDraft = await Promise.all(preparedDrafts.map(({ storedDraft }) => (
+        requestResult(assets.index(DRAFT_ID_INDEX).getAllKeys(storedDraft.id))
+      )))
+
+      preparedDrafts.forEach(({ storedDraft, assets: extractedAssets, retainedAssetIds }, draftIndex) => {
+        drafts.put(storedDraft)
+        for (const asset of extractedAssets.values()) {
+          assets.put({
+            ...asset,
+            key: assetKey(storedDraft.id, asset.id),
+            draftId: storedDraft.id,
+            updatedAt: storedDraft.updatedAt,
+          } satisfies StoredAsset)
+        }
+
+        for (const key of existingKeysByDraft[draftIndex]) {
+          if (typeof key !== 'string') continue
+          const assetId = key.slice(`${storedDraft.id}:`.length)
+          if (!retainedAssetIds.has(assetId)) assets.delete(key)
+        }
+      })
+
+      for (const mutation of options.settingMutations ?? []) {
+        if (mutation.type === 'put') settings.put({ key: mutation.key, value: mutation.value } satisfies StoredSetting)
+        else settings.delete(mutation.key)
+      }
+
+      await done
+    } catch (error) {
+      await abortTransaction(transaction, done)
+      throw error
+    }
   }
 
   async getDraft(id: string): Promise<PersistedDraft | null> {

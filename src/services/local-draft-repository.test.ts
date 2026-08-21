@@ -5,6 +5,7 @@ import { DEFAULT_ARTICLE_FORMATTING } from '../domain/formatting'
 import { createPersistedDraft, type PersistedDraft } from '../domain/saved-draft'
 import {
   DRAFT_ASSET_PROTOCOL,
+  DraftConflictError,
   LocalDraftRepository,
   resetLocalDraftDatabase,
 } from './local-draft-repository'
@@ -236,6 +237,67 @@ describe('LocalDraftRepository', () => {
     const restored = await repository.restoreDraft(original.id)
     expect(restored?.deletedAt).toBeNull()
     expect((await repository.listDrafts()).map(draft => draft.id)).toEqual([original.id])
+  })
+
+  it('rejects a stale cross-tab save when the expected update timestamp no longer matches', async () => {
+    const firstNow = '2026-08-13T04:00:00.000Z'
+    let secondNow = '2026-08-13T04:00:00.000Z'
+    const { databaseName, repository: firstTab } = createRepository(() => new Date(firstNow))
+    const secondTab = new LocalDraftRepository({ databaseName, now: () => new Date(secondNow) })
+    repositories.push(secondTab)
+
+    const initial = await firstTab.saveDraft(persisted('shared-draft'))
+    const staleCopy = await secondTab.getDraft(initial.id)
+    expect(staleCopy?.updatedAt).toBe(initial.updatedAt)
+
+    const firstSaved = await firstTab.saveDraft({
+      ...initial,
+      article: article(initial.id, { title: '标签页一的新版本' }),
+    }, { expectedUpdatedAt: initial.updatedAt })
+    expect(firstSaved.updatedAt).toBe('2026-08-13T04:00:00.001Z')
+
+    secondNow = '2026-08-13T06:00:00.000Z'
+    const staleSave = secondTab.saveDraft({
+      ...staleCopy!,
+      article: article(initial.id, { title: '标签页二的陈旧版本' }),
+    }, { expectedUpdatedAt: staleCopy!.updatedAt })
+
+    await expect(staleSave).rejects.toMatchObject({
+      name: 'DraftConflictError',
+      code: 'draft-conflict',
+      draftId: initial.id,
+      expectedUpdatedAt: initial.updatedAt,
+      actualUpdatedAt: firstSaved.updatedAt,
+    })
+    await expect(staleSave).rejects.toBeInstanceOf(DraftConflictError)
+    expect((await firstTab.getDraft(initial.id))?.article.title).toBe('标签页一的新版本')
+  })
+
+  it('rolls back all imported drafts and setting mutations when a batch transaction fails', async () => {
+    const { repository } = createRepository()
+    const original = await repository.saveDraft(persisted('atomic-existing', {
+      article: article('atomic-existing', { title: '导入前内容' }),
+    }))
+    await repository.putSetting('last-active-draft-id', original.id)
+
+    const replacement = persisted(original.id, {
+      article: article(original.id, { title: '不应留下的覆盖内容' }),
+      updatedAt: '2026-08-13T05:00:00.000Z',
+    })
+    const invalid = persisted('atomic-invalid', {
+      article: {
+        ...article('atomic-invalid', { title: '触发事务失败' }),
+        nonCloneableValue: () => undefined,
+      } as ArticleDraft,
+    })
+
+    await expect(repository.importDraftsAtomically([replacement, invalid], {
+      settingMutations: [{ type: 'put', key: 'last-active-draft-id', value: invalid.id }],
+    })).rejects.toBeDefined()
+
+    expect((await repository.getDraft(original.id))?.article.title).toBe('导入前内容')
+    expect(await repository.getDraft(invalid.id)).toBeNull()
+    expect(await repository.getSetting('last-active-draft-id')).toBe(original.id)
   })
 
   it('hard deletes a draft together with its assets', async () => {

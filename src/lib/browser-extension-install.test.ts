@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   CHROME_WEB_STORE_URL,
+  WECHATSYNC_PACKAGE_VERSION,
   WECHATSYNC_PACKAGE_URL,
   detectExtensionBrowser,
   getBrowserExtensionGuide,
@@ -13,6 +14,7 @@ describe('browser extension installation guide', () => {
     expect(guide.browser).toBe('edge')
     expect(guide.steps[1].detail).toContain('edge://extensions')
     expect(guide.primaryUrl).toBe(WECHATSYNC_PACKAGE_URL)
+    expect(guide.primaryLabel).toContain(WECHATSYNC_PACKAGE_VERSION)
     expect(guide.secondaryUrl).toBe(CHROME_WEB_STORE_URL)
   })
 
@@ -29,6 +31,8 @@ describe('browser extension installation guide', () => {
 
     expect(guide.browser).toBe('chromium')
     expect(guide.primaryUrl).toBe(WECHATSYNC_PACKAGE_URL)
+    expect(guide.steps[0].detail).toContain(WECHATSYNC_PACKAGE_VERSION)
+    expect(guide.steps[0].detail).not.toContain('最新版')
     expect(guide.steps[1].detail).toContain('加载已解压的扩展')
   })
 

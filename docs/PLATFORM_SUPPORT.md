@@ -1,6 +1,6 @@
 # Platform Support / 平台支持矩阵
 
-Last reviewed / 最近核对：2026-08-18
+Last reviewed / 最近核对：2026-08-20
 
 EZWRITING separates platform presentation from final delivery. A dedicated preview means EZWRITING renders a platform-specific result; draft delivery still depends on Wechatsync, an active platform session, and the target platform's current behavior.
 
@@ -20,7 +20,7 @@ EZWRITING 将平台化呈现与最终同步分开。专属预览表示 EZWRITING
 | WeChat Official Account / 微信公众号 | Article preview with 26 themes / 26 套主题长文预览 | Copy inline-styled HTML / 复制内联样式正文 | Wechatsync bridge / Wechatsync 桥接 | **Upstream issue** — error `200040` may block drafts; manual copy remains available / **上游问题** — `200040` 可能阻断草稿，可使用人工复制 |
 | Xiaohongshu / 小红书 | 3:4 paginated cards, single/spread/overview / 3:4 分页卡片、单页/双页/整体预览 | PNG and multi-card ZIP / PNG 与多卡片 ZIP | Wechatsync bridge / Wechatsync 桥接 | **Experimental** — export is verified; draft-detail verification remains incomplete / **实验性** — 导出已验证，草稿详情核验未完成 |
 | X Article | Desktop and mobile long-form preview / 桌面与手机长文预览 | Copy prepared long-form content / 复制整理后的长文 | Wechatsync bridge / Wechatsync 桥接 | **Experimental** — account eligibility is required / **实验性** — 需要账号具备长文权限 |
-| Bilibili column / 哔哩哔哩专栏 | Generic article only / 仅通用稿件 | None specific / 无专属输出 | Wechatsync bridge / Wechatsync 桥接 | **Experimental** — body reached a real draft; custom cover did not map / **实验性** — 正文曾进入真实草稿，自定义封面未映射 |
+| Bilibili column / 哔哩哔哩专栏 | Generic article only / 仅通用稿件 | None specific / 无专属输出 | Wechatsync bridge / Wechatsync 桥接 | **Experimental** — body reached a real draft; choose the cover manually on the platform / **实验性** — 正文曾进入真实草稿，封面需在平台手动选择 |
 | Other destinations reported by Wechatsync / 其他 Wechatsync 平台 | None / 无 | None specific / 无专属输出 | Generic article bridge / 通用稿件桥接 | **Not dedicated** — inspect every returned draft manually / **无专属适配** — 每次都需人工核对草稿 |
 
 ## Input and browser support / 输入与浏览器支持

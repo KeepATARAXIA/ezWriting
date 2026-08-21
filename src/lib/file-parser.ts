@@ -1,7 +1,12 @@
 import JSZip from 'jszip'
 import { parse as parseYaml } from 'yaml'
 import type { ArticleDraft, ArticleSourceLanguage, SourceKind } from '../domain/article'
-import { normalizeObsidianImages, renderMarkdownToSafeHtml, sanitizeContentHtml } from './markdown-compatibility'
+import {
+  normalizeObsidianImages,
+  renderMarkdownToSafeHtml,
+  sanitizeContentHtml,
+  sanitizeInternalContentHtml,
+} from './markdown-compatibility'
 
 const MAX_SOURCE_BYTES = 5 * 1024 * 1024
 const MAX_ARCHIVE_SOURCE_BYTES = 20 * 1024 * 1024
@@ -10,6 +15,43 @@ const MAX_ARCHIVE_ENTRY_BYTES = 8 * 1024 * 1024
 const MAX_ARCHIVE_TOTAL_BYTES = 30 * 1024 * 1024
 const ARTICLE_NAMES = ['article.md', 'article.markdown', 'article.html', 'article.htm']
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'])
+const ZIP_CENTRAL_DIRECTORY_SIGNATURE = 0x02014b50
+const ZIP_END_OF_CENTRAL_DIRECTORY_SIGNATURE = 0x06054b50
+const ZIP_END_OF_CENTRAL_DIRECTORY_BYTES = 22
+const ZIP_MAX_COMMENT_BYTES = 0xffff
+
+export type ImportOperation = 'initial' | 'append' | 'replace' | 'asset-supplement'
+export type ImportStage = 'validate' | 'read' | 'archive' | 'assets' | 'render'
+
+export interface ImportDiagnostic {
+  version: 1
+  recordedAt: string
+  outcome: 'success' | 'error'
+  operation: ImportOperation
+  source: {
+    kind: Exclude<SourceKind, 'blank'> | 'unsupported'
+    bytes: number
+    relatedFileCount: number
+    relatedBytes: number
+    relatedImageCount: number
+  }
+  totalMs: number
+  stageMs: Partial<Record<ImportStage, number>>
+  warningCount: number
+  missingAssetCount: number
+  errorCode?: 'invalid-input' | 'parse-failed'
+}
+
+export interface ParseContentFileOptions {
+  operation?: ImportOperation
+  onDiagnostic?: (diagnostic: ImportDiagnostic) => void
+}
+
+interface ImportTimer {
+  measure<T>(stage: ImportStage, action: () => Promise<T>): Promise<T>
+  measureSync<T>(stage: ImportStage, action: () => T): T
+  snapshot(): Partial<Record<ImportStage, number>>
+}
 
 export class FileParseError extends Error {
   constructor(message: string) {
@@ -32,11 +74,85 @@ interface ParsedSource {
 
 type AssetSource = File | Uint8Array
 
+interface TextAssetReplacement {
+  start: number
+  end: number
+  value: string
+  missingAsset?: string
+  warning?: string
+}
+
+interface ZipUint8ArrayStream {
+  on(event: 'data', callback: (chunk: Uint8Array) => void): this
+  on(event: 'end', callback: () => void): this
+  on(event: 'error', callback: (error: Error) => void): this
+  pause(): this
+  resume(): this
+}
+
+interface StreamableZipEntry extends JSZip.JSZipObject {
+  internalStream(type: 'uint8array'): ZipUint8ArrayStream
+}
+
+interface ArchiveReadBudget {
+  totalBytes: number
+}
+
 interface FrontMatter {
   title?: string
   summary?: string
   description?: string
   tags?: string[] | string
+}
+
+function monotonicNow(): number {
+  return typeof performance === 'undefined' ? Date.now() : performance.now()
+}
+
+function roundedMilliseconds(value: number): number {
+  return Math.round(Math.max(0, value) * 100) / 100
+}
+
+function createImportTimer(): ImportTimer {
+  const stageMs: Partial<Record<ImportStage, number>> = {}
+  const addDuration = (stage: ImportStage, startedAt: number) => {
+    stageMs[stage] = roundedMilliseconds((stageMs[stage] || 0) + monotonicNow() - startedAt)
+  }
+
+  return {
+    async measure(stage, action) {
+      const startedAt = monotonicNow()
+      try {
+        return await action()
+      } finally {
+        addDuration(stage, startedAt)
+      }
+    },
+    measureSync(stage, action) {
+      const startedAt = monotonicNow()
+      try {
+        return action()
+      } finally {
+        addDuration(stage, startedAt)
+      }
+    },
+    snapshot: () => ({ ...stageMs }),
+  }
+}
+
+function diagnosticSourceKind(extension: string): ImportDiagnostic['source']['kind'] {
+  if (extension === 'md' || extension === 'markdown') return 'markdown'
+  if (extension === 'html' || extension === 'htm') return 'html'
+  if (extension === 'zip') return 'zip'
+  return 'unsupported'
+}
+
+function emitImportDiagnostic(options: ParseContentFileOptions, diagnostic: ImportDiagnostic): void {
+  try {
+    options.onDiagnostic?.(diagnostic)
+  } catch {
+    // Diagnostics must never interrupt the import path.
+  }
 }
 
 function sanitizeHtml(html: string): string {
@@ -57,7 +173,7 @@ function markMissingImages(html: string, missingAssets: string[]): string {
     missingIndex += 1
   })
 
-  return sanitizeHtml(document.body.innerHTML)
+  return sanitizeInternalContentHtml(document.body.innerHTML)
 }
 
 function normalizePath(value: string): string {
@@ -73,6 +189,125 @@ function normalizePath(value: string): string {
 function isUnsafeArchivePath(value: string): boolean {
   const normalized = value.replaceAll('\\', '/')
   return normalized.startsWith('/') || /^[a-zA-Z]:\//.test(normalized) || normalized.split('/').includes('..')
+}
+
+function validateZipCentralDirectory(bytes: Uint8Array): void {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  const searchStart = Math.max(0, bytes.byteLength - ZIP_END_OF_CENTRAL_DIRECTORY_BYTES - ZIP_MAX_COMMENT_BYTES)
+  let endOffset = -1
+
+  for (let offset = bytes.byteLength - ZIP_END_OF_CENTRAL_DIRECTORY_BYTES; offset >= searchStart; offset -= 1) {
+    if (view.getUint32(offset, true) !== ZIP_END_OF_CENTRAL_DIRECTORY_SIGNATURE) continue
+    const commentBytes = view.getUint16(offset + 20, true)
+    if (offset + ZIP_END_OF_CENTRAL_DIRECTORY_BYTES + commentBytes !== bytes.byteLength) continue
+    endOffset = offset
+    break
+  }
+
+  if (endOffset < 0) throw new FileParseError('ZIP 文件结构无效。')
+
+  const diskNumber = view.getUint16(endOffset + 4, true)
+  const centralDirectoryDisk = view.getUint16(endOffset + 6, true)
+  const diskEntryCount = view.getUint16(endOffset + 8, true)
+  const totalEntryCount = view.getUint16(endOffset + 10, true)
+  const centralDirectoryBytes = view.getUint32(endOffset + 12, true)
+  const centralDirectoryOffset = view.getUint32(endOffset + 16, true)
+
+  if (diskNumber !== 0 || centralDirectoryDisk !== 0 || diskEntryCount !== totalEntryCount) {
+    throw new FileParseError('暂不支持分卷 ZIP 文件。')
+  }
+  if (totalEntryCount === 0xffff || centralDirectoryBytes === 0xffffffff || centralDirectoryOffset === 0xffffffff) {
+    throw new FileParseError('ZIP 文件条目数量或目录大小超出支持范围。')
+  }
+
+  const centralDirectoryEnd = centralDirectoryOffset + centralDirectoryBytes
+  if (centralDirectoryEnd > endOffset || centralDirectoryOffset > bytes.byteLength) {
+    throw new FileParseError('ZIP 文件结构无效。')
+  }
+
+  const decoder = new TextDecoder()
+  const paths = new Set<string>()
+  let fileCount = 0
+  let offset = centralDirectoryOffset
+
+  for (let entryIndex = 0; entryIndex < totalEntryCount; entryIndex += 1) {
+    if (offset + 46 > centralDirectoryEnd || view.getUint32(offset, true) !== ZIP_CENTRAL_DIRECTORY_SIGNATURE) {
+      throw new FileParseError('ZIP 文件结构无效。')
+    }
+
+    const nameBytes = view.getUint16(offset + 28, true)
+    const extraBytes = view.getUint16(offset + 30, true)
+    const commentBytes = view.getUint16(offset + 32, true)
+    const entryEnd = offset + 46 + nameBytes + extraBytes + commentBytes
+    if (entryEnd > centralDirectoryEnd) throw new FileParseError('ZIP 文件结构无效。')
+
+    const rawPath = decoder.decode(bytes.subarray(offset + 46, offset + 46 + nameBytes))
+    const isDirectory = rawPath.endsWith('/') || rawPath.endsWith('\\')
+    if (!isDirectory) {
+      fileCount += 1
+      if (fileCount > MAX_ARCHIVE_FILES) {
+        throw new FileParseError(`ZIP 文件数量不能超过 ${MAX_ARCHIVE_FILES} 个。`)
+      }
+      if (isUnsafeArchivePath(rawPath)) throw new FileParseError('ZIP 包含不安全的文件路径。')
+
+      const normalizedPath = normalizePath(rawPath)
+      if (!normalizedPath) throw new FileParseError('ZIP 包含无效的文件路径。')
+      if (paths.has(normalizedPath)) throw new FileParseError(`ZIP 包含重复的文件路径：${normalizedPath}`)
+      paths.add(normalizedPath)
+    }
+
+    offset = entryEnd
+  }
+
+  if (offset !== centralDirectoryEnd) throw new FileParseError('ZIP 文件结构无效。')
+}
+
+function readZipEntryBytes(entry: JSZip.JSZipObject, budget: ArchiveReadBudget): Promise<Uint8Array> {
+  return new Promise((resolve, reject) => {
+    const chunks: Uint8Array[] = []
+    const stream = (entry as StreamableZipEntry).internalStream('uint8array')
+    let entryBytes = 0
+    let settled = false
+
+    const fail = (error: Error) => {
+      if (settled) return
+      settled = true
+      chunks.length = 0
+      stream.pause()
+      reject(error)
+    }
+
+    stream
+      .on('data', chunk => {
+        if (settled) return
+        const nextEntryBytes = entryBytes + chunk.byteLength
+        if (nextEntryBytes > MAX_ARCHIVE_ENTRY_BYTES) {
+          fail(new FileParseError(`文件 ${entry.name} 超过 8 MB。`))
+          return
+        }
+        if (budget.totalBytes + nextEntryBytes > MAX_ARCHIVE_TOTAL_BYTES) {
+          fail(new FileParseError('ZIP 解压后的总大小不能超过 30 MB。'))
+          return
+        }
+        chunks.push(chunk)
+        entryBytes = nextEntryBytes
+      })
+      .on('error', error => fail(error))
+      .on('end', () => {
+        if (settled) return
+        settled = true
+        const bytes = new Uint8Array(entryBytes)
+        let offset = 0
+        for (const chunk of chunks) {
+          bytes.set(chunk, offset)
+          offset += chunk.byteLength
+        }
+        chunks.length = 0
+        budget.totalBytes += entryBytes
+        resolve(bytes)
+      })
+      .resume()
+  })
 }
 
 function extensionOf(name: string): string {
@@ -179,18 +414,35 @@ async function assetDataUri(path: string, source: AssetSource): Promise<string> 
   return toDataUri(await assetBytes(source), mimeFor(path))
 }
 
-function buildFileAssets(files: File[]): Map<string, AssetSource> {
-  const imageFiles = files.filter(file => IMAGE_EXTENSIONS.has(extensionOf(file.name)))
-  if (imageFiles.length > MAX_ARCHIVE_FILES) {
+export function validateImageResourceFiles(files: File[]): File[] {
+  if (files.some(file => !IMAGE_EXTENSIONS.has(extensionOf(file.name)))) {
+    throw new FileParseError('图片资源仅支持 PNG、JPG、JPEG、GIF、WebP 或 SVG 格式。')
+  }
+  if (files.length > MAX_ARCHIVE_FILES) {
     throw new FileParseError(`图片文件数量不能超过 ${MAX_ARCHIVE_FILES} 个。`)
   }
-  if (imageFiles.some(file => file.size > MAX_ARCHIVE_ENTRY_BYTES)) {
+  if (files.some(file => file.size > MAX_ARCHIVE_ENTRY_BYTES)) {
     throw new FileParseError('存在超过 8 MB 的单张图片。')
   }
-  const totalBytes = imageFiles.reduce((total, file) => total + file.size, 0)
+  const totalBytes = files.reduce((total, file) => total + file.size, 0)
   if (totalBytes > MAX_ARCHIVE_TOTAL_BYTES) {
     throw new FileParseError('图片总大小不能超过 30 MB。')
   }
+
+  return files
+}
+
+export function selectImageResourceFiles(files: File[]): File[] {
+  const imageFiles = files.filter(file => IMAGE_EXTENSIONS.has(extensionOf(file.name)))
+  if (!imageFiles.length) {
+    throw new FileParseError('所选内容中没有找到支持的图片文件（PNG、JPG、JPEG、GIF、WebP 或 SVG）。')
+  }
+
+  return validateImageResourceFiles(imageFiles)
+}
+
+function buildFileAssets(files: File[]): Map<string, AssetSource> {
+  const imageFiles = validateImageResourceFiles(files.filter(file => IMAGE_EXTENSIONS.has(extensionOf(file.name))))
 
   return new Map(imageFiles.map(file => [sourcePathForFile(file), file]))
 }
@@ -204,22 +456,42 @@ async function replaceMarkdownAssets(
   const normalizedMarkdown = normalizeObsidianImages(markdown)
   const matches = [...normalizedMarkdown.matchAll(/!\[([^\]]*)\]\(\s*(?:<([^>]+)>|([^\s)]+))(?:\s+["'][^"']*["'])?\s*\)/g)]
   const missingAssets: string[] = []
-  let result = normalizedMarkdown
-
-  for (const match of matches) {
+  const dataUriCache = new Map<string, Promise<string>>()
+  const replacements = await Promise.all(matches.map(async (match): Promise<TextAssetReplacement> => {
     const reference = match[2] || match[3]
-    if (isExternalAsset(reference)) continue
+    const start = match.index ?? 0
+    const unchanged: TextAssetReplacement = { start, end: start + match[0].length, value: match[0] }
+    if (isExternalAsset(reference)) return unchanged
     const resolved = findAsset(reference, articlePath, assets)
     if (!resolved.source || !resolved.path) {
       const normalizedReference = decodeReference(reference)
-      if (!missingAssets.includes(normalizedReference)) missingAssets.push(normalizedReference)
-      warnings.push(resolved.ambiguous ? `图片存在重名，无法确定：${normalizedReference}` : `未找到图片：${normalizedReference}`)
-      continue
+      return {
+        ...unchanged,
+        missingAsset: normalizedReference,
+        warning: resolved.ambiguous
+          ? `图片存在重名，无法确定：${normalizedReference}`
+          : `未找到图片：${normalizedReference}`,
+      }
     }
-    const dataUri = await assetDataUri(resolved.path, resolved.source)
-    result = result.replace(match[0], `![${match[1]}](${dataUri})`)
+    let dataUri = dataUriCache.get(resolved.path)
+    if (!dataUri) {
+      dataUri = assetDataUri(resolved.path, resolved.source)
+      dataUriCache.set(resolved.path, dataUri)
+    }
+    return { ...unchanged, value: `![${match[1]}](${await dataUri})` }
+  }))
+
+  const parts: string[] = []
+  let cursor = 0
+  for (const replacement of replacements) {
+    parts.push(normalizedMarkdown.slice(cursor, replacement.start), replacement.value)
+    cursor = replacement.end
+    if (!replacement.missingAsset) continue
+    if (!missingAssets.includes(replacement.missingAsset)) missingAssets.push(replacement.missingAsset)
+    if (replacement.warning) warnings.push(replacement.warning)
   }
-  return { markdown: result, missingAssets }
+  parts.push(normalizedMarkdown.slice(cursor))
+  return { markdown: parts.join(''), missingAssets }
 }
 
 async function replaceHtmlAssets(
@@ -230,18 +502,35 @@ async function replaceHtmlAssets(
 ): Promise<{ html: string; missingAssets: string[] }> {
   const document = new DOMParser().parseFromString(html, 'text/html')
   const missingAssets: string[] = []
-
-  for (const image of document.querySelectorAll<HTMLImageElement>('img[src]')) {
+  const dataUriCache = new Map<string, Promise<string>>()
+  const images = [...document.querySelectorAll<HTMLImageElement>('img[src]')]
+  const replacements = await Promise.all(images.map(async image => {
     const reference = image.getAttribute('src') ?? ''
-    if (isExternalAsset(reference)) continue
+    if (isExternalAsset(reference)) return { image }
     const resolved = findAsset(reference, articlePath, assets)
     if (!resolved.source || !resolved.path) {
       const normalizedReference = decodeReference(reference)
-      if (!missingAssets.includes(normalizedReference)) missingAssets.push(normalizedReference)
-      warnings.push(resolved.ambiguous ? `图片存在重名，无法确定：${normalizedReference}` : `未找到图片：${normalizedReference}`)
-      continue
+      return {
+        image,
+        missingAsset: normalizedReference,
+        warning: resolved.ambiguous
+          ? `图片存在重名，无法确定：${normalizedReference}`
+          : `未找到图片：${normalizedReference}`,
+      }
     }
-    image.src = await assetDataUri(resolved.path, resolved.source)
+    let dataUri = dataUriCache.get(resolved.path)
+    if (!dataUri) {
+      dataUri = assetDataUri(resolved.path, resolved.source)
+      dataUriCache.set(resolved.path, dataUri)
+    }
+    return { image, dataUri: await dataUri }
+  }))
+
+  for (const replacement of replacements) {
+    if (replacement.dataUri) replacement.image.src = replacement.dataUri
+    if (!replacement.missingAsset) continue
+    if (!missingAssets.includes(replacement.missingAsset)) missingAssets.push(replacement.missingAsset)
+    if (replacement.warning) warnings.push(replacement.warning)
   }
 
   return { html: document.documentElement.outerHTML, missingAssets }
@@ -294,10 +583,11 @@ function parseHtml(html: string, fallbackTitle: string, warnings: string[]): Par
   }
 }
 
-async function parseZip(file: File): Promise<ParsedSource> {
-  const zip = await JSZip.loadAsync(file)
+async function parseZip(file: File, timer: ImportTimer): Promise<ParsedSource> {
+  const archiveBytes = await timer.measure('archive', () => file.arrayBuffer())
+  timer.measureSync('validate', () => validateZipCentralDirectory(new Uint8Array(archiveBytes)))
+  const zip = await timer.measure('archive', () => JSZip.loadAsync(archiveBytes))
   const entries = Object.values(zip.files).filter(entry => !entry.dir)
-  if (entries.length > MAX_ARCHIVE_FILES) throw new FileParseError(`ZIP 文件数量不能超过 ${MAX_ARCHIVE_FILES} 个。`)
   if (entries.some(entry => isUnsafeArchivePath(entry.unsafeOriginalName || entry.name))) {
     throw new FileParseError('ZIP 包含不安全的文件路径。')
   }
@@ -318,30 +608,39 @@ async function parseZip(file: File): Promise<ParsedSource> {
   if (!articleEntry) throw new FileParseError('ZIP 中没有找到 article.md 或 article.html。')
 
   const assets = new Map<string, AssetSource>()
-  let totalBytes = 0
+  const readBudget: ArchiveReadBudget = { totalBytes: 0 }
+  let fileCount = 0
+  let articleBytes: Uint8Array | undefined
   for (const entry of entries) {
-    const bytes = await entry.async('uint8array')
-    if (bytes.byteLength > MAX_ARCHIVE_ENTRY_BYTES) throw new FileParseError(`文件 ${entry.name} 超过 8 MB。`)
-    totalBytes += bytes.byteLength
-    if (totalBytes > MAX_ARCHIVE_TOTAL_BYTES) throw new FileParseError('ZIP 解压后的总大小不能超过 30 MB。')
+    fileCount += 1
+    if (fileCount > MAX_ARCHIVE_FILES) throw new FileParseError(`ZIP 文件数量不能超过 ${MAX_ARCHIVE_FILES} 个。`)
+    const bytes = await timer.measure('archive', () => readZipEntryBytes(entry, readBudget))
+    if (entry === articleEntry) articleBytes = bytes
     if (IMAGE_EXTENSIONS.has(extensionOf(entry.name))) assets.set(normalizePath(entry.name), bytes)
   }
 
   const warnings: string[] = []
-  const articleText = await articleEntry.async('text')
+  if (!articleBytes) throw new FileParseError('ZIP 中的文章文件读取失败。')
+  const articleText = timer.measureSync('read', () => new TextDecoder().decode(articleBytes))
   const fallback = titleFromFile(file.name)
   if (/\.(md|markdown)$/i.test(articleEntry.name)) {
-    const replaced = await replaceMarkdownAssets(articleText, normalizePath(articleEntry.name), assets, warnings)
-    const parsed = parseMarkdown(replaced.markdown, fallback, warnings)
-    parsed.missingAssets = replaced.missingAssets
-    parsed.html = markMissingImages(parsed.html, replaced.missingAssets)
+    const replaced = await timer.measure('assets', () => replaceMarkdownAssets(articleText, normalizePath(articleEntry.name), assets, warnings))
+    const parsed = timer.measureSync('render', () => {
+      const next = parseMarkdown(replaced.markdown, fallback, warnings)
+      next.missingAssets = replaced.missingAssets
+      next.html = markMissingImages(next.html, replaced.missingAssets)
+      return next
+    })
     return parsed
   }
 
-  const replaced = await replaceHtmlAssets(articleText, normalizePath(articleEntry.name), assets, warnings)
-  const parsed = parseHtml(replaced.html, fallback, warnings)
-  parsed.missingAssets = replaced.missingAssets
-  parsed.html = markMissingImages(parsed.html, replaced.missingAssets)
+  const replaced = await timer.measure('assets', () => replaceHtmlAssets(articleText, normalizePath(articleEntry.name), assets, warnings))
+  const parsed = timer.measureSync('render', () => {
+    const next = parseHtml(replaced.html, fallback, warnings)
+    next.missingAssets = replaced.missingAssets
+    next.html = markMissingImages(next.html, replaced.missingAssets)
+    return next
+  })
   return parsed
 }
 
@@ -351,50 +650,108 @@ export function pickPrimaryContentFile(files: File[]): File {
   return supported.find(file => ARTICLE_NAMES.includes(file.name.toLowerCase())) || supported[0]
 }
 
-export async function parseContentFile(file: File, relatedFiles: File[] = []): Promise<ArticleDraft> {
-  if (extensionOf(file.name) === 'zip' && file.size > MAX_ARCHIVE_SOURCE_BYTES) {
-    throw new FileParseError('ZIP 内容包不能超过 20 MB。')
-  }
-  if (file.size > MAX_SOURCE_BYTES && extensionOf(file.name) !== 'zip') {
-    throw new FileParseError('单个文章文件不能超过 5 MB；包含图片时请使用 ZIP 内容包。')
-  }
-
+export async function parseContentFile(
+  file: File,
+  relatedFiles: File[] = [],
+  options: ParseContentFileOptions = {},
+): Promise<ArticleDraft> {
+  const startedAt = monotonicNow()
   const extension = extensionOf(file.name)
-  let source: ParsedSource
-  let sourceKind: SourceKind
-  const assets = buildFileAssets(relatedFiles)
-  const sourcePath = sourcePathForFile(file)
-
-  if (extension === 'md' || extension === 'markdown') {
-    sourceKind = 'markdown'
-    const warnings: string[] = []
-    const replaced = await replaceMarkdownAssets(await file.text(), sourcePath, assets, warnings)
-    source = parseMarkdown(replaced.markdown, titleFromFile(file.name), warnings)
-    source.missingAssets = replaced.missingAssets
-    source.html = markMissingImages(source.html, replaced.missingAssets)
-  } else if (extension === 'html' || extension === 'htm') {
-    sourceKind = 'html'
-    const warnings: string[] = []
-    const replaced = await replaceHtmlAssets(await file.text(), sourcePath, assets, warnings)
-    source = parseHtml(replaced.html, titleFromFile(file.name), warnings)
-    source.missingAssets = replaced.missingAssets
-    source.html = markMissingImages(source.html, replaced.missingAssets)
-  } else if (extension === 'zip') {
-    sourceKind = 'zip'
-    source = await parseZip(file)
-  } else {
-    throw new FileParseError('暂不支持该格式，请导入 .md、.html 或 .zip。')
+  const timer = createImportTimer()
+  const diagnosticBase = {
+    version: 1 as const,
+    operation: options.operation || 'initial',
+    source: {
+      kind: diagnosticSourceKind(extension),
+      bytes: file.size,
+      relatedFileCount: relatedFiles.length,
+      relatedBytes: relatedFiles.reduce((total, related) => total + related.size, 0),
+      relatedImageCount: relatedFiles.filter(related => IMAGE_EXTENSIONS.has(extensionOf(related.name))).length,
+    },
   }
 
-  return {
-    id: crypto.randomUUID(),
-    ...source,
-    sourceFile: file.name,
-    sourceKind,
-    importedAt: new Date().toISOString(),
+  try {
+    const { assets, sourcePath } = timer.measureSync('validate', () => {
+      if (file.size === 0) {
+        throw new FileParseError('文章文件为空，请选择包含正文的文件。')
+      }
+      if (extension === 'zip' && file.size > MAX_ARCHIVE_SOURCE_BYTES) {
+        throw new FileParseError('ZIP 内容包不能超过 20 MB。')
+      }
+      if (file.size > MAX_SOURCE_BYTES && extension !== 'zip') {
+        throw new FileParseError('单个文章文件不能超过 5 MB；包含图片时请使用 ZIP 内容包。')
+      }
+      if (!['md', 'markdown', 'html', 'htm', 'zip'].includes(extension)) {
+        throw new FileParseError('暂不支持该格式，请导入 .md、.html 或 .zip。')
+      }
+      return {
+        assets: extension === 'zip' ? new Map<string, AssetSource>() : buildFileAssets(relatedFiles),
+        sourcePath: sourcePathForFile(file),
+      }
+    })
+
+    let source: ParsedSource
+    let sourceKind: Exclude<SourceKind, 'blank'>
+
+    if (extension === 'md' || extension === 'markdown') {
+      sourceKind = 'markdown'
+      const warnings: string[] = []
+      const text = await timer.measure('read', () => file.text())
+      const replaced = await timer.measure('assets', () => replaceMarkdownAssets(text, sourcePath, assets, warnings))
+      source = timer.measureSync('render', () => {
+        const next = parseMarkdown(replaced.markdown, titleFromFile(file.name), warnings)
+        next.missingAssets = replaced.missingAssets
+        next.html = markMissingImages(next.html, replaced.missingAssets)
+        return next
+      })
+    } else if (extension === 'html' || extension === 'htm') {
+      sourceKind = 'html'
+      const warnings: string[] = []
+      const text = await timer.measure('read', () => file.text())
+      const replaced = await timer.measure('assets', () => replaceHtmlAssets(text, sourcePath, assets, warnings))
+      source = timer.measureSync('render', () => {
+        const next = parseHtml(replaced.html, titleFromFile(file.name), warnings)
+        next.missingAssets = replaced.missingAssets
+        next.html = markMissingImages(next.html, replaced.missingAssets)
+        return next
+      })
+    } else {
+      sourceKind = 'zip'
+      source = await parseZip(file, timer)
+    }
+
+    const article = {
+      id: crypto.randomUUID(),
+      ...source,
+      sourceFile: file.name,
+      sourceKind,
+      importedAt: new Date().toISOString(),
+    }
+    emitImportDiagnostic(options, {
+      ...diagnosticBase,
+      recordedAt: new Date().toISOString(),
+      outcome: 'success',
+      totalMs: roundedMilliseconds(monotonicNow() - startedAt),
+      stageMs: timer.snapshot(),
+      warningCount: source.warnings.length,
+      missingAssetCount: source.missingAssets.length,
+    })
+    return article
+  } catch (error) {
+    emitImportDiagnostic(options, {
+      ...diagnosticBase,
+      recordedAt: new Date().toISOString(),
+      outcome: 'error',
+      totalMs: roundedMilliseconds(monotonicNow() - startedAt),
+      stageMs: timer.snapshot(),
+      warningCount: 0,
+      missingAssetCount: 0,
+      errorCode: error instanceof FileParseError ? 'invalid-input' : 'parse-failed',
+    })
+    throw error
   }
 }
 
 export function sanitizeEditedHtml(html: string): string {
-  return sanitizeHtml(html)
+  return sanitizeInternalContentHtml(html)
 }

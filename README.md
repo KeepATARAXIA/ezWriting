@@ -6,14 +6,14 @@
 
 # EZWRITING
 
-**A local-first workspace for multi-platform content publishing**
+**A local-first workspace for preparing content for multiple platforms**
 
-Bring a Markdown, HTML, or ZIP article into the browser, then edit, organize images, preview platform-specific layouts, and create drafts from one workspace.
+Bring a Markdown, HTML, or ZIP article into the browser, then edit, organize images, preview platform-specific layouts, and export reviewable results from one workspace. Experimental draft delivery is available through Wechatsync.
 
 [Live demo](https://ezwriting.online/) · [Quick start](#quick-start) · [Platform support](./docs/PLATFORM_SUPPORT.md) · [Roadmap](./ROADMAP.md) · [简体中文](./README_ZH.md)
 
 [![CI](https://github.com/KeepATARAXIA/ezWriting/actions/workflows/ci.yml/badge.svg)](https://github.com/KeepATARAXIA/ezWriting/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.1.0-2457FF)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.2.0-2457FF)](./CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-111827)](./LICENSE)
 
 </div>
@@ -21,9 +21,9 @@ Bring a Markdown, HTML, or ZIP article into the browser, then edit, organize ima
 ![EZWRITING product workspace overview](./docs/readme-assets/product-workbench-overview.png)
 
 > [!IMPORTANT]
-> EZWRITING is currently a public MVP. A desktop version of Chrome, Edge, or another Chromium browser is recommended. Importing, editing, previewing, backing up data, and exporting images work without an account. Multi-platform draft delivery requires the [Wechatsync](https://github.com/wechatsync/Wechatsync) browser extension and active sessions on the target platforms.
+> EZWRITING is currently a public MVP. A desktop version of Chrome, Edge, or another Chromium browser is recommended. Importing, editing, previewing, backing up data, and exporting results work without an account. Draft delivery through [Wechatsync](https://github.com/wechatsync/Wechatsync) is an experimental enhancement and requires active sessions on the target platforms.
 
-Current version: **v0.1.0**. Before testing draft delivery, review the dated [platform support matrix](./docs/PLATFORM_SUPPORT.md) and [known issues](./docs/KNOWN_ISSUES.md). Platform behavior can change independently of EZWRITING.
+Current version: **v0.2.0 reliability release**. Before testing draft delivery, review the dated [platform support matrix](./docs/PLATFORM_SUPPORT.md) and [known issues](./docs/KNOWN_ISSUES.md). Platform behavior can change independently of EZWRITING.
 
 ## Why EZWRITING exists
 
@@ -36,8 +36,8 @@ flowchart LR
     A["Markdown / HTML / ZIP"] --> B["Local parsing and sanitization"]
     B --> C["One editable draft"]
     C --> D["WeChat / Xiaohongshu / X previews"]
-    D --> E["Wechatsync publishing bridge"]
-    E --> F["Drafts on signed-in platforms"]
+    D --> E["Copy / PNG / ZIP outputs"]
+    D -. "experimental" .-> F["Wechatsync draft delivery"]
 ```
 
 The core rule is simple: one source, multiple platform presentations. The editor keeps one canonical Markdown draft, while WeChat, Xiaohongshu, and X apply their own preview and formatting logic. This prevents three independently edited versions from drifting apart.
@@ -47,12 +47,13 @@ The core rule is simple: one source, multiple platform presentations. The editor
 | Stage | What EZWRITING provides |
 | --- | --- |
 | Import | Markdown, HTML, ZIP content packages, and folders containing an article with its images |
-| Normalize | Front matter, title, summary, tags, cover image, standard Markdown images, and Obsidian image references |
+| Normalize | Front matter, title, summary, tags, standard Markdown images, and Obsidian image references |
 | Edit | A Markdown editor with headings, lists, quotes, callouts, code, tables, links, highlights, images, shortcuts, undo, and redo |
 | Preview | Dedicated views for WeChat Official Account articles, Xiaohongshu image cards, and X Article |
 | Format | Themes, fonts, type sizes, line spacing, and accent colors shared by previews and delivery payloads |
 | Save locally | Drafts, images, and layout settings stored in IndexedDB, with full-library backup import and export |
-| Deliver | Wechatsync detection, platform selection, per-platform progress, errors, and draft links |
+| Diagnose safely | Export a privacy-safe reliability report containing app/browser state and recent import timings, without article content, filenames, or account details |
+| Deliver (beta) | Wechatsync detection, platform selection, per-platform progress, errors, and draft links |
 | Protect input | HTML sanitization plus ZIP limits for file count, decompressed size, and path traversal |
 
 ## From source file to platform drafts
@@ -67,7 +68,7 @@ The left side contains the Markdown source; the right side renders the active pl
 
 ### 3. Organize article assets
 
-Body images, the cover, and unresolved assets are collected in one resource view. You can select a folder to resolve several paths at once, or relink, replace, and remove individual images.
+Body images and unresolved assets are collected in one resource view. You can select a folder to resolve several paths at once, or relink, replace, and remove individual images. Cover selection is intentionally left to each destination platform.
 
 When a Markdown file is selected on its own, the browser cannot automatically read neighboring local images. Select the full article folder or use a ZIP package so EZWRITING can resolve assets from their relative paths.
 
@@ -81,7 +82,7 @@ The current build includes 26 article themes plus font, size, line-height, and a
 
 #### X Article
 
-The X Article view arranges the title, author, cover, and body for long-form reading, with desktop and mobile previews. Automated X Article draft creation still depends on account eligibility and current platform behavior, so it requires verification with an eligible account.
+The X Article view arranges the title, author, and body for long-form reading, with desktop and mobile previews. Automated X Article draft creation still depends on account eligibility and current platform behavior, so it requires verification with an eligible account.
 
 #### Xiaohongshu image posts
 
@@ -106,7 +107,7 @@ No account or publishing extension is required for this workflow.
 
 To test import immediately, download the [plain Markdown sample](./examples/sample-article.md) or the [lightweight image content package](./examples/content-package-image-test-lite.zip), then drag it into the workspace.
 
-### Enable multi-platform draft delivery
+### Try experimental draft delivery
 
 1. Install and enable the [Wechatsync](https://github.com/wechatsync/Wechatsync) extension.
 2. Sign in to the target platforms in the same Chromium browser.
@@ -131,8 +132,8 @@ Recommended ZIP or folder structure:
 article/
 ├── article.md
 └── assets/
-    ├── cover.png
-    └── image-01.jpg
+    ├── image-01.jpg
+    └── image-02.jpg
 ```
 
 Supported Markdown image references include:
@@ -149,6 +150,7 @@ ZIP safety limits: 20 MB archive size, 120 files, 8 MB per decompressed file, an
 - Drafts, images, history, and formatting settings are stored only in the current browser by default.
 - The current version has no account system and does not sync drafts to an EZWRITING server.
 - A complete `.ezwriting-backup.json` archive can be exported and restored in another browser or under a new domain.
+- A diagnostic report can be exported when reporting a problem. It contains recent import timings and local runtime state, but excludes article content, filenames, and account details.
 - Export a backup before clearing site data, switching browsers, or moving to another domain.
 - Remote images may still be requested by the browser and target platforms. Content is handed to the extension and target platforms only after the user starts a delivery task.
 
@@ -186,6 +188,9 @@ Validation commands:
 npm test
 npm run typecheck
 npm run build
+npm run test:browser
+# Run the complete unit, production-build, and browser reliability gate:
+npm run verify
 ```
 
 ## Current limitations

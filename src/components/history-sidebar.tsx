@@ -7,6 +7,7 @@ import {
 } from 'react'
 import {
   CheckCircle2,
+  FileDown,
   Download,
   FileText,
   HardDrive,
@@ -27,9 +28,12 @@ export interface HistoryUndoDraft {
   title: string
 }
 
+export type HistorySaveStatus = 'idle' | 'dirty' | 'saving' | 'saved' | 'error'
+
 export interface HistorySidebarProps {
   drafts: readonly DraftSummary[]
   activeDraftId?: string | null
+  activeSaveStatus?: HistorySaveStatus
   isExpanded: boolean
   undoDraft?: HistoryUndoDraft | null
   onToggleExpanded: () => void
@@ -39,7 +43,9 @@ export interface HistorySidebarProps {
   onUndoDelete?: (id: string) => void
   onExportBackup?: () => void
   onImportBackup?: () => void
+  onExportDiagnostics?: () => void
   backupStatus?: 'idle' | 'exporting' | 'importing'
+  interactionLocked?: boolean
   storagePersistent?: boolean | null
   now?: Date
   className?: string
@@ -134,6 +140,7 @@ function KindIcon({ kind }: { kind: DraftKind }) {
 export function HistorySidebar({
   drafts,
   activeDraftId = null,
+  activeSaveStatus = 'saved',
   isExpanded,
   undoDraft = null,
   onToggleExpanded,
@@ -143,7 +150,9 @@ export function HistorySidebar({
   onUndoDelete,
   onExportBackup,
   onImportBackup,
+  onExportDiagnostics,
   backupStatus = 'idle',
+  interactionLocked = false,
   storagePersistent = null,
   now = new Date(),
   className = '',
@@ -171,6 +180,10 @@ export function HistorySidebar({
   useEffect(() => {
     if (!isExpanded) setOpenMenuId(null)
   }, [isExpanded])
+
+  useEffect(() => {
+    if (interactionLocked) setOpenMenuId(null)
+  }, [interactionLocked])
 
   useEffect(() => {
     if (!openMenuId) return
@@ -297,6 +310,14 @@ export function HistorySidebar({
                     {items.map(draft => {
                       const title = displayTitle(draft.title)
                       const isActive = draft.id === activeDraftId
+                      const saveState = isActive ? activeSaveStatus : 'saved'
+                      const saveLabel = {
+                        idle: '未保存',
+                        dirty: '待保存',
+                        saving: '保存中',
+                        saved: '已保存',
+                        error: '保存失败',
+                      }[saveState]
                       const isMenuOpen = draft.id === openMenuId
                       const menuId = `history-draft-menu-${draft.id}`
                       return (
@@ -305,13 +326,14 @@ export function HistorySidebar({
                             type="button"
                             className="history-draft-open"
                             aria-current={isActive ? 'page' : undefined}
-                            aria-label={`打开稿件“${title}”，${KIND_LABELS[draft.kind]}，已保存到本机`}
+                            aria-label={`打开稿件“${title}”，${KIND_LABELS[draft.kind]}，${saveLabel}`}
                             ref={element => {
                               if (element) draftButtonRefs.current.set(draft.id, element)
                               else draftButtonRefs.current.delete(draft.id)
                             }}
                             onClick={() => onSelectDraft(draft.id)}
                             onKeyDown={event => handleDraftKeyDown(event, draft.id)}
+                            disabled={interactionLocked}
                           >
                             <span className="history-draft-title">{title}</span>
                             <span className="history-draft-meta" aria-hidden="true">
@@ -319,9 +341,9 @@ export function HistorySidebar({
                               <span aria-hidden="true">·</span>
                               <time dateTime={draft.updatedAt} title={absoluteTime(draft.updatedAt)}>{relativeTime(draft.updatedAt, now)}</time>
                             </span>
-                            <span className="history-sync-state local" title="已保存到本机">
-                              <HardDrive size={12} aria-hidden="true" />
-                              <span>已保存</span>
+                            <span className={`history-sync-state local ${saveState}`} title={saveState === 'saved' ? '已保存到本机' : saveLabel}>
+                              {saveState === 'saving' ? <LoaderCircle className="spin" size={12} aria-hidden="true" /> : <HardDrive size={12} aria-hidden="true" />}
+                              <span>{saveLabel}</span>
                             </span>
                           </button>
 
@@ -336,6 +358,7 @@ export function HistorySidebar({
                               if (element) menuButtonRefs.current.set(draft.id, element)
                               else menuButtonRefs.current.delete(draft.id)
                             }}
+                            disabled={interactionLocked}
                             onClick={() => setOpenMenuId(current => current === draft.id ? null : draft.id)}
                           >
                             <MoreHorizontal size={16} aria-hidden="true" />
@@ -358,6 +381,7 @@ export function HistorySidebar({
                                 type="button"
                                 role="menuitemradio"
                                 aria-checked={draft.kind === 'image'}
+                                disabled={interactionLocked}
                                 onClick={() => {
                                   if (draft.kind !== 'image') onChangeKind(draft.id, 'image')
                                   closeMenu()
@@ -370,6 +394,7 @@ export function HistorySidebar({
                                 type="button"
                                 role="menuitemradio"
                                 aria-checked={draft.kind === 'longform'}
+                                disabled={interactionLocked}
                                 onClick={() => {
                                   if (draft.kind !== 'longform') onChangeKind(draft.id, 'longform')
                                   closeMenu()
@@ -383,6 +408,7 @@ export function HistorySidebar({
                                 type="button"
                                 role="menuitem"
                                 className="history-delete-action"
+                                disabled={interactionLocked}
                                 onClick={() => {
                                   onDeleteDraft(draft.id)
                                   closeMenu()
@@ -405,7 +431,7 @@ export function HistorySidebar({
         {undoDraft && onUndoDelete && (
           <div className="history-undo-notice" role="status" aria-live="polite">
             <span><Trash2 size={13} aria-hidden="true" />“{displayTitle(undoDraft.title)}”已删除</span>
-            <button type="button" onClick={() => onUndoDelete(undoDraft.id)}>
+            <button type="button" disabled={interactionLocked} onClick={() => onUndoDelete(undoDraft.id)}>
               <Undo2 size={13} aria-hidden="true" /> 撤销
             </button>
           </div>
@@ -421,13 +447,16 @@ export function HistorySidebar({
             {storagePersistent === true && <CheckCircle2 size={15} aria-hidden="true" />}
           </div>
           <div className="history-backup-actions">
-            <button type="button" disabled={backupStatus !== 'idle'} onClick={onExportBackup}>
+            <button type="button" disabled={interactionLocked || backupStatus !== 'idle'} onClick={onExportBackup}>
               {backupStatus === 'exporting' ? <LoaderCircle className="spin" size={14} /> : <Download size={14} />}
               {backupStatus === 'exporting' ? '导出中' : '导出备份'}
             </button>
-            <button type="button" disabled={backupStatus !== 'idle'} onClick={onImportBackup}>
+            <button type="button" disabled={interactionLocked || backupStatus !== 'idle'} onClick={onImportBackup}>
               {backupStatus === 'importing' ? <LoaderCircle className="spin" size={14} /> : <Upload size={14} />}
               {backupStatus === 'importing' ? '导入中' : '导入备份'}
+            </button>
+            <button type="button" disabled={interactionLocked} style={{ gridColumn: '1 / -1' }} onClick={onExportDiagnostics}>
+              <FileDown size={14} /> 导出诊断报告
             </button>
           </div>
           <p><HardDrive size={12} aria-hidden="true" /> 数据仅保存在此设备和浏览器；换域名或清理网站数据前请先导出。</p>

@@ -1,6 +1,6 @@
 # Known Issues / 已知问题
 
-Last reviewed / 最近核对：2026-08-18
+Last reviewed / 最近核对：2026-08-20
 
 This page records behavior that users may encounter in the current public MVP. Platform adapters are maintained by Wechatsync and can change independently of EZWRITING.
 
@@ -28,11 +28,17 @@ Image-card generation and local PNG/ZIP export are verified. A real Xiaohongshu 
 
 小红书卡片生成和本地 PNG/ZIP 导出已经验证。桥接曾观察到真实草稿进入平台，但草稿详情的稳定核验尚未完成，上游行为也可能额外生成空草稿。
 
-### Bilibili custom cover / 哔哩哔哩自定义封面
+### Cover selection / 封面选择
 
-Title, body, and body images have reached a real Bilibili draft, but the custom cover was not mapped in the observed test.
+EZWRITING does not import, preview, or transmit a dedicated cover field. Choose the cover manually in each destination platform after the body reaches the draft editor.
 
-标题、正文和正文图片曾成功进入真实哔哩哔哩草稿，但自定义封面在测试中没有正确映射。
+EZWRITING 不导入、预览或传递独立封面字段。正文进入平台草稿编辑器后，请在目标平台手动选择封面。
+
+### Wechatsync package versions / Wechatsync 安装包版本
+
+The Chrome Web Store build and the manually installed package may use different version channels. EZWRITING links to a specifically verified package instead of claiming that the manual package is always the latest release.
+
+Chrome 扩展商店版本与手动安装包可能来自不同版本渠道。EZWRITING 只说明当前经过验证的安装包版本，不承诺手动安装包始终是上游最新版。
 
 ### Generic Wechatsync destinations / 通用 Wechatsync 平台
 

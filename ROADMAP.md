@@ -4,27 +4,27 @@ EZWRITING is a local-first workspace for preparing one article for multiple publ
 
 EZWRITING 是一个本地优先的多平台内容分发工作台。路线图优先保证编辑可靠性、平台化呈现和人工复核后的草稿同步，不追求无人值守发布，也不重复建设大规模平台适配器。
 
-## Now — v0.1 / 当前阶段
+## Now — v0.2 reliability / 当前阶段：v0.2 可靠性
 
 - Keep Markdown as the canonical editable source while preserving HTML, images, tables, code, callouts, and front matter during import.
-- Maintain reliable local autosave, history, image storage, and complete backup restore.
-- Provide dedicated, inspectable previews for WeChat Official Account, Xiaohongshu image cards, and X Article.
-- Treat Wechatsync as a replaceable publishing executor and keep platform-specific failures visible.
+- Protect the import path with a deterministic Markdown/HTML/ZIP corpus and a 34-image performance baseline.
+- Verify autosave recovery, cross-origin backup restore, privacy-safe diagnostics, and Xiaohongshu PNG dimensions in a real Chromium browser.
+- Maintain the dated [platform support matrix](./docs/PLATFORM_SUPPORT.md) and treat Wechatsync 2.0.9 delivery as an experimental, replaceable executor.
 - 以 Markdown 作为唯一可编辑正文，并在导入时尽量保留 HTML、图片、表格、代码、Callout 和 front matter。
-- 保持本地自动保存、历史记录、图片存储和整库恢复的可靠性。
-- 为微信公众号、小红书图文卡片和 X Article 提供可检查的专属预览。
-- 将 Wechatsync 作为可替换发布执行器，并明确显示逐平台失败原因。
+- 使用可复现的 Markdown/HTML/ZIP 样本库和 34 张图片性能基线保护导入链路。
+- 在真实 Chromium 中验证自动保存恢复、跨域备份导入、脱敏诊断报告和小红书 PNG 尺寸。
+- 持续维护带验证日期的[平台支持矩阵](./docs/PLATFORM_SUPPORT.md)，并将 Wechatsync 2.0.9 草稿同步保持为实验性、可替换执行器。
 
-## Next — reliability / 下一阶段：可靠性
+## Next — feedback-backed hardening / 下一阶段：基于反馈的加固
 
-- Publish and maintain a dated [platform support matrix](./docs/PLATFORM_SUPPORT.md).
-- Add repeatable real-account smoke checks for the three dedicated preview targets.
+- Add repeatable real-account smoke checks for the three dedicated preview targets without storing credentials or private drafts.
 - Improve recovery guidance for expired sessions, upstream adapter changes, missing images, and partial platform failures.
-- Validate backup migration across browsers and origins with real multi-image libraries.
-- 发布并持续维护带验证日期的[平台支持矩阵](./docs/PLATFORM_SUPPORT.md)。
-- 为三个专属预览平台建立可重复的真实账号冒烟检查。
+- Validate complete backups with larger real-world libraries across additional Chromium profiles and operating systems.
+- Reduce initial bundle cost only when measurements show it materially affects the editing path.
+- 为三个专属预览平台建立可重复的真实账号冒烟检查，但不保存凭据或私密稿件。
 - 完善登录过期、上游适配变化、缺图和部分平台失败的恢复指引。
-- 使用真实多图稿件库验证跨浏览器、跨域名备份迁移。
+- 使用更大的真实稿件库，在更多 Chromium 配置与操作系统中验证整库备份。
+- 只有测量证明首屏包体明显影响编辑链路时，才进行代码分包优化。
 
 ## Later — focused expansion / 后续：克制扩展
 

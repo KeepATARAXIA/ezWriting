@@ -43,6 +43,7 @@ describe('HistorySidebar', () => {
       onUndoDelete: vi.fn(),
       onExportBackup: vi.fn(),
       onImportBackup: vi.fn(),
+      onExportDiagnostics: vi.fn(),
       now: NOW,
     }
   })
@@ -95,6 +96,22 @@ describe('HistorySidebar', () => {
     expect(container.querySelector('[aria-label="筛选历史稿件"]')).toBeNull()
     expect(container.textContent).toContain('图文稿件')
     expect(container.textContent).toContain('长文稿件')
+  })
+
+  it('shows the real autosave state for the active draft', async () => {
+    await render({
+      activeDraftId: 'active',
+      activeSaveStatus: 'dirty',
+      drafts: [draft({ id: 'active' }), draft({ id: 'saved' })],
+    })
+    expect(container.querySelector('.history-draft-item.selected .history-sync-state')?.textContent).toContain('待保存')
+    expect(container.querySelector('.history-draft-item:not(.selected) .history-sync-state')?.textContent).toContain('已保存')
+
+    await render({ activeSaveStatus: 'saving' })
+    expect(container.querySelector('.history-draft-item.selected .history-sync-state')?.textContent).toContain('保存中')
+
+    await render({ activeSaveStatus: 'error' })
+    expect(container.querySelector('.history-draft-item.selected .history-sync-state')?.textContent).toContain('保存失败')
   })
 
   it('supports arrow-key navigation across draft rows', async () => {
@@ -174,11 +191,13 @@ describe('HistorySidebar', () => {
     const onUndoDelete = vi.fn()
     const onExportBackup = vi.fn()
     const onImportBackup = vi.fn()
+    const onExportDiagnostics = vi.fn()
     await render({
       undoDraft: { id: 'deleted-id', title: '误删稿件' },
       onUndoDelete,
       onExportBackup,
       onImportBackup,
+      onExportDiagnostics,
     })
 
     expect(container.querySelector('[role="status"]')?.textContent).toContain('“误删稿件”已删除')
@@ -191,11 +210,28 @@ describe('HistorySidebar', () => {
       .find(button => button.textContent?.includes('导出备份'))!
     const importButton = Array.from(container.querySelectorAll<HTMLButtonElement>('.history-backup-actions button'))
       .find(button => button.textContent?.includes('导入备份'))!
+    const diagnosticsButton = Array.from(container.querySelectorAll<HTMLButtonElement>('.history-backup-actions button'))
+      .find(button => button.textContent?.includes('导出诊断报告'))!
     await act(async () => exportButton.dispatchEvent(new MouseEvent('click', { bubbles: true })))
     await act(async () => importButton.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    await act(async () => diagnosticsButton.dispatchEvent(new MouseEvent('click', { bubbles: true })))
     expect(onExportBackup).toHaveBeenCalledTimes(1)
     expect(onImportBackup).toHaveBeenCalledTimes(1)
+    expect(onExportDiagnostics).toHaveBeenCalledTimes(1)
     expect(container.textContent).toContain('数据仅保存在此设备和浏览器')
+  })
+
+  it('disables draft mutations and backup actions while an exclusive operation is running', async () => {
+    await render({
+      drafts: [draft({ id: 'locked' })],
+      undoDraft: { id: 'deleted-id', title: '待恢复稿件' },
+      interactionLocked: true,
+    })
+
+    expect(container.querySelector<HTMLButtonElement>('.history-draft-open')?.disabled).toBe(true)
+    expect(container.querySelector<HTMLButtonElement>('.history-draft-menu-button')?.disabled).toBe(true)
+    expect(container.querySelector<HTMLButtonElement>('.history-undo-notice button')?.disabled).toBe(true)
+    expect(Array.from(container.querySelectorAll<HTMLButtonElement>('.history-backup-actions button')).every(button => button.disabled)).toBe(true)
   })
 
   it('uses a compact semantic rail when collapsed', async () => {

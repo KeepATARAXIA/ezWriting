@@ -1,6 +1,6 @@
 import { marked, type Token } from 'marked'
 import type { ArticleDraft, ArticleSourceLanguage } from '../domain/article'
-import { renderMarkdownToSafeHtml, sanitizeContentHtml } from './markdown-compatibility'
+import { renderMarkdownToSafeHtml, sanitizeContentHtml, sanitizeInternalContentHtml } from './markdown-compatibility'
 
 export interface ArticleSource {
   text: string
@@ -286,7 +286,7 @@ export function annotateLocalImagesAsMissing(html: string): { html: string; refe
     missingIndex += 1
   })
 
-  return { html: sanitizeContentHtml(document.body.innerHTML), references }
+  return { html: sanitizeInternalContentHtml(document.body.innerHTML), references }
 }
 
 export function replaceArticleSourceImage(

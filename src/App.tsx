@@ -49,7 +49,7 @@ import {
   type XhsCardSettings,
 } from './domain/saved-draft'
 import type { DraftRepository } from './services/draft-repository'
-import { LocalDraftRepository } from './services/local-draft-repository'
+import { DraftConflictError, LocalDraftRepository } from './services/local-draft-repository'
 import {
   createDraftSnapshot,
   persistedDraftFromSnapshot,
@@ -70,7 +70,14 @@ import {
   applyPlatformMarkdownCompatibility,
   type PlatformContentTarget,
 } from './lib/platform-compatibility'
-import { FileParseError, parseContentFile, pickPrimaryContentFile, sanitizeEditedHtml } from './lib/file-parser'
+import {
+  FileParseError,
+  parseContentFile,
+  pickPrimaryContentFile,
+  sanitizeEditedHtml,
+  selectImageResourceFiles,
+  validateImageResourceFiles,
+} from './lib/file-parser'
 import { extractMissingImageTargets } from './lib/missing-assets'
 import { getBrowserExtensionGuide } from './lib/browser-extension-install'
 import { getPlatformAccounts, publishDraft, waitForBridge } from './lib/wechatsync-bridge'
@@ -84,6 +91,12 @@ import {
   requestPersistentLocalStorage,
   serializeLocalBackup,
 } from './services/local-backup'
+import {
+  createReliabilityReport,
+  recordImportDiagnostic,
+  reliabilityReportFileName,
+  serializeReliabilityReport,
+} from './services/local-diagnostics'
 import brandLogo from '../SVG/资源 1.svg'
 import wechatLogo from '../SVG/公众号.svg'
 import xhsLogo from '../SVG/小红书.svg'
@@ -121,6 +134,17 @@ interface AppProps {
 type EditorView = 'edit' | 'resources'
 type EditorImportMode = 'append' | 'replace'
 type WorkspaceMode = 'editor' | 'split' | 'preview'
+type ExclusiveOperation =
+  | 'create-draft'
+  | 'content-import'
+  | 'asset-import'
+  | 'backup-export'
+  | 'backup-import'
+  | 'switch-draft'
+  | 'change-kind'
+  | 'delete-draft'
+  | 'restore-draft'
+  | 'publish'
 
 const SourceEditor = lazy(() => import('./components/source-editor').then(module => ({ default: module.SourceEditor })))
 const PlatformPreviews = lazy(() => import('./components/platform-previews').then(module => ({ default: module.PlatformPreviews })))
@@ -190,10 +214,14 @@ function sourceLabel(article: ArticleDraft): string {
   return 'CONTENT ZIP'
 }
 
-function accountMatchesPreview(account: PlatformAccount, platform: PreviewPlatform): boolean {
-  const rawType = account.raw && typeof account.raw === 'object' && 'type' in account.raw
+function platformAccountType(account: PlatformAccount): string {
+  return account.raw && typeof account.raw === 'object' && 'type' in account.raw
     ? String((account.raw as { type?: unknown }).type || '')
     : ''
+}
+
+function accountMatchesPreview(account: PlatformAccount, platform: PreviewPlatform): boolean {
+  const rawType = platformAccountType(account)
   const id = account.id.toLocaleLowerCase()
   const name = account.name.toLocaleLowerCase()
   const type = rawType.toLocaleLowerCase()
@@ -381,6 +409,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   const [backupNotice, setBackupNotice] = useState<string | null>(null)
   const [storagePersistent, setStoragePersistent] = useState<boolean | null>(null)
   const [workState, setWorkState] = useState<WorkState>('idle')
+  const [exclusiveOperation, setExclusiveOperation] = useState<ExclusiveOperation | null>(null)
   const [bridgeState, setBridgeState] = useState<BridgeState>('checking')
   const [bridgeError, setBridgeError] = useState<string | null>(null)
   const [isDispatchDrawerOpen, setIsDispatchDrawerOpen] = useState(false)
@@ -425,6 +454,8 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   const activeDraftIdRef = useRef<string | null>(null)
   const draftRevisionRef = useRef(0)
   const documentGenerationRef = useRef(0)
+  const exclusiveOperationRef = useRef<ExclusiveOperation | null>(null)
+  const publishAttemptRef = useRef(0)
   const undoTimerRef = useRef<number | null>(null)
   const historyTriggerRef = useRef<HTMLButtonElement>(null)
   const historySidebarSlotRef = useRef<HTMLDivElement>(null)
@@ -433,6 +464,19 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   const applyPersistedDraftRef = useRef<(draft: PersistedDraft) => void>(() => undefined)
 
   activeDraftIdRef.current = article?.id ?? null
+
+  const beginExclusiveOperation = useCallback((operation: ExclusiveOperation): boolean => {
+    if (exclusiveOperationRef.current !== null) return false
+    exclusiveOperationRef.current = operation
+    setExclusiveOperation(operation)
+    return true
+  }, [])
+
+  const endExclusiveOperation = useCallback((operation: ExclusiveOperation) => {
+    if (exclusiveOperationRef.current !== operation) return
+    exclusiveOperationRef.current = null
+    setExclusiveOperation(null)
+  }, [])
 
   const currentDraftSnapshot = useMemo<CurrentDraftSnapshot>(() => ({
     article,
@@ -459,7 +503,18 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     const current = activeDraftRecordRef.current?.id === snapshot.article.id
       ? activeDraftRecordRef.current
       : await draftRepository.getDraft(snapshot.article.id)
-    const saved = await draftRepository.saveDraft(persistedDraftFromSnapshot(snapshot as DraftWorkspaceSnapshot, current))
+    let saved: PersistedDraft
+    try {
+      saved = await draftRepository.saveDraft(
+        persistedDraftFromSnapshot(snapshot as DraftWorkspaceSnapshot, current),
+        { expectedUpdatedAt: current?.updatedAt ?? null },
+      )
+    } catch (saveError) {
+      if (saveError instanceof DraftConflictError || (saveError as { code?: string })?.code === 'draft-conflict') {
+        setHistoryError('检测到另一标签页已更新这篇稿件；当前编辑仍保留，但没有覆盖较新的版本。请先导出备份，再刷新页面重新载入。')
+      }
+      throw saveError
+    }
     if (activeDraftIdRef.current === saved.id) {
       activeDraftRecordRef.current = saved
       await draftRepository.putSetting(LAST_ACTIVE_DRAFT_SETTING, saved.id)
@@ -755,7 +810,10 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     }
     setFileInfo(sourceInfo)
     try {
-      const parsed = await parseContentFile(file, assetFiles)
+      const parsed = await parseContentFile(file, assetFiles, {
+        operation: 'initial',
+        onDiagnostic: recordImportDiagnostic,
+      })
       if (operationGeneration !== documentGenerationRef.current) return
       activateNewDraft(createDraftSnapshot(parsed, sourceInfo))
       importContextRef.current = { primary: file, assets: assetFiles }
@@ -768,49 +826,72 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   }
 
   const importSelection = async (files: File[]) => {
-    if (!files.length) return
+    if (!files.length || !beginExclusiveOperation('content-import')) return
     try {
       const primary = pickPrimaryContentFile(files)
       await importFile(primary, files.filter(file => file !== primary))
     } catch (selectionError) {
       setError(selectionError instanceof FileParseError ? selectionError.message : '没有找到可导入的文章文件。')
+    } finally {
+      endExclusiveOperation('content-import')
     }
   }
 
   const createNewArticle = async () => {
+    if (!beginExclusiveOperation('create-draft')) return
     try {
       await autosave.flush()
     } catch (saveError) {
       setHistoryError(`新建前保存失败：${(saveError as Error).message}`)
       return
+    } finally {
+      endExclusiveOperation('create-draft')
     }
     activateNewDraft(createDraftSnapshot(createBlankArticle()))
   }
 
   const exportLocalData = async () => {
-    if (!draftRepository || backupStatus !== 'idle') return
+    if (!draftRepository || !beginExclusiveOperation('backup-export')) return
     setBackupStatus('exporting')
     setBackupNotice(null)
     setHistoryError(null)
     try {
-      await autosave.flush()
-      const payload = await createLocalBackup(draftRepository)
+      let unsavedDraft: PersistedDraft | undefined
+      try {
+        await autosave.flush()
+      } catch {
+        if (!currentDraftSnapshot.article) throw new Error('当前稿件保存失败，且没有可加入备份的编辑内容。')
+        const current = activeDraftRecordRef.current?.id === currentDraftSnapshot.article.id
+          ? activeDraftRecordRef.current
+          : await draftRepository.getDraft(currentDraftSnapshot.article.id)
+        unsavedDraft = persistedDraftFromSnapshot(currentDraftSnapshot as DraftWorkspaceSnapshot, current)
+      }
+      const payload = await createLocalBackup(draftRepository, new Date(), unsavedDraft)
       const url = URL.createObjectURL(serializeLocalBackup(payload))
       const anchor = document.createElement('a')
       anchor.href = url
       anchor.download = localBackupFileName()
       anchor.click()
       window.setTimeout(() => URL.revokeObjectURL(url), 0)
-      setBackupNotice(`已导出 ${payload.drafts.length} 篇稿件及其本地图片。`)
+      setBackupNotice(unsavedDraft
+        ? `本地保存失败，但已将当前编辑直接写入备份；共导出 ${payload.drafts.length} 篇稿件。`
+        : `已导出 ${payload.drafts.length} 篇稿件及其本地图片。`)
     } catch (backupError) {
       setHistoryError(`导出备份失败：${(backupError as Error).message}`)
     } finally {
       setBackupStatus('idle')
+      endExclusiveOperation('backup-export')
     }
   }
 
   const importLocalData = async (file?: File) => {
-    if (!file || !draftRepository || backupStatus !== 'idle') return
+    if (!file || !draftRepository || !beginExclusiveOperation('backup-import')) return
+    if (typeof draftRepository.importDraftsAtomically !== 'function') {
+      setHistoryError('当前稿件仓库不支持原子整库导入，已停止且未写入备份稿件。')
+      endExclusiveOperation('backup-import')
+      if (backupInputRef.current) backupInputRef.current.value = ''
+      return
+    }
     setBackupStatus('importing')
     setBackupNotice(null)
     setHistoryError(null)
@@ -820,6 +901,8 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
       const replacements = payload.drafts.filter(draft => existingIds.has(draft.id)).length
       if (replacements > 0 && !window.confirm(`备份中有 ${replacements} 篇稿件与本机记录相同。继续导入会用备份版本覆盖这些稿件，是否继续？`)) return
       await autosave.flush()
+      documentGenerationRef.current += 1
+      autosave.cancel()
       const result = await importLocalBackup(draftRepository, payload)
       const nextDrafts = await refreshDraftSummaries()
       const preferredId = result.activeDraftId || nextDrafts[0]?.id || null
@@ -830,11 +913,34 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
       setHistoryError(`导入备份失败：${(backupError as Error).message}`)
     } finally {
       setBackupStatus('idle')
+      endExclusiveOperation('backup-import')
       if (backupInputRef.current) backupInputRef.current.value = ''
     }
   }
 
+  const exportReliabilityData = () => {
+    setBackupNotice(null)
+    setHistoryError(null)
+    try {
+      const report = createReliabilityReport({
+        bridgeState,
+        draftCount: drafts.length,
+        storagePersistent,
+      })
+      const url = URL.createObjectURL(serializeReliabilityReport(report))
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = reliabilityReportFileName()
+      anchor.click()
+      window.setTimeout(() => URL.revokeObjectURL(url), 0)
+      setBackupNotice(`已导出脱敏诊断报告，包含最近 ${report.recentImports.length} 次导入计时。`)
+    } catch (diagnosticError) {
+      setHistoryError(`导出诊断报告失败：${(diagnosticError as Error).message}`)
+    }
+  }
+
   const requestEditorImport = (mode: EditorImportMode) => {
+    if (exclusiveOperationRef.current !== null) return
     pendingEditorImportModeRef.current = mode
     setIsImportMenuOpen(false)
     if (editorImportInputRef.current) {
@@ -844,7 +950,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   }
 
   const importIntoEditor = async (file?: File) => {
-    if (!file) return
+    if (!file || !beginExclusiveOperation('content-import')) return
     const mode = pendingEditorImportModeRef.current
     const targetDraftId = activeDraftIdRef.current
     const operationGeneration = documentGenerationRef.current
@@ -857,7 +963,10 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     setWorkState('parsing')
 
     try {
-      const parsed = await parseContentFile(file)
+      const parsed = await parseContentFile(file, [], {
+        operation: mode,
+        onDiagnostic: recordImportDiagnostic,
+      })
       if (operationGeneration !== documentGenerationRef.current || activeDraftIdRef.current !== targetDraftId) return
       setArticle(current => {
         if (!current) return parsed
@@ -874,43 +983,44 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     } catch (parseError) {
       setWorkState('ready')
       setError(parseError instanceof FileParseError ? parseError.message : '文件解析失败，当前内容已保留。')
+    } finally {
+      endExclusiveOperation('content-import')
     }
   }
 
   const supplementAssets = async (files: File[]) => {
     const context = importContextRef.current
-    if (!files.length) return
-    if (!context) {
-      const currentArticle = article
-      if (!currentArticle) return
-      const operationGeneration = documentGenerationRef.current
-      setError(null)
-      setResults([])
-      setWorkState('parsing')
-      try {
-        const resolved = await resolveMissingImagesFromFiles(currentArticle, files)
+    if (!files.length || !beginExclusiveOperation('asset-import')) return
+    try {
+      const validatedFiles = selectImageResourceFiles(files)
+      if (!context) {
+        const currentArticle = article
+        if (!currentArticle) return
+        const operationGeneration = documentGenerationRef.current
+        setError(null)
+        setResults([])
+        setWorkState('parsing')
+        const resolved = await resolveMissingImagesFromFiles(currentArticle, validatedFiles)
         if (operationGeneration !== documentGenerationRef.current || activeDraftIdRef.current !== currentArticle.id) return
         setArticle(resolved)
         markDraftDirty()
         setWorkState('ready')
-      } catch {
-        setWorkState('ready')
-        setError('图片补齐失败，请检查所选文件后重试。')
+        return
       }
-      return
-    }
-    const known = new Map(context.assets.map(file => [file.webkitRelativePath || `${file.name}:${file.size}:${file.lastModified}`, file]))
-    files.forEach(file => known.set(file.webkitRelativePath || `${file.name}:${file.size}:${file.lastModified}`, file))
-    const nextAssets = [...known.values()]
-    const targetDraftId = activeDraftIdRef.current
-    const operationGeneration = documentGenerationRef.current
-    setError(null)
-    setResults([])
-    setWorkState('parsing')
-    try {
+      const known = new Map(context.assets.map(file => [file.webkitRelativePath || `${file.name}:${file.size}:${file.lastModified}`, file]))
+      validatedFiles.forEach(file => known.set(file.webkitRelativePath || `${file.name}:${file.size}:${file.lastModified}`, file))
+      const nextAssets = [...known.values()]
+      const targetDraftId = activeDraftIdRef.current
+      const operationGeneration = documentGenerationRef.current
+      setError(null)
+      setResults([])
+      setWorkState('parsing')
       const [previousParsed, nextParsed] = await Promise.all([
         parseContentFile(context.primary, context.assets),
-        parseContentFile(context.primary, nextAssets),
+        parseContentFile(context.primary, nextAssets, {
+          operation: 'asset-supplement',
+          onDiagnostic: recordImportDiagnostic,
+        }),
       ])
       if (operationGeneration !== documentGenerationRef.current || activeDraftIdRef.current !== targetDraftId) return
       setArticle(current => {
@@ -931,10 +1041,13 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     } catch (parseError) {
       setWorkState('ready')
       setError(parseError instanceof FileParseError ? parseError.message : '图片补齐失败，请检查所选文件后重试。')
+    } finally {
+      endExclusiveOperation('asset-import')
     }
   }
 
   const requestMissingImageAction = (target: MissingImageTarget, action: MissingImageAction) => {
+    if (exclusiveOperationRef.current !== null) return
     setError(null)
     if (action === 'delete') {
       setArticle(current => current
@@ -954,28 +1067,31 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   const applyMissingImageFile = async (file?: File) => {
     const pending = pendingMissingImageActionRef.current
     pendingMissingImageActionRef.current = null
-    if (!file || !pending) return
+    if (!file || !pending || !beginExclusiveOperation('asset-import')) return
     const targetDraftId = activeDraftIdRef.current
     const operationGeneration = documentGenerationRef.current
 
-    if (pending.action === 'relink' && file.name.toLocaleLowerCase() !== fileNameForReference(pending.target.reference).toLocaleLowerCase()) {
-      setError(`重新链接需要选择“${fileNameForReference(pending.target.reference)}”；如需使用其他图片，请选择“替换图片”。`)
-      return
-    }
-
     try {
+      if (pending.action === 'relink' && file.name.toLocaleLowerCase() !== fileNameForReference(pending.target.reference).toLocaleLowerCase()) {
+        setError(`重新链接需要选择“${fileNameForReference(pending.target.reference)}”；如需使用其他图片，请选择“替换图片”。`)
+        return
+      }
+      validateImageResourceFiles([file])
       const source = await readFileAsDataUrl(file)
       if (operationGeneration !== documentGenerationRef.current || activeDraftIdRef.current !== targetDraftId) return
       setArticle(current => current
         ? reconcileSourceUpdate(current, replaceArticleSourceImage(current, pending.target.reference, source, file.name))
         : current)
       markDraftDirty()
-    } catch {
-      setError('图片读取失败，请重新选择。')
+    } catch (imageError) {
+      setError(imageError instanceof FileParseError ? imageError.message : '图片读取失败，请重新选择。')
+    } finally {
+      endExclusiveOperation('asset-import')
     }
   }
 
   const togglePlatform = (id: string) => {
+    if (exclusiveOperationRef.current !== null) return
     setSelectedIds(current => current.includes(id) ? current.filter(item => item !== id) : [...current, id])
   }
 
@@ -1080,11 +1196,13 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   }
 
   const updateArticleTitle = (title: string) => {
+    if (exclusiveOperationRef.current !== null) return
     setArticle(current => current ? { ...current, title } : current)
     markDraftDirty()
   }
 
   const updateArticleSource = (sourceText: string) => {
+    if (exclusiveOperationRef.current !== null) return
     startTransition(() => {
       setArticle(current => current
         ? reconcileSourceUpdate(current, updateArticleFromSource(current, sourceText))
@@ -1094,20 +1212,23 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   }
 
   const updateArticleFormatting = (nextFormatting: ArticleFormatting) => {
+    if (exclusiveOperationRef.current !== null) return
     setFormatting(nextFormatting)
     markDraftDirty()
   }
 
   const updateXhsCardSettings = (nextSettings: XhsCardSettings) => {
+    if (exclusiveOperationRef.current !== null) return
     setXhsSettings(nextSettings)
     markDraftDirty()
   }
 
   const selectHistoryDraft = async (id: string) => {
-    if (!draftRepository || isPublishing || id === activeDraftIdRef.current) {
+    if (!draftRepository || id === activeDraftIdRef.current) {
       closeHistoryOverlay(false)
       return
     }
+    if (!beginExclusiveOperation('switch-draft')) return
     const operationGeneration = ++documentGenerationRef.current
     setWorkState('parsing')
     setHistoryError(null)
@@ -1123,37 +1244,50 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
       if (operationGeneration !== documentGenerationRef.current) return
       setWorkState(article ? 'ready' : 'idle')
       setHistoryError(`无法打开稿件：${(switchError as Error).message}`)
+    } finally {
+      endExclusiveOperation('switch-draft')
     }
   }
 
   const changeHistoryDraftKind = async (id: string, kind: DraftKind) => {
-    if (!draftRepository) return
+    if (!draftRepository || !beginExclusiveOperation('change-kind')) return
     setHistoryError(null)
-    if (id === activeDraftIdRef.current) {
-      setDraftKind(kind)
-      markDraftDirty()
-      return
-    }
     try {
+      if (id === activeDraftIdRef.current) {
+        setDraftKind(kind)
+        markDraftDirty()
+        return
+      }
       const persisted = await draftRepository.getDraft(id)
       if (!persisted || persisted.deletedAt) return
-      await draftRepository.saveDraft({ ...persisted, kind })
+      await draftRepository.saveDraft(
+        { ...persisted, kind },
+        { expectedUpdatedAt: persisted.updatedAt },
+      )
       await refreshDraftSummaries()
     } catch (kindError) {
       setHistoryError(`类型修改失败：${(kindError as Error).message}`)
+    } finally {
+      endExclusiveOperation('change-kind')
     }
   }
 
   const deleteHistoryDraft = async (id: string) => {
-    if (!draftRepository || isPublishing) return
+    if (!draftRepository || !beginExclusiveOperation('delete-draft')) return
     const summary = drafts.find(draft => draft.id === id)
     const deletingActiveDraft = id === activeDraftIdRef.current
     setHistoryError(null)
-    if (deletingActiveDraft) {
-      documentGenerationRef.current += 1
-      autosave.cancel()
-    }
     try {
+      if (deletingActiveDraft) {
+        try {
+          await autosave.flush()
+        } catch (saveError) {
+          setHistoryError(`删除前保存失败，稿件未删除：${(saveError as Error).message}`)
+          return
+        }
+        documentGenerationRef.current += 1
+        autosave.cancel()
+      }
       const deleted = await draftRepository.softDeleteDraft(id)
       if (!deleted) return
       setUndoDraft({ id, title: summary?.title || deleted.article.title })
@@ -1172,11 +1306,13 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
       }
     } catch (deleteError) {
       setHistoryError(`删除失败：${(deleteError as Error).message}`)
+    } finally {
+      endExclusiveOperation('delete-draft')
     }
   }
 
   const undoDeleteHistoryDraft = async (id: string) => {
-    if (!draftRepository) return
+    if (!draftRepository || !beginExclusiveOperation('restore-draft')) return
     setHistoryError(null)
     try {
       await draftRepository.restoreDraft(id)
@@ -1185,13 +1321,27 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
       if (undoTimerRef.current !== null) window.clearTimeout(undoTimerRef.current)
     } catch (restoreError) {
       setHistoryError(`撤销删除失败：${(restoreError as Error).message}`)
+    } finally {
+      endExclusiveOperation('restore-draft')
     }
   }
 
   const handlePublish = async () => {
     if (!article || selectedIds.length === 0 || bridgeState !== 'connected') return
-    const selectedAccounts = accounts.filter(account => selectedIds.includes(account.id))
     const sanitizedHtml = sanitizeEditedHtml(article.html)
+    if (!hasArticleBodyContent(sanitizedHtml)) {
+      setError('正文为空，至少填写一段内容后再发布。')
+      setIsDispatchDrawerOpen(true)
+      return
+    }
+    if (!beginExclusiveOperation('publish')) return
+    const publishAttempt = ++publishAttemptRef.current
+    const selectedAccounts = accounts.filter(account => selectedIds.includes(account.id))
+    if (selectedAccounts.length === 0) {
+      setError('所选平台已失效，请重新选择后再发布。')
+      endExclusiveOperation('publish')
+      return
+    }
     const normalizedArticle = { ...article, html: sanitizedHtml }
     const formattedHtml = applyArticleFormatting(sanitizedHtml, formatting)
     const targetForAccount = (account: PlatformAccount): PlatformContentTarget => {
@@ -1226,26 +1376,67 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     setError(null)
     try {
       const resultsByPlatform = new Map<string, PublishResult>()
+      const isCurrentPublish = () => publishAttemptRef.current === publishAttempt
       const updateGroupResults = (groupResults: PublishResult[]) => {
+        if (!isCurrentPublish()) return
         groupResults.forEach(result => resultsByPlatform.set(result.platform, result))
         setResults(selectedAccounts.map(account => resultsByPlatform.get(account.id) ?? {
           platform: account.id,
           name: account.name,
           status: 'pending' as const,
-          delivery: account.id === 'zip-download' ? 'download' as const : 'draft' as const,
+          delivery: platformAccountType(account) === 'zip-download' ? 'download' as const : 'draft' as const,
           message: '等待扩展处理',
         }))
       }
-      for (const group of groups) {
-        const groupResults = await publishDraft(group.article, group.accounts, updateGroupResults)
-        groupResults.forEach(result => resultsByPlatform.set(result.platform, result))
+      updateGroupResults([])
+      for (const [groupIndex, group] of groups.entries()) {
+        try {
+          const groupResults = await publishDraft(group.article, group.accounts, updateGroupResults)
+          if (!isCurrentPublish()) return
+          groupResults.forEach(result => resultsByPlatform.set(result.platform, result))
+        } catch (groupError) {
+          if (!isCurrentPublish()) return
+          const failingIds = new Set(group.accounts.map(account => account.id))
+          const notStartedIds = new Set(groups.slice(groupIndex + 1).flatMap(pendingGroup => pendingGroup.accounts.map(account => account.id)))
+          const failureMessage = (groupError as Error).message
+          const interruptedResults = selectedAccounts.map(account => {
+            const existing = resultsByPlatform.get(account.id)
+            if (existing && (existing.status === 'done' || existing.status === 'failed')) return existing
+            return {
+              platform: account.id,
+              name: account.name,
+              status: 'failed' as const,
+              delivery: platformAccountType(account) === 'zip-download' ? 'download' as const : 'draft' as const,
+              message: failingIds.has(account.id) ? '任务状态未知，请先检查平台草稿箱再重试。' : '因前序平台异常，本次未执行。',
+              error: failingIds.has(account.id) ? failureMessage : notStartedIds.has(account.id) ? '本次未执行' : failureMessage,
+              requiresManualVerification: failingIds.has(account.id),
+            }
+          })
+          setResults(interruptedResults)
+          setSelectedIds(interruptedResults.filter(result => result.status !== 'done').map(result => result.platform))
+          setWorkState('ready')
+          setError(`发布未全部完成：${failureMessage}。已成功的平台不会在下次重试时自动重发。`)
+          return
+        }
       }
-      const finalResults = selectedAccounts.map(account => resultsByPlatform.get(account.id)).filter((result): result is PublishResult => Boolean(result))
+      if (!isCurrentPublish()) return
+      const finalResults = selectedAccounts.map(account => resultsByPlatform.get(account.id) ?? {
+        platform: account.id,
+        name: account.name,
+        status: 'failed' as const,
+        delivery: platformAccountType(account) === 'zip-download' ? 'download' as const : 'draft' as const,
+        message: '发布引擎未返回该平台的最终状态',
+      })
       setResults(finalResults)
+      const retryIds = finalResults.filter(result => result.status !== 'done').map(result => result.platform)
+      if (retryIds.length > 0) setSelectedIds(retryIds)
       setWorkState('completed')
     } catch (publishError) {
+      if (publishAttemptRef.current !== publishAttempt) return
       setWorkState('ready')
       setError((publishError as Error).message)
+    } finally {
+      endExclusiveOperation('publish')
     }
   }
 
@@ -1258,6 +1449,8 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   }
 
   const isPublishing = workState === 'publishing'
+  const isOperationLocked = exclusiveOperation !== null
+  const hasPublishableArticle = Boolean(article && hasArticleBodyContent(article.html))
   const articleHtml = article?.html ?? ''
   const deferredArticleHtml = useDeferredValue(articleHtml)
   const deferredFormatting = useDeferredValue(formatting)
@@ -1296,7 +1489,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                 className="new-document-button"
                 aria-label="新建文档"
                 onClick={() => void createNewArticle()}
-                disabled={workState === 'parsing' || isPublishing}
+                disabled={workState === 'parsing' || isOperationLocked}
                 title="保存当前稿件并新建文档"
               >
                 <FilePlus2 size={16} />
@@ -1342,6 +1535,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                     aria-selected={activePlatform === platform.id}
                     aria-controls="platform-preview-panel"
                     className={activePlatform === platform.id ? 'active' : ''}
+                    disabled={isOperationLocked}
                     onClick={() => setActivePlatform(platform.id)}
                   >
                     <span className={`platform-logo ${platform.id}`} aria-hidden="true"><img src={platform.logo} alt="" /></span>
@@ -1356,7 +1550,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                 type="button"
                 className={`extension-chip ${bridgeState}`}
                 onClick={handleBridgeStatusClick}
-                disabled={bridgeState === 'checking' || isPublishing}
+                disabled={bridgeState === 'checking' || isOperationLocked}
                 aria-label={bridgeState === 'missing' || bridgeState === 'error' ? '打开发布引擎安装指引' : '重新检测发布引擎'}
                 aria-expanded={bridgeState === 'missing' || bridgeState === 'error' ? isDispatchDrawerOpen : undefined}
                 aria-haspopup={bridgeState === 'missing' || bridgeState === 'error' ? 'dialog' : undefined}
@@ -1372,8 +1566,9 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                 accounts={accounts}
                 bridgeError={bridgeError}
                 bridgeState={bridgeState}
-                hasArticle
+                hasArticle={hasPublishableArticle}
                 installGuide={installGuide}
+                interactionLocked={isOperationLocked}
                 isOpen={isDispatchDrawerOpen}
                 results={results}
                 selectedIds={selectedIds}
@@ -1403,7 +1598,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
               type="button"
               className={`extension-chip ${bridgeState}`}
               onClick={handleBridgeStatusClick}
-              disabled={bridgeState === 'checking' || isPublishing}
+              disabled={bridgeState === 'checking' || isOperationLocked}
               aria-label={bridgeState === 'missing' || bridgeState === 'error' ? '打开发布引擎安装指引' : '重新检测发布引擎'}
               aria-expanded={bridgeState === 'missing' || bridgeState === 'error' ? isDispatchDrawerOpen : undefined}
               aria-haspopup={bridgeState === 'missing' || bridgeState === 'error' ? 'dialog' : undefined}
@@ -1415,13 +1610,14 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
               {bridgeState === 'checking' ? '正在连接发布引擎' : bridgeState === 'connected' ? `发布引擎已就绪 · ${accounts.length} 平台` : bridgeState === 'error' ? '发布引擎连接异常' : '发布引擎待连接'}
             </button>
             <span className="privacy-chip"><ShieldCheck size={14} /> 文件留在本地</span>
-            <span className="version-chip">PUBLIC MVP · 02</span>
+            <span className="version-chip">PUBLIC BETA · 0.2</span>
             <DispatchControls
               accounts={accounts}
               bridgeError={bridgeError}
               bridgeState={bridgeState}
               hasArticle={false}
               installGuide={installGuide}
+              interactionLocked={isOperationLocked}
               isOpen={isDispatchDrawerOpen}
               results={results}
               selectedIds={selectedIds}
@@ -1465,6 +1661,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
           <HistorySidebar
             drafts={drafts}
             activeDraftId={article?.id}
+            activeSaveStatus={autosave.status}
             isExpanded={historyOverlayOpen || historyExpanded}
             undoDraft={undoDraft}
             onToggleExpanded={toggleHistorySidebar}
@@ -1479,7 +1676,9 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                 backupInputRef.current.click()
               }
             }}
+            onExportDiagnostics={exportReliabilityData}
             backupStatus={backupStatus}
+            interactionLocked={isOperationLocked}
             storagePersistent={storagePersistent}
           />
         </div>
@@ -1520,10 +1719,10 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                     </div>
                   )}
                   <div className="drop-actions">
-                    <button type="button" className="primary-button" onClick={() => void createNewArticle()} disabled={workState === 'parsing'}><FilePlus2 size={18} /> 新建文档 <ArrowRight size={18} /></button>
-                    <button type="button" className="folder-button" onClick={() => fileInputRef.current?.click()} disabled={workState === 'parsing'}><FileUp size={16} /> 选择文件</button>
+                    <button type="button" className="primary-button" onClick={() => void createNewArticle()} disabled={workState === 'parsing' || isOperationLocked}><FilePlus2 size={18} /> 新建文档 <ArrowRight size={18} /></button>
+                    <button type="button" className="folder-button" onClick={() => fileInputRef.current?.click()} disabled={workState === 'parsing' || isOperationLocked}><FileUp size={16} /> 选择文件</button>
                   </div>
-                  <button type="button" className="directory-link" onClick={() => directoryInputRef.current?.click()} disabled={workState === 'parsing'}><FolderOpen size={14} /> 文章和配图在同一目录？选择文章文件夹</button>
+                  <button type="button" className="directory-link" onClick={() => directoryInputRef.current?.click()} disabled={workState === 'parsing' || isOperationLocked}><FolderOpen size={14} /> 文章和配图在同一目录？选择文章文件夹</button>
                   <div className="format-tags" aria-label="支持的文件格式">
                     <span>Markdown</span>
                     <span>HTML</span>
@@ -1596,7 +1795,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                         aria-label="导入文档"
                         aria-haspopup="menu"
                         aria-expanded={isImportMenuOpen}
-                        disabled={workState === 'parsing'}
+                        disabled={workState === 'parsing' || isOperationLocked}
                         onClick={() => setIsImportMenuOpen(current => !current)}
                       >
                         {workState === 'parsing' ? <LoaderCircle className="spin" size={15} /> : <Import size={15} />}
@@ -1628,6 +1827,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                           aria-label="文章标题"
                           placeholder="请输入标题（可选）"
                           value={article.title}
+                          disabled={isOperationLocked}
                           onChange={event => updateArticleTitle(event.target.value)}
                         />
                       </label>
@@ -1639,6 +1839,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                             value={articleSource?.text || ''}
                             language={articleSource?.language || 'markdown'}
                             focusRequest={editorFocusRequest}
+                            readOnly={isOperationLocked}
                             onChange={updateArticleSource}
                             onActiveBlockChange={setActiveEditorBlockIndex}
                           />
@@ -1670,8 +1871,8 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                         <div className="resource-actions">
                           <input ref={assetInputRef} type="file" accept="image/*" multiple onChange={event => void supplementAssets(Array.from(event.target.files || []))} hidden />
                           <input ref={assetDirectoryInputRef} type="file" multiple onChange={event => void supplementAssets(Array.from(event.target.files || []))} {...{ webkitdirectory: '', directory: '' }} hidden />
-                          <button type="button" onClick={() => assetInputRef.current?.click()}><ImagePlus size={15} /> 批量选择图片</button>
-                          <button type="button" onClick={() => assetDirectoryInputRef.current?.click()}><FolderOpen size={15} /> 选择文件夹</button>
+                          <button type="button" disabled={isOperationLocked} onClick={() => assetInputRef.current?.click()}><ImagePlus size={15} /> 批量选择图片</button>
+                          <button type="button" disabled={isOperationLocked} onClick={() => assetDirectoryInputRef.current?.click()}><FolderOpen size={15} /> 选择文件夹</button>
                         </div>
                       </header>
 
@@ -1680,8 +1881,8 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                           <div className="asset-repair-icon"><ImagePlus size={18} /></div>
                           <div className="asset-repair-copy"><strong>还差 {article.missingAssets?.length} 张本地图片</strong><p>{article.missingAssets?.slice(0, 3).join(' · ')}</p></div>
                           <div className="asset-repair-actions">
-                            <button type="button" onClick={() => assetInputRef.current?.click()}>选择图片</button>
-                            <button type="button" onClick={() => assetDirectoryInputRef.current?.click()}>选择文件夹</button>
+                            <button type="button" disabled={isOperationLocked} onClick={() => assetInputRef.current?.click()}>选择图片</button>
+                            <button type="button" disabled={isOperationLocked} onClick={() => assetDirectoryInputRef.current?.click()}>选择文件夹</button>
                           </div>
                         </div>
                       )}
@@ -1780,9 +1981,9 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
         </section>
       </main>
       </div>
-      {(historyError || autosave.error || backupNotice) && (
-        <div className={`local-history-notice ${historyError || autosave.error ? 'error' : ''}`} role="status" aria-live="polite">
-          <span>{historyError || (autosave.error ? `自动保存失败：${autosave.error.message}` : backupNotice)}</span>
+      {(backupNotice || historyError || autosave.error) && (
+        <div className={`local-history-notice ${!backupNotice && (historyError || autosave.error) ? 'error' : ''}`} role="status" aria-live="polite">
+          <span>{backupNotice || historyError || (autosave.error ? `自动保存失败：${autosave.error.message}` : null)}</span>
           <button type="button" aria-label="关闭提示" onClick={() => { setHistoryError(null); setBackupNotice(null) }}><XCircle size={15} /></button>
         </div>
       )}

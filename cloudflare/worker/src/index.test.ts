@@ -11,6 +11,8 @@ describe('local-only Worker boundary', () => {
     const response = await worker.fetch(new Request('https://app.example.com/health'), env())
     expect(response.status).toBe(200)
     expect(response.headers.get('Cache-Control')).toBe('no-store')
+    expect(response.headers.get('X-Content-Type-Options')).toBe('nosniff')
+    expect(response.headers.get('Content-Security-Policy')).toContain("frame-ancestors 'none'")
     expect(await response.json()).toEqual({ status: 'ok', storage: 'local-only' })
   })
 
@@ -23,9 +25,14 @@ describe('local-only Worker boundary', () => {
   })
 
   it('serves application assets for normal navigation', async () => {
-    const bindings = env(new Response('index'))
+    const bindings = env(new Response('index', { headers: { 'Content-Type': 'text/html', 'X-Asset': 'preserved' } }))
     const response = await worker.fetch(new Request('https://app.example.com/article'), bindings)
     expect(await response.text()).toBe('index')
+    expect(response.headers.get('Content-Type')).toBe('text/html')
+    expect(response.headers.get('X-Asset')).toBe('preserved')
+    expect(response.headers.get('Permissions-Policy')).toBe('camera=(), geolocation=(), microphone=()')
+    expect(response.headers.get('Referrer-Policy')).toBe('strict-origin-when-cross-origin')
+    expect(response.headers.get('X-Frame-Options')).toBe('DENY')
     expect(bindings.ASSETS.fetch).toHaveBeenCalledOnce()
   })
 })

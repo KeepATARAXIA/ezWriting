@@ -1,8 +1,8 @@
 {
   "name": "ezwriting",
   "private": true,
-  "version": "0.1.0",
-  "description": "Local-first multi-platform content publishing workbench.",
+  "version": "0.2.0",
+  "description": "Local-first multi-platform content preparation and export workbench.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -19,10 +19,12 @@
   "scripts": {
     "dev": "vite",
     "build": "npm run typecheck && vite build",
+    "preview": "vite preview",
     "test": "vitest run",
+    "test:browser": "npm run build && playwright test",
     "test:watch": "vitest",
     "typecheck": "tsc -b && tsc -p cloudflare/worker/tsconfig.json",
-    "verify": "npm test && npm run build",
+    "verify": "npm test && npm run test:browser",
     "worker:dev": "wrangler dev --config cloudflare/worker/wrangler.jsonc",
     "worker:deploy": "npm run verify && wrangler deploy --config cloudflare/worker/wrangler.jsonc"
   },
@@ -32,14 +34,6 @@
     "@codemirror/lang-markdown": "^6.3.2",
     "@codemirror/state": "6.7.1",
     "@codemirror/view": "6.43.8",
-    "@tiptap/extension-highlight": "3.30.0",
-    "@tiptap/extension-image": "3.30.0",
-    "@tiptap/extension-placeholder": "3.30.0",
-    "@tiptap/extension-table": "3.30.0",
-    "@tiptap/extension-text-style": "3.30.0",
-    "@tiptap/pm": "3.30.0",
-    "@tiptap/react": "3.30.0",
-    "@tiptap/starter-kit": "3.30.0",
     "codemirror": "^6.0.1",
     "dompurify": "3.4.13",
     "jszip": "3.10.1",
@@ -51,6 +45,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260813.1",
+    "@playwright/test": "^1.62.1",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.4",
     "@vitejs/plugin-react": "6.0.5",

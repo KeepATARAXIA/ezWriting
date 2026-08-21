@@ -1,0 +1,15 @@
+<!doctype html>
+<html>
+  <head>
+    <title>Unsafe Import Fixture</title>
+  </head>
+  <body>
+    <main>
+      <h1>Unsafe Import Fixture</h1>
+      <p onclick="alert('unsafe')">Safe paragraph</p>
+      <script>globalThis.compromised = true</script>
+      <iframe src="https://example.com"></iframe>
+      <img src="assets/local.png" onerror="alert('unsafe')" alt="Local fixture" />
+    </main>
+  </body>
+</html>

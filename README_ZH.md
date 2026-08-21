@@ -6,14 +6,14 @@
 
 # EZWRITING
 
-**本地优先的多平台内容分发工作台**
+**本地优先的多平台内容准备与导出工作台**
 
-把一份 Markdown、HTML 或 ZIP 稿件带进浏览器，在同一个页面完成编辑、图片整理、平台预览和草稿同步。
+把一份 Markdown、HTML 或 ZIP 稿件带进浏览器，在同一个页面完成编辑、图片整理、平台预览和可复核结果导出；也可以通过 Wechatsync 实验性地同步到平台草稿箱。
 
 [在线体验](https://ezwriting.online/) · [快速开始](#快速开始) · [平台支持](./docs/PLATFORM_SUPPORT.md) · [路线图](./ROADMAP.md) · [English](./README.md)
 
 [![CI](https://github.com/KeepATARAXIA/ezWriting/actions/workflows/ci.yml/badge.svg)](https://github.com/KeepATARAXIA/ezWriting/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.1.0-2457FF)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.2.0-2457FF)](./CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-111827)](./LICENSE)
 
 </div>
@@ -21,9 +21,9 @@
 ![EZWRITING 产品工作台全景](./docs/readme-assets/product-workbench-overview.png)
 
 > [!IMPORTANT]
-> EZWRITING 当前处于公开 MVP 阶段，推荐使用桌面端 Chrome、Edge 或其他 Chromium 浏览器。导入、编辑、预览、备份和图片导出不需要登录；多平台草稿同步需要安装 [文章同步助手 Wechatsync](https://github.com/wechatsync/Wechatsync) 并提前登录目标平台。
+> EZWRITING 当前处于公开 MVP 阶段，推荐使用桌面端 Chrome、Edge 或其他 Chromium 浏览器。导入、编辑、预览、备份和结果导出不需要登录；通过 [文章同步助手 Wechatsync](https://github.com/wechatsync/Wechatsync) 进行的草稿同步属于实验性增强，并依赖目标平台登录状态。
 
-当前版本：**v0.1.0**。测试草稿同步前，请先查看带核对日期的[平台支持矩阵](./docs/PLATFORM_SUPPORT.md)和[已知问题](./docs/KNOWN_ISSUES.md)。平台行为可能独立于 EZWRITING 发生变化。
+当前版本：**v0.2.0 可靠性版本**。测试草稿同步前，请先查看带核对日期的[平台支持矩阵](./docs/PLATFORM_SUPPORT.md)和[已知问题](./docs/KNOWN_ISSUES.md)。平台行为可能独立于 EZWRITING 发生变化。
 
 ## 为什么做 EZWRITING
 
@@ -36,8 +36,8 @@ flowchart LR
     A["Markdown / HTML / ZIP"] --> B["浏览器本地解析与安全过滤"]
     B --> C["一份可编辑稿件"]
     C --> D["公众号 / 小红书 / X 预览"]
-    D --> E["Wechatsync 发布桥接"]
-    E --> F["已登录平台的草稿箱"]
+    D --> E["复制 / PNG / ZIP 结果"]
+    D -. "实验性" .-> F["Wechatsync 草稿同步"]
 ```
 
 核心原则是“一份正文，多个平台呈现”。编辑器只维护一份 Markdown 主稿，公众号、小红书和 X 使用各自的预览与排版逻辑，避免三个版本越改越散。
@@ -47,12 +47,13 @@ flowchart LR
 | 环节 | 能力 |
 | --- | --- |
 | 导入 | 支持 Markdown、HTML、ZIP 内容包和包含正文与配图的文件夹 |
-| 整理 | 读取 front matter、标题、摘要、标签、封面及标准 Markdown / Obsidian 图片引用 |
+| 整理 | 读取 front matter、标题、摘要、标签及标准 Markdown / Obsidian 图片引用 |
 | 编辑 | Markdown 文本编辑器，支持标题、列表、引用、Callout、代码、表格、链接、高亮、图片、快捷键与撤销重做 |
 | 预览 | 微信公众号长文、小红书图文卡片和 X Article 三种独立预览 |
 | 排版 | 主题、字体、字号、行距和强调色；编辑结果同步进入预览与发布稿 |
 | 本地保存 | 稿件、图片和排版设置保存在当前浏览器的 IndexedDB 中，支持整库导入与导出 |
-| 发布 | 检测 Wechatsync 与平台登录状态，选择多个平台、查看进度、错误和草稿入口 |
+| 安全诊断 | 导出包含应用/浏览器状态和近期导入计时的脱敏报告，不包含正文、文件名或账号信息 |
+| 草稿同步（Beta） | 检测 Wechatsync 与平台登录状态，选择多个平台、查看进度、错误和草稿入口 |
 | 安全边界 | 外部 HTML 经过过滤；ZIP 限制文件数和解压体积，并拒绝路径穿越 |
 
 ## 从稿件到草稿箱
@@ -67,7 +68,7 @@ flowchart LR
 
 ### 3. 整理文章图片
 
-正文图片、封面和缺失资源集中显示在资源页。可以批量选择素材文件夹，也可以单独重链、替换或删除图片。
+正文图片和缺失资源集中显示在资源页。可以批量选择素材文件夹，也可以单独重链、替换或删除图片。封面由用户进入目标平台后手动选择。
 
 单独导入 Markdown 时，浏览器不能自动读取文件旁边的本地图片。建议选择包含正文与素材的整个文件夹，或使用 ZIP 内容包，让 EZWRITING 按相对路径自动补齐资源。
 
@@ -81,7 +82,7 @@ flowchart LR
 
 #### X Article
 
-按照 X Article 的长文结构组织标题、作者、封面和正文，支持桌面与手机效果切换。自动写入 X Article 草稿仍受账号权限和平台规则限制，需要使用具备对应权限的真实账号验证。
+按照 X Article 的长文结构组织标题、作者和正文，支持桌面与手机效果切换。自动写入 X Article 草稿仍受账号权限和平台规则限制，需要使用具备对应权限的真实账号验证。
 
 #### 小红书图文
 
@@ -106,7 +107,7 @@ flowchart LR
 
 如果想立即测试导入，可以下载[纯 Markdown 示例](./examples/sample-article.md)或[轻量图片内容包](./examples/content-package-image-test-lite.zip)，然后拖进工作台。
 
-### 启用多平台草稿同步
+### 尝试实验性草稿同步
 
 1. 安装并启用 [文章同步助手 Wechatsync](https://github.com/wechatsync/Wechatsync)。
 2. 在同一个 Chromium 浏览器中登录准备发布的平台。
@@ -131,8 +132,8 @@ EZWRITING 不要求填写平台账号或密码；发布执行器使用浏览器�
 article/
 ├── article.md
 └── assets/
-    ├── cover.png
-    └── image-01.jpg
+    ├── image-01.jpg
+    └── image-02.jpg
 ```
 
 Markdown 可以使用：
@@ -149,6 +150,7 @@ ZIP 安全限制：压缩包最大 20 MB、最多 120 个文件、单文件解�
 - 稿件、图片、历史记录和排版设置默认只保存在当前浏览器。
 - 当前版本没有账号系统，也不会把稿件同步到 EZWRITING 服务器。
 - 可以导出 `.ezwriting-backup.json` 整库备份，在其他浏览器或新域名中恢复。
+- 反馈问题时可以导出诊断报告；报告只包含近期导入计时和本地运行状态，不含正文、文件名或账号信息。
 - 清理网站数据、切换浏览器或更换域名前，请先导出备份。
 - 远程图片仍可能被浏览器和目标平台访问；只有主动发起同步后，所选内容才会交给发布扩展和目标平台。
 
@@ -186,6 +188,9 @@ npm run dev
 npm test
 npm run typecheck
 npm run build
+npm run test:browser
+# 完整执行单元测试、生产构建和浏览器可靠性门禁：
+npm run verify
 ```
 
 ## 当前限制

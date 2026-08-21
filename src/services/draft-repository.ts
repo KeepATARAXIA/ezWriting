@@ -5,8 +5,23 @@ export interface DraftListOptions {
   kind?: DraftKind
 }
 
+export interface DraftSaveOptions {
+  preserveUpdatedAt?: boolean
+  replaceDeletionState?: boolean
+  expectedUpdatedAt?: string | null
+}
+
+export type DraftSettingMutation =
+  | { type: 'put'; key: string; value: unknown }
+  | { type: 'delete'; key: string }
+
+export interface AtomicDraftImportOptions {
+  settingMutations?: readonly DraftSettingMutation[]
+}
+
 export interface DraftRepository {
-  saveDraft(draft: PersistedDraft, options?: { preserveUpdatedAt?: boolean; replaceDeletionState?: boolean }): Promise<PersistedDraft>
+  saveDraft(draft: PersistedDraft, options?: DraftSaveOptions): Promise<PersistedDraft>
+  importDraftsAtomically?(drafts: readonly PersistedDraft[], options?: AtomicDraftImportOptions): Promise<void>
   getDraft(id: string): Promise<PersistedDraft | null>
   listDrafts(options?: DraftListOptions): Promise<DraftSummary[]>
   softDeleteDraft(id: string): Promise<PersistedDraft | null>

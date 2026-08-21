@@ -46,6 +46,7 @@ interface SourceEditorProps {
   value: string
   language: ArticleSourceLanguage
   focusRequest?: SourceEditorFocusRequest | null
+  readOnly?: boolean
   onChange: (value: string) => void
   onActiveBlockChange?: (blockIndex: number | null) => void
 }
@@ -253,11 +254,13 @@ class MarkdownImageWidget extends WidgetType {
     replaceButton.addEventListener('click', event => {
       event.preventDefault()
       event.stopPropagation()
+      if (view.state.readOnly) return
       input.click()
     })
     deleteButton.addEventListener('click', event => {
       event.preventDefault()
       event.stopPropagation()
+      if (view.state.readOnly) return
       const range = currentRange()
       if (!range) return
       view.dispatch({ changes: { from: range.from, to: range.to, insert: '' }, selection: { anchor: range.from } })
@@ -265,7 +268,7 @@ class MarkdownImageWidget extends WidgetType {
     })
     input.addEventListener('change', () => {
       const file = input.files?.[0]
-      if (!file) return
+      if (!file || view.state.readOnly) return
       void readFileAsDataUrl(file).then(source => {
         const range = currentRange()
         if (!range) return
@@ -366,16 +369,18 @@ function clearHtmlFormatting(text: string): string {
   return text.replace(/<[^>]+>/g, '')
 }
 
-export function SourceEditor({ value, language, focusRequest, onChange, onActiveBlockChange }: SourceEditorProps) {
+export function SourceEditor({ value, language, focusRequest, readOnly = false, onChange, onActiveBlockChange }: SourceEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
   const languageCompartmentRef = useRef(new Compartment())
   const imageSourceCompartmentRef = useRef(new Compartment())
+  const readOnlyCompartmentRef = useRef(new Compartment())
   const embeddedImagesRef = useRef(new Map<string, string>())
   const languageRef = useRef(language)
   const onChangeRef = useRef(onChange)
   const onActiveBlockChangeRef = useRef(onActiveBlockChange)
+  const readOnlyRef = useRef(readOnly)
   const lastFocusRequestRef = useRef(0)
   const changeTimerRef = useRef<number | null>(null)
   const activeBlockTimerRef = useRef<number | null>(null)
@@ -385,6 +390,7 @@ export function SourceEditor({ value, language, focusRequest, onChange, onActive
   languageRef.current = language
   onChangeRef.current = onChange
   onActiveBlockChangeRef.current = onActiveBlockChange
+  readOnlyRef.current = readOnly
 
   const reportActiveBlock = (view: EditorView) => {
     onActiveBlockChangeRef.current?.(
@@ -481,6 +487,7 @@ export function SourceEditor({ value, language, focusRequest, onChange, onActive
   }
 
   const runStableHistoryCommand = (command: typeof undo) => {
+    if (readOnlyRef.current) return false
     const view = viewRef.current
     if (!view) return false
     const snapshot = captureOuterScroll(view)
@@ -500,6 +507,7 @@ export function SourceEditor({ value, language, focusRequest, onChange, onActive
   }
 
   const insertText = (text: string, selectFrom = text.length, selectTo = selectFrom) => {
+    if (readOnlyRef.current) return
     const view = viewRef.current
     if (!view) return
     const { from, to } = view.state.selection.main
@@ -522,6 +530,7 @@ export function SourceEditor({ value, language, focusRequest, onChange, onActive
   }
 
   const wrapSelection = (markdownBefore: string, markdownAfter: string, placeholderText: string, htmlTag: string) => {
+    if (readOnlyRef.current) return
     const view = viewRef.current
     if (!view) return
     const { from, to } = view.state.selection.main
@@ -614,6 +623,7 @@ export function SourceEditor({ value, language, focusRequest, onChange, onActive
   }
 
   const insertHeading = (level: 2 | 3) => {
+    if (readOnlyRef.current) return
     if (languageRef.current === 'html') {
       wrapSelection('', '', '小标题', `h${level}`)
       return
@@ -626,11 +636,13 @@ export function SourceEditor({ value, language, focusRequest, onChange, onActive
   }
 
   const setParagraph = () => {
+    if (readOnlyRef.current) return
     if (languageRef.current === 'html') return
     transformSelectedLines(line => line.replace(/^#{1,6}\s+/, ''))
   }
 
   const insertQuote = () => {
+    if (readOnlyRef.current) return
     if (languageRef.current === 'html') wrapSelection('', '', '引用内容', 'blockquote')
     else transformSelectedLines((line, _index, lines) => {
       const allQuoted = lines.filter(Boolean).every(current => /^>\s?/.test(current))
@@ -639,6 +651,7 @@ export function SourceEditor({ value, language, focusRequest, onChange, onActive
   }
 
   const insertList = (ordered: boolean) => {
+    if (readOnlyRef.current) return
     if (languageRef.current === 'html') {
       insertText(ordered ? '<ol>\n  <li>列表项</li>\n</ol>' : '<ul>\n  <li>列表项</li>\n</ul>')
       return
@@ -647,11 +660,13 @@ export function SourceEditor({ value, language, focusRequest, onChange, onActive
   }
 
   const insertCodeBlock = () => {
+    if (readOnlyRef.current) return
     if (languageRef.current === 'html') insertText('<pre><code>代码</code></pre>', 11, 13)
     else insertText('```text\n代码\n```', 8, 10)
   }
 
   const insertLink = () => {
+    if (readOnlyRef.current) return
     const view = viewRef.current
     if (!view) return
     const { from, to } = view.state.selection.main
@@ -669,6 +684,7 @@ export function SourceEditor({ value, language, focusRequest, onChange, onActive
   }
 
   const clearSelectedFormatting = () => {
+    if (readOnlyRef.current) return
     const view = viewRef.current
     if (!view || view.state.selection.main.empty) return
     const { from, to } = view.state.selection.main
@@ -685,16 +701,19 @@ export function SourceEditor({ value, language, focusRequest, onChange, onActive
   }
 
   const insertTable = () => {
+    if (readOnlyRef.current) return
     if (languageRef.current === 'html') insertText('<table>\n  <thead><tr><th>列 1</th><th>列 2</th></tr></thead>\n  <tbody><tr><td>内容</td><td>内容</td></tr></tbody>\n</table>')
     else insertText('| 列 1 | 列 2 |\n| --- | --- |\n| 内容 | 内容 |')
   }
 
   const insertWarning = () => {
+    if (readOnlyRef.current) return
     if (languageRef.current === 'html') insertText('<blockquote><strong>警告标题</strong><p>在这里填写内容</p></blockquote>')
     else insertText('> [!warning] 警告标题\n> 在这里填写内容', 13, 17)
   }
 
   const insertImageFile = async (file: File) => {
+    if (readOnlyRef.current) return
     const source = await readFileAsDataUrl(file)
     const alt = file.name.replace(/\.[^.]+$/, '') || '图片'
     const token = addEmbeddedImage(embeddedImagesRef.current, source)
@@ -713,6 +732,7 @@ export function SourceEditor({ value, language, focusRequest, onChange, onActive
     if (!host) return
     const languageCompartment = languageCompartmentRef.current
     const imageSourceCompartment = imageSourceCompartmentRef.current
+    const readOnlyCompartment = readOnlyCompartmentRef.current
     const compacted = compactEmbeddedImages(value, embeddedImagesRef.current)
     embeddedImagesRef.current = compacted.sources
     const view = new EditorView({
@@ -723,10 +743,15 @@ export function SourceEditor({ value, language, focusRequest, onChange, onActive
           basicSetup,
           imageSourceCompartment.of(embeddedImageFacet.of({ sources: compacted.sources })),
           imagePreviewField,
+          readOnlyCompartment.of([
+            EditorState.readOnly.of(readOnly),
+            EditorView.editable.of(!readOnly),
+          ]),
           EditorView.atomicRanges.of(view => view.state.field(imagePreviewField)),
           languageCompartment.of(language === 'markdown' ? markdown() : html()),
           Prec.high(EditorView.domEventHandlers({
             keydown: event => {
+              if (readOnlyRef.current) return false
               const hasCommandModifier = event.ctrlKey || event.metaKey
               if (!hasCommandModifier || event.altKey) return false
               const key = event.key.toLocaleLowerCase()
@@ -768,6 +793,7 @@ export function SourceEditor({ value, language, focusRequest, onChange, onActive
               return false
             },
             paste: event => {
+              if (readOnlyRef.current) return false
               const image = Array.from(event.clipboardData?.files || []).find(file => file.type.startsWith('image/'))
               if (!image) return false
               event.preventDefault()
@@ -780,6 +806,7 @@ export function SourceEditor({ value, language, focusRequest, onChange, onActive
               return true
             },
             drop: event => {
+              if (readOnlyRef.current) return false
               const image = Array.from(event.dataTransfer?.files || []).find(file => file.type.startsWith('image/'))
               if (!image) return false
               event.preventDefault()
@@ -846,6 +873,18 @@ export function SourceEditor({ value, language, focusRequest, onChange, onActive
     view.scrollDOM.scrollTop = scrollTop
     view.scrollDOM.scrollLeft = scrollLeft
   }, [value])
+
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view) return
+    view.dispatch({
+      effects: readOnlyCompartmentRef.current.reconfigure([
+        EditorState.readOnly.of(readOnly),
+        EditorView.editable.of(!readOnly),
+      ]),
+    })
+    if (readOnly) setSelectionMenu(null)
+  }, [readOnly])
 
   useEffect(() => {
     const view = viewRef.current

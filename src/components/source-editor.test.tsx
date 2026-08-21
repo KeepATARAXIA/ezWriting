@@ -44,6 +44,23 @@ describe('SourceEditor', () => {
     expect(onChange).toHaveBeenLastCalledWith(expect.stringContaining('> [!warning] 警告标题'))
   })
 
+  it('prevents editor and toolbar mutations while read-only', async () => {
+    const onChange = vi.fn()
+    await act(async () => root.render(
+      <SourceEditor value="锁定内容" language="markdown" readOnly onChange={onChange} />,
+    ))
+    await act(async () => new Promise(resolve => window.setTimeout(resolve, 0)))
+
+    expect(container.querySelector('.cm-content')?.getAttribute('contenteditable')).toBe('false')
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="警告块"]')?.click()
+      await new Promise(resolve => window.setTimeout(resolve, 300))
+    })
+    expect(container.querySelector('.cm-content')?.textContent).toContain('锁定内容')
+    expect(container.querySelector('.cm-content')?.textContent).not.toContain('警告标题')
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
   it('renders embedded image data directly without exposing Markdown or Base64 source', async () => {
     const dataUri = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMjAiIGhlaWdodD0iNjAiPjxyZWN0IHdpZHRoPSIxMjAiIGhlaWdodD0iNjAiIGZpbGw9IiMxNjQ4ZmYiLz48L3N2Zz4='
     await act(async () => root.render(
