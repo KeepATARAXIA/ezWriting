@@ -100,6 +100,116 @@ describe('App publishing engine onboarding', () => {
     expect(container.querySelector<HTMLInputElement>('[aria-label="文章标题"]')?.value).toBe('')
   })
 
+  it('uses independent platform pane widths, persists the v3 mapping, and restores only the current platform', async () => {
+    bridgeMocks.waitForBridge.mockResolvedValue(false)
+
+    await act(async () => {
+      root.render(<App />)
+      await Promise.resolve()
+    })
+    await act(async () => container.querySelector<HTMLButtonElement>('.drop-actions .primary-button')?.click())
+
+    const separator = container.querySelector<HTMLDivElement>('[role="separator"]')!
+    const editorGrid = container.querySelector<HTMLElement>('.editor-grid')!
+    expect(separator.getAttribute('aria-valuenow')).toBe('44')
+    expect(separator.getAttribute('aria-valuetext')).toBe('编辑区 44%，预览区 56%')
+    expect(editorGrid.getAttribute('data-preview-platform')).toBe('wechat')
+    expect(Array.from(container.querySelectorAll<HTMLElement>('.topbar-workbench [data-topbar-group]')).map(group => group.dataset.topbarGroup)).toEqual([
+      'new',
+      'platform',
+      'view',
+      'status',
+      'publish',
+    ])
+
+    await act(async () => separator.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })))
+    expect(separator.getAttribute('aria-valuenow')).toBe('46')
+    expect(JSON.parse(window.localStorage.getItem('dispatch.editor-pane-percent.v3') || '{}')).toEqual({
+      wechat: 46,
+      xhs: 42,
+      x: 40,
+    })
+
+    const xhsTab = container.querySelector<HTMLButtonElement>('button[aria-label="小红书"]')!
+    const xTab = container.querySelector<HTMLButtonElement>('button[aria-label="X 长文"]')!
+    const wechatTab = container.querySelector<HTMLButtonElement>('button[aria-label="微信公众号"]')!
+    await act(async () => xhsTab.click())
+    expect(separator.getAttribute('aria-valuenow')).toBe('42')
+    expect(editorGrid.getAttribute('data-preview-platform')).toBe('xhs')
+    await act(async () => separator.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true })))
+    expect(separator.getAttribute('aria-valuenow')).toBe('68')
+
+    await act(async () => xTab.click())
+    expect(separator.getAttribute('aria-valuenow')).toBe('40')
+    await act(async () => separator.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true })))
+    expect(separator.getAttribute('aria-valuenow')).toBe('38')
+
+    await act(async () => wechatTab.click())
+    expect(separator.getAttribute('aria-valuenow')).toBe('46')
+    await act(async () => xhsTab.click())
+    expect(separator.getAttribute('aria-valuenow')).toBe('68')
+    await act(async () => separator.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })))
+    expect(separator.getAttribute('aria-valuenow')).toBe('42')
+    expect(JSON.parse(window.localStorage.getItem('dispatch.editor-pane-percent.v3') || '{}')).toEqual({
+      wechat: 46,
+      xhs: 42,
+      x: 38,
+    })
+    await act(async () => xTab.click())
+    expect(separator.getAttribute('aria-valuenow')).toBe('38')
+  })
+
+  it('migrates a manual v2 pane preference to WeChat without replacing the new platform defaults', async () => {
+    bridgeMocks.waitForBridge.mockResolvedValue(false)
+    window.localStorage.setItem('dispatch.editor-pane-percent.v2', '47')
+
+    await act(async () => {
+      root.render(<App />)
+      await Promise.resolve()
+    })
+    await act(async () => container.querySelector<HTMLButtonElement>('.drop-actions .primary-button')?.click())
+
+    const separator = container.querySelector<HTMLDivElement>('[role="separator"]')!
+    expect(separator.getAttribute('aria-valuenow')).toBe('47')
+    expect(window.localStorage.getItem('dispatch.editor-pane-percent.v3')).toBeNull()
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="小红书"]')?.click())
+    expect(separator.getAttribute('aria-valuenow')).toBe('42')
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="X 长文"]')?.click())
+    expect(separator.getAttribute('aria-valuenow')).toBe('40')
+  })
+
+  it('restores each platform width from the persisted v3 mapping', async () => {
+    bridgeMocks.waitForBridge.mockResolvedValue(false)
+    window.localStorage.setItem('dispatch.editor-pane-percent.v3', JSON.stringify({ wechat: 51, xhs: 48, x: 45 }))
+    window.localStorage.setItem('dispatch.editor-pane-percent.v2', '47')
+
+    await act(async () => {
+      root.render(<App />)
+      await Promise.resolve()
+    })
+    await act(async () => container.querySelector<HTMLButtonElement>('.drop-actions .primary-button')?.click())
+
+    const separator = container.querySelector<HTMLDivElement>('[role="separator"]')!
+    expect(separator.getAttribute('aria-valuenow')).toBe('51')
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="小红书"]')?.click())
+    expect(separator.getAttribute('aria-valuenow')).toBe('48')
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="X 长文"]')?.click())
+    expect(separator.getAttribute('aria-valuenow')).toBe('45')
+  })
+
+  it('does not mistake the old 55 percent default for a manual v2 preference', async () => {
+    bridgeMocks.waitForBridge.mockResolvedValue(false)
+    window.localStorage.setItem('dispatch.editor-pane-percent.v2', '55')
+
+    await act(async () => {
+      root.render(<App />)
+      await Promise.resolve()
+    })
+    await act(async () => container.querySelector<HTMLButtonElement>('.drop-actions .primary-button')?.click())
+
+    expect(container.querySelector('[role="separator"]')?.getAttribute('aria-valuenow')).toBe('44')
+  })
+
   it('imports into a new document by appending or replacing the current content', async () => {
     bridgeMocks.waitForBridge.mockResolvedValue(false)
 
@@ -373,7 +483,7 @@ describe('App publishing engine onboarding', () => {
     expect((bridgeMocks.publishDraft.mock.calls[2][1] as typeof accounts).map(account => account.id)).toEqual(['xiaohongshu'])
   })
 
-  it('builds separate highlighted drafts for WeChat, Xiaohongshu, X, and generic platforms', async () => {
+  it('keeps the three X layouts out of other platform previews and published drafts', async () => {
     const accounts = [
       { id: 'weixin', name: '微信公众号', username: '微信账号', raw: { type: 'weixin' } },
       { id: 'xiaohongshu', name: '小红书', username: '小红书账号', raw: { type: 'xiaohongshu' } },
@@ -398,12 +508,42 @@ describe('App publishing engine onboarding', () => {
     const input = container.querySelector<HTMLInputElement>('input[accept=".md,.markdown,.html,.htm,.zip"]')!
     Object.defineProperty(input, 'files', {
       configurable: true,
-      value: [new File(['# 测试稿件\n\n正文 ==重点内容=='], 'highlight.md', { type: 'text/markdown' })],
+      value: [new File(['# 测试稿件\n\n## 分节标题\n\n> 引用内容\n\n正文 ==重点内容=='], 'highlight.md', { type: 'text/markdown' })],
     })
     await act(async () => {
       input.dispatchEvent(new Event('change', { bubbles: true }))
       await new Promise(resolve => window.setTimeout(resolve, 0))
     })
+
+    const xTab = container.querySelector<HTMLButtonElement>('button[aria-label="X 长文"]')!
+    const xhsTab = container.querySelector<HTMLButtonElement>('button[aria-label="小红书"]')!
+    const wechatTab = container.querySelector<HTMLButtonElement>('button[aria-label="微信公众号"]')!
+    await act(async () => {
+      xTab.click()
+      await vi.dynamicImportSettled()
+    })
+    const editorialLayout = Array.from(container.querySelectorAll<HTMLButtonElement>('#x-settings-layout-panel [role="radio"]'))
+      .find(button => button.textContent === '刊物')!
+    await act(async () => editorialLayout.click())
+    expect(container.querySelector('.preview-workbench')?.classList.contains('theme-editorial')).toBe(true)
+    expect(container.querySelector<HTMLElement>('.x-article-content h2')?.style.fontFamily).toContain('Noto Serif SC')
+    expect(container.querySelector<HTMLElement>('.x-article-content blockquote')?.style.background).toBe('rgb(245, 241, 234)')
+
+    await act(async () => xhsTab.click())
+    expect(container.querySelector('.preview-workbench')?.classList.contains('theme-clean')).toBe(true)
+    expect(container.querySelector<HTMLElement>('.xhs-card-content h2')?.style.fontFamily).toContain('MiSans')
+    expect(container.querySelector<HTMLElement>('.xhs-card-content blockquote')?.style.background).toBe('rgb(245, 247, 249)')
+    await act(async () => container.querySelector<HTMLButtonElement>('#xhs-settings-font-trigger')?.click())
+    const largeFont = Array.from(container.querySelectorAll<HTMLButtonElement>('#xhs-settings-font-panel [aria-label="选择文章字号"] button'))
+      .find(button => button.textContent === '大')!
+    await act(async () => largeFont.click())
+    await act(async () => wechatTab.click())
+    expect(container.querySelector('.preview-workbench')?.classList.contains('theme-clean')).toBe(true)
+    expect(container.querySelector('[data-wechat-theme="literary"]')).not.toBeNull()
+    await act(async () => xTab.click())
+    expect(Array.from(container.querySelectorAll<HTMLButtonElement>('#x-settings-layout-panel [role="radio"]'))
+      .find(button => button.textContent === '刊物')?.getAttribute('aria-checked')).toBe('true')
+    expect(container.querySelector<HTMLElement>('.x-article-content p')?.style.fontSize).toBe('19px')
 
     await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label^="打开发布面板"]')?.click())
     for (const row of container.querySelectorAll<HTMLButtonElement>('.platform-row')) {
@@ -421,16 +561,28 @@ describe('App publishing engine onboarding', () => {
     const xhs = articleFor('xiaohongshu')
     const x = articleFor('x')
     const generic = articleFor('zhihu')
+    const parsedXhs = new DOMParser().parseFromString(xhs.html, 'text/html')
+    const parsedX = new DOMParser().parseFromString(x.html, 'text/html')
+    const parsedGeneric = new DOMParser().parseFromString(generic.html, 'text/html')
 
     expect(wechat.html).not.toContain('<mark')
     expect(wechat.html).toContain('data-ez-format="highlight"')
+    expect(wechat.html).toContain('data-wechat-theme="literary"')
     expect(wechat.markdown).toContain('<span style=')
     expect(xhs.html).toContain('font-weight: 750')
     expect(xhs.markdown).toContain('**重点内容**')
+    expect(parsedXhs.querySelector<HTMLElement>('h2')?.style.fontFamily).toContain('MiSans')
+    expect(parsedXhs.querySelector<HTMLElement>('blockquote')?.style.background).toBe('rgb(245, 247, 249)')
+    expect(parsedXhs.querySelector<HTMLElement>('p')?.style.fontSize).toBe('19px')
     expect(x.html).toContain('text-decoration-line: underline')
     expect(x.html).not.toContain('background-color: rgb(255, 241, 168)')
     expect(x.markdown).toContain('**重点内容**')
+    expect(parsedX.querySelector<HTMLElement>('h2')?.style.fontFamily).toContain('Noto Serif SC')
+    expect(parsedX.querySelector<HTMLElement>('blockquote')?.style.background).toBe('rgb(245, 241, 234)')
     expect(generic.html).toContain('data-ez-format="highlight"')
+    expect(parsedGeneric.querySelector<HTMLElement>('h2')?.style.fontFamily).toContain('MiSans')
+    expect(parsedGeneric.querySelector<HTMLElement>('blockquote')?.style.background).toBe('rgb(245, 247, 249)')
+    expect(parsedGeneric.querySelector<HTMLElement>('p')?.style.fontSize).toBe('19px')
   })
 
   it('reconnects automatically after returning to the page', async () => {
@@ -559,10 +711,10 @@ describe('App publishing engine onboarding', () => {
     await act(async () => editTab.dispatchEvent(new MouseEvent('click', { bubbles: true })))
 
     const separator = container.querySelector<HTMLDivElement>('[role="separator"]')!
-    expect(separator.getAttribute('aria-valuenow')).toBe('55')
+    expect(separator.getAttribute('aria-valuenow')).toBe('44')
     await act(async () => separator.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })))
-    expect(separator.getAttribute('aria-valuenow')).toBe('57')
-    expect(window.localStorage.getItem('dispatch.editor-pane-percent.v2')).toBe('57')
+    expect(separator.getAttribute('aria-valuenow')).toBe('46')
+    expect(JSON.parse(window.localStorage.getItem('dispatch.editor-pane-percent.v3') || '{}')).toEqual({ wechat: 46, xhs: 42, x: 40 })
     expect(window.localStorage.getItem('dispatch.editor-pane-percent')).toBe('42')
 
     const editorScroller = container.querySelector<HTMLElement>('.paper-panel')!
@@ -674,27 +826,42 @@ describe('App publishing engine onboarding', () => {
 
     const xhsTab = Array.from(container.querySelectorAll<HTMLButtonElement>('button[role="tab"]'))
       .find(button => button.textContent?.includes('小红书'))!
-    await act(async () => xhsTab.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    await act(async () => {
+      xhsTab.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await vi.dynamicImportSettled()
+    })
 
     expect(container.querySelector('.xhs-card-page.template-focus')).not.toBeNull()
-    expect(container.querySelector('.xhs-card-accent')).toBeNull()
     expect(container.querySelector('.xhs-tool-rail')).not.toBeNull()
     expect(container.querySelectorAll('.xhs-view-modes button')).toHaveLength(3)
     expect(container.textContent).toContain('下载当前页')
     expect(container.textContent).toContain('下载全部图片')
 
-    expect(container.querySelector('[aria-label="小红书样式与排版"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="小红书设置模块"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="小红书视觉模板"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="小红书输出信息"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="选择文章版式"]')).toBeNull()
+    expect(container.querySelectorAll('.xhs-template-options button')).toHaveLength(5)
     expect(Array.from(container.querySelectorAll<HTMLButtonElement>('.xhs-tool-rail button')).some(button => button.textContent?.includes('卡片样式'))).toBe(false)
     expect(container.textContent).not.toContain('顶部色条')
+    const layoutTrigger = container.querySelector<HTMLButtonElement>('#xhs-settings-layout-trigger')!
+    const fontTrigger = container.querySelector<HTMLButtonElement>('#xhs-settings-font-trigger')!
+    expect(layoutTrigger.getAttribute('aria-expanded')).toBe('true')
+    await act(async () => fontTrigger.click())
+    expect(layoutTrigger.getAttribute('aria-expanded')).toBe('false')
+    expect(fontTrigger.getAttribute('aria-expanded')).toBe('true')
+    expect(container.querySelector('#xhs-settings-font-panel [aria-label="选择文章字号"]')).not.toBeNull()
+    await act(async () => layoutTrigger.click())
+    expect(layoutTrigger.getAttribute('aria-expanded')).toBe('true')
+    expect(fontTrigger.getAttribute('aria-expanded')).toBe('false')
     const cleanTemplate = Array.from(container.querySelectorAll<HTMLButtonElement>('.xhs-template-options button'))
-      .find(button => button.textContent?.includes('纯净'))!
+      .find(button => button.textContent?.includes('留白社论'))!
     await act(async () => cleanTemplate.dispatchEvent(new MouseEvent('click', { bubbles: true })))
 
     const visibleCard = container.querySelector<HTMLElement>('.xhs-stage .xhs-card-page')!
     expect(visibleCard.classList.contains('template-clean')).toBe(true)
-    expect(visibleCard.querySelector('.xhs-card-accent')).toBeNull()
-    expect(visibleCard.querySelector('.xhs-card-index')).toBeNull()
-    expect(visibleCard.querySelector('footer')).toBeNull()
+    expect(visibleCard.querySelector('.xhs-card-index')).not.toBeNull()
+    expect(visibleCard.querySelector('footer')).not.toBeNull()
 
     const spreadButton = container.querySelector<HTMLButtonElement>('button[aria-label="双页预览"]')!
     await act(async () => spreadButton.dispatchEvent(new MouseEvent('click', { bubbles: true })))

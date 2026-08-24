@@ -17,6 +17,14 @@ describe('normalizeXhsCardSettings', () => {
     })
   })
 
+  it.each(['index', 'headline'] as const)('preserves the %s card template', (template) => {
+    expect(normalizeXhsCardSettings({ template }).template).toBe(template)
+  })
+
+  it('falls back to focus for an invalid card template', () => {
+    expect(normalizeXhsCardSettings({ template: 'unknown' }).template).toBe('focus')
+  })
+
   it('drops invalid image overrides and clamps valid widths by layout', () => {
     expect(normalizeXhsCardSettings({
       imageOverrides: {

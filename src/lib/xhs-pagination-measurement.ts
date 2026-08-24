@@ -71,6 +71,7 @@ export function createXhsCardPageMeasurer(options: XhsCardMeasurementOptions): X
     if (cached !== undefined) return cached
 
     page.replaceChildren()
+    page.classList.toggle('is-cover', pageIndex === 0)
     if (pageIndex === 0) {
       const title = document.createElement('h1')
       title.textContent = options.title || '未命名文章'

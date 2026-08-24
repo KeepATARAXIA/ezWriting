@@ -155,10 +155,18 @@ const PREVIEW_PLATFORMS: Array<{ id: PreviewPlatform; label: string; accessibleL
   { id: 'x', label: 'X', accessibleLabel: 'X 长文', logo: xLogo },
 ]
 
-const DEFAULT_EDITOR_PANE_PERCENT = 55
+type EditorPanePercents = Record<PreviewPlatform, number>
+
+const LEGACY_DEFAULT_EDITOR_PANE_PERCENT = 55
+const DEFAULT_EDITOR_PANE_PERCENT_BY_PLATFORM: EditorPanePercents = {
+  wechat: 44,
+  xhs: 42,
+  x: 40,
+}
 const MIN_EDITOR_PANE_PERCENT = 32
 const MAX_EDITOR_PANE_PERCENT = 68
-const EDITOR_PANE_STORAGE_KEY = 'dispatch.editor-pane-percent.v2'
+const EDITOR_PANE_STORAGE_KEY = 'dispatch.editor-pane-percent.v3'
+const LEGACY_EDITOR_PANE_STORAGE_KEY = 'dispatch.editor-pane-percent.v2'
 const HISTORY_SIDEBAR_STORAGE_KEY = 'dispatch.history-sidebar-expanded.v1'
 const AUTOSAVE_DELAY_MS = 700
 
@@ -178,18 +186,49 @@ function clampEditorPanePercent(value: number): number {
   return Math.min(MAX_EDITOR_PANE_PERCENT, Math.max(MIN_EDITOR_PANE_PERCENT, Math.round(value)))
 }
 
-function readEditorPanePercent(): number {
+function articleFormattingForTarget(formatting: ArticleFormatting, target: PlatformContentTarget): ArticleFormatting {
+  if (target === 'x' || formatting.theme === 'clean') return formatting
+  return { ...formatting, theme: 'clean' }
+}
+
+function readEditorPanePercents(): EditorPanePercents {
+  const defaults = { ...DEFAULT_EDITOR_PANE_PERCENT_BY_PLATFORM }
   try {
-    const saved = Number(window.localStorage.getItem(EDITOR_PANE_STORAGE_KEY))
-    return Number.isFinite(saved) && saved > 0 ? clampEditorPanePercent(saved) : DEFAULT_EDITOR_PANE_PERCENT
+    const saved = window.localStorage.getItem(EDITOR_PANE_STORAGE_KEY)
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved) as Partial<Record<PreviewPlatform, unknown>>
+        if (parsed && typeof parsed === 'object') {
+          let hasValidPlatformValue = false
+          const normalized = PREVIEW_PLATFORMS.reduce<EditorPanePercents>((result, platform) => {
+            const value = parsed[platform.id]
+            if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+              result[platform.id] = clampEditorPanePercent(value)
+              hasValidPlatformValue = true
+            }
+            return result
+          }, defaults)
+          if (hasValidPlatformValue) return normalized
+        }
+      } catch {
+        // Fall through to the legacy preference when the v3 mapping is malformed.
+      }
+    }
+
+    const legacySaved = Number(window.localStorage.getItem(LEGACY_EDITOR_PANE_STORAGE_KEY))
+    if (Number.isFinite(legacySaved) && legacySaved > 0) {
+      const legacyPercent = clampEditorPanePercent(legacySaved)
+      if (legacyPercent !== LEGACY_DEFAULT_EDITOR_PANE_PERCENT) defaults.wechat = legacyPercent
+    }
+    return defaults
   } catch {
-    return DEFAULT_EDITOR_PANE_PERCENT
+    return defaults
   }
 }
 
-function saveEditorPanePercent(value: number): void {
+function saveEditorPanePercents(value: EditorPanePercents): void {
   try {
-    window.localStorage.setItem(EDITOR_PANE_STORAGE_KEY, String(value))
+    window.localStorage.setItem(EDITOR_PANE_STORAGE_KEY, JSON.stringify(value))
   } catch {
     // The layout still works when storage is unavailable.
   }
@@ -420,7 +459,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   const [isDragging, setIsDragging] = useState(false)
   const [activePlatform, setActivePlatform] = useState<PreviewPlatform>('wechat')
   const [formatting, setFormatting] = useState<ArticleFormatting>(DEFAULT_ARTICLE_FORMATTING)
-  const [editorPanePercent, setEditorPanePercent] = useState(readEditorPanePercent)
+  const [editorPanePercents, setEditorPanePercents] = useState(readEditorPanePercents)
   const [editorFocusRequest, setEditorFocusRequest] = useState<SourceEditorFocusRequest | null>(null)
   const [previewLocateRequest, setPreviewLocateRequest] = useState<PreviewLocateRequest | null>(null)
   const [activeEditorBlockIndex, setActiveEditorBlockIndex] = useState<number | null>(null)
@@ -442,8 +481,9 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   const importContextRef = useRef<ImportContext | null>(null)
   const bridgeRequestRef = useRef(0)
   const editorGridRef = useRef<HTMLDivElement>(null)
-  const editorPanePercentRef = useRef(editorPanePercent)
+  const editorPanePercentsRef = useRef(editorPanePercents)
   const paneResizeActiveRef = useRef(false)
+  const paneResizePlatformRef = useRef<PreviewPlatform | null>(null)
   const titleInputRef = useRef<HTMLInputElement>(null)
   const resourcesPanelRef = useRef<HTMLElement>(null)
   const focusRequestIdRef = useRef(0)
@@ -1095,53 +1135,59 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     setSelectedIds(current => current.includes(id) ? current.filter(item => item !== id) : [...current, id])
   }
 
-  const updateEditorPanePercent = (value: number, persist = false) => {
+  const editorPanePercent = editorPanePercents[activePlatform]
+
+  const updateEditorPanePercent = (value: number, persist = false, platform = activePlatform) => {
     const next = clampEditorPanePercent(value)
-    editorPanePercentRef.current = next
-    setEditorPanePercent(next)
-    if (persist) saveEditorPanePercent(next)
+    const nextPercents = { ...editorPanePercentsRef.current, [platform]: next }
+    editorPanePercentsRef.current = nextPercents
+    setEditorPanePercents(nextPercents)
+    if (persist) saveEditorPanePercents(nextPercents)
   }
 
-  const resizeEditorPane = (clientX: number) => {
+  const resizeEditorPane = (clientX: number, platform: PreviewPlatform) => {
     const grid = editorGridRef.current
     if (!grid) return
     const bounds = grid.getBoundingClientRect()
     if (!bounds.width) return
-    updateEditorPanePercent(((clientX - bounds.left) / bounds.width) * 100)
+    updateEditorPanePercent(((clientX - bounds.left) / bounds.width) * 100, false, platform)
   }
 
   const startPaneResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault()
     paneResizeActiveRef.current = true
+    paneResizePlatformRef.current = activePlatform
     event.currentTarget.setPointerCapture?.(event.pointerId)
     document.body.classList.add('is-resizing-panes')
-    resizeEditorPane(event.clientX)
+    resizeEditorPane(event.clientX, activePlatform)
   }
 
   const movePaneResize = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!paneResizeActiveRef.current) return
-    resizeEditorPane(event.clientX)
+    const platform = paneResizePlatformRef.current
+    if (!paneResizeActiveRef.current || !platform) return
+    resizeEditorPane(event.clientX, platform)
   }
 
   const finishPaneResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (!paneResizeActiveRef.current) return
     paneResizeActiveRef.current = false
+    paneResizePlatformRef.current = null
     if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId)
     }
     document.body.classList.remove('is-resizing-panes')
-    saveEditorPanePercent(editorPanePercentRef.current)
+    saveEditorPanePercents(editorPanePercentsRef.current)
   }
 
   const adjustPaneWithKeyboard = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    let next = editorPanePercentRef.current
+    let next = editorPanePercentsRef.current[activePlatform]
     if (event.key === 'ArrowLeft') next -= 2
     else if (event.key === 'ArrowRight') next += 2
     else if (event.key === 'Home') next = MIN_EDITOR_PANE_PERCENT
     else if (event.key === 'End') next = MAX_EDITOR_PANE_PERCENT
     else return
     event.preventDefault()
-    updateEditorPanePercent(next, true)
+    updateEditorPanePercent(next, true, activePlatform)
   }
 
   const locateEditorField = (element: HTMLElement | null, focusTarget?: HTMLElement | null) => {
@@ -1343,7 +1389,6 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
       return
     }
     const normalizedArticle = { ...article, html: sanitizedHtml }
-    const formattedHtml = applyArticleFormatting(sanitizedHtml, formatting)
     const targetForAccount = (account: PlatformAccount): PlatformContentTarget => {
       if (accountMatchesPreview(account, 'wechat')) return 'wechat'
       if (accountMatchesPreview(account, 'xhs')) return 'xhs'
@@ -1351,8 +1396,10 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
       return 'generic'
     }
     const buildPlatformArticle = (target: PlatformContentTarget): ArticleDraft => {
+      const targetFormatting = articleFormattingForTarget(formatting, target)
+      const formattedHtml = applyArticleFormatting(sanitizedHtml, targetFormatting)
       const themedHtml = target === 'wechat'
-        ? applyWechatTheme(formattedHtml, formatting.wechat, formatting)
+        ? applyWechatTheme(formattedHtml, targetFormatting.wechat, targetFormatting)
         : formattedHtml
       return {
         ...normalizedArticle,
@@ -1455,11 +1502,18 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   const deferredArticleHtml = useDeferredValue(articleHtml)
   const deferredFormatting = useDeferredValue(formatting)
   const isPreviewUpdating = deferredArticleHtml !== articleHtml || deferredFormatting !== formatting
+  const previewFormatting = useMemo(
+    () => articleFormattingForTarget(formatting, activePlatform),
+    [activePlatform, formatting],
+  )
   const previewHtml = useMemo(
     () => deferredArticleHtml
-      ? applyArticleFormatting(sanitizeEditedHtml(deferredArticleHtml), deferredFormatting)
+      ? applyArticleFormatting(
+          sanitizeEditedHtml(deferredArticleHtml),
+          articleFormattingForTarget(deferredFormatting, activePlatform),
+        )
       : '',
-    [deferredArticleHtml, deferredFormatting],
+    [activePlatform, deferredArticleHtml, deferredFormatting],
   )
   const articleSource = useMemo(
     () => article ? resolveArticleSource(article) : null,
@@ -1482,11 +1536,12 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
           <span>EZWRITING</span>
         </a>
         {article ? (
-          <div className="topbar-workbench">
-            <div className="workbench-navigation">
+          <div className="topbar-workbench" role="group" aria-label="工作台操作">
+            <nav className="workbench-navigation topbar-command-flow" aria-label="新建、平台与视图">
               <button
                 type="button"
-                className="new-document-button"
+                className="new-document-button topbar-document-command"
+                data-topbar-group="new"
                 aria-label="新建文档"
                 onClick={() => void createNewArticle()}
                 disabled={workState === 'parsing' || isOperationLocked}
@@ -1496,7 +1551,30 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                 <span>新建</span>
               </button>
 
-              <div className="workspace-mode-switcher" role="group" aria-label="工作区显示方式">
+              <span className="workbench-navigation-divider" aria-hidden="true" />
+
+              <div className="platform-switcher topbar-platform-group" data-topbar-group="platform" role="tablist" aria-label="选择预览平台">
+                {PREVIEW_PLATFORMS.map(platform => (
+                  <button
+                    type="button"
+                    role="tab"
+                    key={platform.id}
+                    aria-label={platform.accessibleLabel}
+                    aria-selected={activePlatform === platform.id}
+                    aria-controls="platform-preview-panel"
+                    className={activePlatform === platform.id ? 'active' : ''}
+                    disabled={isOperationLocked}
+                    onClick={() => setActivePlatform(platform.id)}
+                  >
+                    <span className={`platform-logo ${platform.id}`} aria-hidden="true"><img src={platform.logo} alt="" /></span>
+                    <strong>{platform.label}</strong>
+                  </button>
+                ))}
+              </div>
+
+              <span className="workbench-navigation-divider" aria-hidden="true" />
+
+              <div className="workspace-mode-switcher topbar-view-group" data-topbar-group="view" role="group" aria-label="工作区显示方式">
                 <button
                   type="button"
                   className={workspaceMode === 'editor' ? 'active' : ''}
@@ -1522,33 +1600,13 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                   onClick={() => setWorkspaceMode('preview')}
                 ><PanelRight size={17} /></button>
               </div>
+            </nav>
 
-              <span className="workbench-navigation-divider" aria-hidden="true" />
-
-              <div className="platform-switcher" role="tablist" aria-label="选择预览平台">
-                {PREVIEW_PLATFORMS.map(platform => (
-                  <button
-                    type="button"
-                    role="tab"
-                    key={platform.id}
-                    aria-label={platform.accessibleLabel}
-                    aria-selected={activePlatform === platform.id}
-                    aria-controls="platform-preview-panel"
-                    className={activePlatform === platform.id ? 'active' : ''}
-                    disabled={isOperationLocked}
-                    onClick={() => setActivePlatform(platform.id)}
-                  >
-                    <span className={`platform-logo ${platform.id}`} aria-hidden="true"><img src={platform.logo} alt="" /></span>
-                    <strong>{platform.label}</strong>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="workbench-actions">
+            <div className="workbench-actions" role="group" aria-label="发布状态与操作">
               <button
                 type="button"
-                className={`extension-chip ${bridgeState}`}
+                className={`extension-chip topbar-status-command ${bridgeState}`}
+                data-topbar-group="status"
                 onClick={handleBridgeStatusClick}
                 disabled={bridgeState === 'checking' || isOperationLocked}
                 aria-label={bridgeState === 'missing' || bridgeState === 'error' ? '打开发布引擎安装指引' : '重新检测发布引擎'}
@@ -1562,22 +1620,24 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                 {bridgeState === 'checking' ? '正在连接发布引擎' : bridgeState === 'connected' ? `引擎已就绪 · ${accounts.length} 平台` : bridgeState === 'error' ? '引擎连接异常' : '引擎待连接'}
               </button>
 
-              <DispatchControls
-                accounts={accounts}
-                bridgeError={bridgeError}
-                bridgeState={bridgeState}
-                hasArticle={hasPublishableArticle}
-                installGuide={installGuide}
-                interactionLocked={isOperationLocked}
-                isOpen={isDispatchDrawerOpen}
-                results={results}
-                selectedIds={selectedIds}
-                workState={workState}
-                onOpenChange={setIsDispatchDrawerOpen}
-                onPublish={() => void handlePublish()}
-                onRefresh={() => void refreshBridge()}
-                onTogglePlatform={togglePlatform}
-              />
+              <div className="topbar-publish-group" data-topbar-group="publish" role="group" aria-label="发布操作">
+                <DispatchControls
+                  accounts={accounts}
+                  bridgeError={bridgeError}
+                  bridgeState={bridgeState}
+                  hasArticle={hasPublishableArticle}
+                  installGuide={installGuide}
+                  interactionLocked={isOperationLocked}
+                  isOpen={isDispatchDrawerOpen}
+                  results={results}
+                  selectedIds={selectedIds}
+                  workState={workState}
+                  onOpenChange={setIsDispatchDrawerOpen}
+                  onPublish={() => void handlePublish()}
+                  onRefresh={() => void refreshBridge()}
+                  onTogglePlatform={togglePlatform}
+                />
+              </div>
             </div>
             <input
               ref={missingImageInputRef}
@@ -1734,6 +1794,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
               <div
                 ref={editorGridRef}
                 className={`editor-grid workspace-mode-${workspaceMode}`}
+                data-preview-platform={activePlatform}
                 style={{ '--editor-pane-width': `${editorPanePercent}%` } as CSSProperties}
               >
                   <section className="paper-panel">
@@ -1937,12 +1998,12 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                     aria-valuemax={MAX_EDITOR_PANE_PERCENT}
                     aria-valuenow={editorPanePercent}
                     aria-valuetext={`编辑区 ${editorPanePercent}%，预览区 ${100 - editorPanePercent}%`}
-                    title="拖动调整宽度，双击恢复默认比例"
+                    title="拖动调整宽度，双击恢复当前平台默认比例"
                     onPointerDown={startPaneResize}
                     onPointerMove={movePaneResize}
                     onPointerUp={finishPaneResize}
                     onPointerCancel={finishPaneResize}
-                    onDoubleClick={() => updateEditorPanePercent(DEFAULT_EDITOR_PANE_PERCENT, true)}
+                    onDoubleClick={() => updateEditorPanePercent(DEFAULT_EDITOR_PANE_PERCENT_BY_PLATFORM[activePlatform], true, activePlatform)}
                     onKeyDown={adjustPaneWithKeyboard}
                   >
                     <span aria-hidden="true" />
@@ -1959,8 +2020,12 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                             html={previewHtml}
                             sourceText={articleSource?.text}
                             sourceLanguage={articleSource?.language}
-                            formatting={formatting}
-                            onFormattingChange={updateArticleFormatting}
+                            formatting={previewFormatting}
+                            onFormattingChange={nextFormatting => updateArticleFormatting(
+                              activePlatform === 'x'
+                                ? nextFormatting
+                                : { ...nextFormatting, theme: formatting.theme },
+                            )}
                             xhsSettings={xhsSettings}
                             onXhsSettingsChange={updateXhsCardSettings}
                             previewAccount={previewAccount}

@@ -2,6 +2,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_ARTICLE_FORMATTING } from '../domain/formatting'
+import type { XhsCardSettings } from '../domain/saved-draft'
 import * as xhsExport from '../lib/xhs-export'
 import * as xhsPagination from '../lib/xhs-pagination'
 import * as wechatTheme from '../lib/wechat-theme'
@@ -122,7 +123,7 @@ describe('PlatformPreviews editor-to-preview locating', () => {
     expect(container.querySelector('.preview-sync-status')?.classList.contains('updating')).toBe(true)
   })
 
-  it('defaults WeChat themes to the compact category, keeps All last, and shares article formatting controls', async () => {
+  it('defaults WeChat themes to the compact category, keeps All last, and removes the duplicate generic layout control', async () => {
     const onFormattingChange = vi.fn()
     await act(async () => {
       root.render(
@@ -146,9 +147,15 @@ describe('PlatformPreviews editor-to-preview locating', () => {
     expect(container.querySelectorAll('.wechat-theme-card').length).toBeLessThan(26)
     expect(container.querySelector('.wechat-layout')?.classList.contains('tool-rail-open')).toBe(true)
     expect(container.querySelector('.wechat-viewport')?.nextElementSibling?.classList.contains('preview-tool-resizer')).toBe(true)
-    expect(container.querySelector('.preview-context-actions')?.textContent).not.toContain('公众号主题')
+    expect(container.querySelector('.preview-context-actions .preview-settings-toggle')?.textContent).toContain('设置')
     expect(container.querySelector('[data-wechat-theme="literary"]')).not.toBeNull()
+    expect(container.querySelector('#wechat-settings-layout-trigger')?.getAttribute('aria-expanded')).toBe('true')
+    expect(container.querySelectorAll('#wechat-theme-panel .settings-accordion-trigger')).toHaveLength(4)
+    expect(container.querySelector('#wechat-settings-layout-panel [aria-label="选择文章版式"]')).toBeNull()
 
+    await act(async () => container.querySelector<HTMLButtonElement>('#wechat-settings-spacing-trigger')?.click())
+    expect(container.querySelector('#wechat-settings-layout-trigger')?.getAttribute('aria-expanded')).toBe('false')
+    expect(container.querySelector('#wechat-settings-spacing-trigger')?.getAttribute('aria-expanded')).toBe('true')
     const lineHeightControls = container.querySelector<HTMLElement>('[aria-label="选择文章行距"]')!
     const airyButton = Array.from(lineHeightControls.querySelectorAll<HTMLButtonElement>('button')).find(button => button.textContent === '宽松')!
     await act(async () => airyButton.click())
@@ -227,17 +234,16 @@ describe('PlatformPreviews editor-to-preview locating', () => {
     await act(async () => container.querySelector<HTMLElement>('[data-source-block="1"]')?.click())
     expect(onEditTarget).toHaveBeenCalledWith({ kind: 'body', blockIndex: 1 })
     expect(container.querySelector('.preview-edit-action')).toBeNull()
-    expect(container.querySelector('.x-layout')?.classList.contains('tool-rail-open')).toBe(true)
-    expect(container.querySelector('.preview-context-actions')?.textContent).not.toContain('X 长文排版')
-
-    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="收起 X 长文排版侧栏"]')?.click())
     expect(container.querySelector('.x-layout')?.classList.contains('tool-rail-open')).toBe(false)
-    const collapsedXPanel = container.querySelector<HTMLElement>('#x-formatting-panel')!
-    expect(collapsedXPanel.hidden).toBe(true)
+    expect(container.querySelector<HTMLElement>('#x-formatting-panel')?.hidden).toBe(true)
+    expect(container.querySelector('.preview-tool-collapsed-rail')).toBeNull()
 
     await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="展开 X 长文排版侧栏"]')?.click())
     expect(container.querySelector('.x-layout')?.classList.contains('tool-rail-open')).toBe(true)
     expect(container.querySelector<HTMLElement>('#x-formatting-panel')?.hidden).toBe(false)
+
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="收起 X 长文排版侧栏"]')?.click())
+    expect(container.querySelector('.x-layout')?.classList.contains('tool-rail-open')).toBe(false)
   })
 
   it('renders source spacers without shifting the following editable block mapping', async () => {
@@ -275,12 +281,15 @@ describe('PlatformPreviews editor-to-preview locating', () => {
       />,
     ))
 
-    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="收起公众号主题侧栏"]')?.click())
+    const wechatToggle = container.querySelector<HTMLButtonElement>('.preview-context-actions button[aria-label="收起公众号排版侧栏"]')!
+    expect(wechatToggle.getAttribute('aria-expanded')).toBe('true')
+    await act(async () => wechatToggle.click())
     expect(container.querySelector('.wechat-layout')?.classList.contains('tool-rail-open')).toBe(false)
     expect(container.querySelector<HTMLElement>('#wechat-theme-panel')?.hidden).toBe(true)
-    expect(container.querySelector<HTMLButtonElement>('button[aria-label="展开公众号主题侧栏"]')).not.toBeNull()
+    expect(container.querySelector('.preview-tool-collapsed-rail')).toBeNull()
+    expect(container.querySelector<HTMLButtonElement>('.preview-context-actions button[aria-label="展开公众号排版侧栏"]')).not.toBeNull()
 
-    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="展开公众号主题侧栏"]')?.click())
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="展开公众号排版侧栏"]')?.click())
     expect(container.querySelector('.wechat-layout')?.classList.contains('tool-rail-open')).toBe(true)
 
     await act(async () => root.render(
@@ -299,27 +308,195 @@ describe('PlatformPreviews editor-to-preview locating', () => {
     const xhsResizer = container.querySelector<HTMLElement>('[aria-label="调整小红书工具侧栏宽度"]')
     expect(xhsResizer?.getAttribute('role')).toBe('separator')
     expect(xhsResizer?.nextElementSibling?.id).toBe('xhs-tool-panel')
-    expect(container.querySelector('[aria-label="小红书样式与排版"]')).not.toBeNull()
-    expect(Array.from(container.querySelectorAll('button')).some(button => button.textContent === '卡片样式')).toBe(false)
-    const largeFontButton = Array.from(container.querySelectorAll<HTMLButtonElement>('[aria-label="小红书样式与排版"] [aria-label="选择文章字号"] button'))
+    const templateLabels = Array.from(container.querySelectorAll<HTMLElement>('[aria-label="小红书视觉模板"] .xhs-template-copy strong'))
+      .map(label => label.textContent)
+    expect(templateLabels).toEqual(['留白社论', '经典月刊', '蓝线简报', '索引期刊', '专题头条'])
+    expect(container.querySelectorAll('[aria-label="选择卡片模板"] [role="radio"]')).toHaveLength(5)
+    expect(container.querySelector('#xhs-settings-layout-panel [aria-label="选择文章版式"]')).toBeNull()
+
+    const xhsLayoutTrigger = container.querySelector<HTMLButtonElement>('#xhs-settings-layout-trigger')!
+    const xhsFontTrigger = container.querySelector<HTMLButtonElement>('#xhs-settings-font-trigger')!
+    expect(container.querySelectorAll('#xhs-tool-panel .settings-accordion-trigger')).toHaveLength(4)
+    expect(xhsLayoutTrigger.getAttribute('aria-expanded')).toBe('true')
+    await act(async () => xhsFontTrigger.click())
+    expect(xhsLayoutTrigger.getAttribute('aria-expanded')).toBe('false')
+    expect(xhsFontTrigger.getAttribute('aria-expanded')).toBe('true')
+    expect(container.querySelectorAll('#xhs-tool-panel .settings-accordion-panel:not([hidden])')).toHaveLength(1)
+    await act(async () => xhsFontTrigger.click())
+    expect(container.querySelectorAll('#xhs-tool-panel .settings-accordion-panel:not([hidden])')).toHaveLength(0)
+    await act(async () => xhsFontTrigger.click())
+    const largeFontButton = Array.from(container.querySelectorAll<HTMLButtonElement>('#xhs-settings-font-panel [aria-label="选择文章字号"] button'))
       .find(button => button.textContent === '大')!
     await act(async () => largeFontButton.click())
     expect(onFormattingChange).toHaveBeenCalledWith(expect.objectContaining({ fontSize: 'large' }))
+    expect(container.querySelector('[aria-label="小红书输出信息"]')?.textContent).toContain('输出信息')
     expect(Array.from(container.querySelectorAll<HTMLButtonElement>('.xhs-card-footer-actions button')).map(button => button.textContent)).toEqual(['放大查看', '下载当前页'])
     expect(container.querySelector('.xhs-download-tools .xhs-card-footer-actions')).toBeNull()
+    expect(container.querySelector('.xhs-download-tools')?.classList.contains('preview-tool-rail-footer')).toBe(true)
     expect(Array.from(container.querySelectorAll<HTMLButtonElement>('.xhs-download-tools button')).map(button => button.textContent)).toEqual(['下载全部图片'])
 
-    await act(async () => Array.from(container.querySelectorAll<HTMLButtonElement>('[aria-label="切换小红书预览方式"] button'))
+    const xhsViewSwitcher = container.querySelector<HTMLElement>('.preview-context-actions [aria-label="切换小红书预览方式"]')!
+    expect(container.querySelector('#xhs-tool-panel [aria-label="切换小红书预览方式"]')).toBeNull()
+    await act(async () => Array.from(xhsViewSwitcher.querySelectorAll<HTMLButtonElement>('button'))
       .find(button => button.textContent === '双页')?.click())
     expect(container.querySelectorAll('.xhs-card-spread .xhs-card-footer-actions')).toHaveLength(1)
 
-    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="收起小红书工具侧栏"]')?.click())
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="收起小红书设置侧栏"]')?.click())
     expect(container.querySelector('.xhs-layout')?.classList.contains('tool-rail-open')).toBe(false)
     expect(container.querySelector<HTMLElement>('#xhs-tool-panel')?.hidden).toBe(true)
+    expect(container.querySelector('.preview-tool-collapsed-rail')).toBeNull()
 
-    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="展开小红书工具侧栏"]')?.click())
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="展开小红书设置侧栏"]')?.click())
     expect(container.querySelector('.xhs-layout')?.classList.contains('tool-rail-open')).toBe(true)
     expect(container.querySelector<HTMLElement>('#xhs-tool-panel')?.hidden).toBe(false)
+  })
+
+  it('keeps one controlled formatting module open per platform and remembers each platform selection', async () => {
+    const formatting = {
+      ...DEFAULT_ARTICLE_FORMATTING,
+      wechat: { ...DEFAULT_ARTICLE_FORMATTING.wechat, themeId: 'night-film' as const },
+    }
+    const renderPlatform = async (activePlatform: 'wechat' | 'xhs' | 'x') => {
+      await act(async () => root.render(
+        <PlatformPreviews
+          activePlatform={activePlatform}
+          title="Accordion memory"
+          html="<p>Body</p>"
+          formatting={formatting}
+          previewDevice="desktop"
+          onPreviewDeviceChange={vi.fn()}
+        />,
+      ))
+    }
+
+    await renderPlatform('wechat')
+    const wechatColorTrigger = container.querySelector<HTMLButtonElement>('#wechat-settings-color-trigger')!
+    const wechatColorPanelId = wechatColorTrigger.getAttribute('aria-controls')!
+    await act(async () => wechatColorTrigger.click())
+    expect(wechatColorTrigger.getAttribute('aria-expanded')).toBe('true')
+    expect(container.querySelector(`#${wechatColorPanelId}`)?.getAttribute('role')).toBe('region')
+    expect(container.querySelector(`#${wechatColorPanelId}`)?.getAttribute('aria-labelledby')).toBe(wechatColorTrigger.id)
+    expect(container.querySelector('#wechat-settings-color-panel')?.textContent).toContain('重置配色')
+    expect(container.querySelectorAll('#wechat-settings-color-panel input[type="color"]').length).toBeGreaterThan(0)
+
+    await renderPlatform('xhs')
+    expect(container.querySelector('#xhs-settings-layout-trigger')?.getAttribute('aria-expanded')).toBe('true')
+    await act(async () => container.querySelector<HTMLButtonElement>('#xhs-settings-font-trigger')?.click())
+    expect(container.querySelector('#xhs-settings-font-trigger')?.getAttribute('aria-expanded')).toBe('true')
+
+    await renderPlatform('wechat')
+    expect(container.querySelector('#wechat-settings-color-trigger')?.getAttribute('aria-expanded')).toBe('true')
+    expect(container.querySelectorAll('#wechat-theme-panel .settings-accordion-panel:not([hidden])')).toHaveLength(1)
+
+    await renderPlatform('xhs')
+    expect(container.querySelector('#xhs-settings-font-trigger')?.getAttribute('aria-expanded')).toBe('true')
+    expect(container.querySelectorAll('#xhs-tool-panel .settings-accordion-panel:not([hidden])')).toHaveLength(1)
+  })
+
+  it('honors a saved X rail preference and keeps the three generic layouts only on X', async () => {
+    window.localStorage.setItem('dispatch.preview-tool-rail-open.v1', JSON.stringify({ wechat: true, xhs: true, x: true }))
+
+    await act(async () => root.render(
+      <PlatformPreviews
+        activePlatform="x"
+        title="Saved X rail"
+        html="<p>Body</p>"
+        formatting={DEFAULT_ARTICLE_FORMATTING}
+        previewDevice="desktop"
+        onPreviewDeviceChange={vi.fn()}
+      />,
+    ))
+
+    expect(container.querySelector('.x-layout')?.classList.contains('tool-rail-open')).toBe(true)
+    expect(container.querySelector<HTMLElement>('#x-formatting-panel')?.hidden).toBe(false)
+    expect(container.querySelectorAll('#x-formatting-panel .settings-accordion-trigger')).toHaveLength(4)
+    expect(container.querySelector('#x-settings-layout-trigger')?.getAttribute('aria-expanded')).toBe('true')
+    expect(container.querySelectorAll('#x-settings-layout-panel [aria-label="选择文章版式"] [role="radio"]')).toHaveLength(3)
+    expect(container.querySelector('#x-formatting-panel [aria-label="选择卡片模板"]')).toBeNull()
+    expect(container.querySelector('#x-formatting-panel .wechat-theme-grid')).toBeNull()
+  })
+
+  it('groups 31 Xiaohongshu cards into compact non-overlapping page ranges', async () => {
+    vi.spyOn(xhsPagination, 'paginateForXhsCards').mockReturnValue(
+      Array.from({ length: 31 }, (_, index) => `<p data-source-block="${index}">第 ${index + 1} 张卡片</p>`),
+    )
+
+    await act(async () => root.render(
+      <PlatformPreviews
+        activePlatform="xhs"
+        title="分组跳页"
+        html="<p>Body</p>"
+        formatting={DEFAULT_ARTICLE_FORMATTING}
+        previewDevice="desktop"
+        onPreviewDeviceChange={vi.fn()}
+      />,
+    ))
+
+    const pageJump = container.querySelector<HTMLButtonElement>('.xhs-page-jump-trigger')!
+    expect(pageJump.textContent).toContain('01–10')
+    expect(pageJump.textContent).toContain('01 / 31')
+    expect(pageJump.getAttribute('aria-expanded')).toBe('false')
+    expect(container.querySelector('[aria-label="选择卡片页码"]')).toBeNull()
+
+    await act(async () => pageJump.click())
+    expect(pageJump.getAttribute('aria-expanded')).toBe('true')
+    expect(Array.from(container.querySelectorAll<HTMLButtonElement>('[aria-label="选择卡片范围"] button')).map(button => button.textContent))
+      .toEqual(['01–10', '11–20', '21–30', '31'])
+    expect(Array.from(container.querySelectorAll<HTMLButtonElement>('[aria-label="选择具体卡片"] button')).map(button => button.textContent))
+      .toEqual(['01', '02', '03', '04', '05', '06', '07', '08', '09', '10'])
+
+    const secondRange = Array.from(container.querySelectorAll<HTMLButtonElement>('[aria-label="选择卡片范围"] button'))
+      .find(button => button.textContent === '11–20')!
+    await act(async () => secondRange.click())
+    expect(Array.from(container.querySelectorAll<HTMLButtonElement>('[aria-label="选择具体卡片"] button')).map(button => button.textContent))
+      .toEqual(['11', '12', '13', '14', '15', '16', '17', '18', '19', '20'])
+
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="查看第 17 张卡片"]')?.click())
+    expect(container.querySelector('[aria-label="选择卡片页码"]')).toBeNull()
+    expect(container.querySelector('.xhs-page-jump-trigger')?.textContent).toContain('17 / 31')
+    expect(container.querySelector('.xhs-stage .xhs-card-content')?.textContent).toContain('第 17 张卡片')
+
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="双页预览"]')?.click())
+    expect(container.querySelector('.xhs-page-jump-trigger')?.textContent).toContain('17–18 / 31')
+
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="整体预览"]')?.click())
+    expect(container.querySelector('.xhs-page-navigator')).toBeNull()
+  })
+
+  it('keeps page number, footer, signature, and image overrides when switching Xiaohongshu templates', async () => {
+    const onXhsSettingsChange = vi.fn()
+    const xhsSettings: XhsCardSettings = {
+      template: 'clean',
+      showPageNumber: false,
+      showFooter: false,
+      footerText: '独立署名',
+      imageOverrides: {
+        'xhs-image-1': { layout: 'image-right', widthPercent: 52 },
+      },
+    }
+
+    await act(async () => root.render(
+      <PlatformPreviews
+        activePlatform="xhs"
+        title="模板设置"
+        html="<p>Body</p>"
+        formatting={DEFAULT_ARTICLE_FORMATTING}
+        xhsSettings={xhsSettings}
+        onXhsSettingsChange={onXhsSettingsChange}
+        previewDevice="desktop"
+        onPreviewDeviceChange={vi.fn()}
+      />,
+    ))
+
+    const headlineTemplate = Array.from(container.querySelectorAll<HTMLButtonElement>('[aria-label="选择卡片模板"] button'))
+      .find(button => button.textContent?.includes('专题头条'))!
+    await act(async () => headlineTemplate.click())
+
+    expect(onXhsSettingsChange).toHaveBeenCalledTimes(1)
+    expect(onXhsSettingsChange).toHaveBeenCalledWith({
+      ...xhsSettings,
+      template: 'headline',
+    })
   })
 
   it('selects a Xiaohongshu image and edits its layout and width without editing the source body', async () => {

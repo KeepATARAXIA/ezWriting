@@ -10,12 +10,14 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
   type UIEvent,
 } from 'react'
 import {
   BatteryFull,
   Bookmark,
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Columns2,
@@ -89,6 +91,7 @@ export interface PreviewLocateRequest {
 
 type XhsPreviewMode = 'single' | 'spread' | 'all'
 type WechatCopyState = 'idle' | 'copying' | 'success' | 'error'
+type FormattingSection = 'layout' | 'font' | 'spacing' | 'color'
 
 interface XhsImagePopoverPosition {
   key: string
@@ -116,9 +119,11 @@ interface PlatformPreviewsProps {
 }
 
 const XHS_TEMPLATE_OPTIONS: Array<{ value: XhsCardTemplate; label: string; detail: string }> = [
-  { value: 'clean', label: '纯净', detail: '只保留内容' },
-  { value: 'editorial', label: '刊物', detail: '温和纸张感' },
-  { value: 'focus', label: '重点', detail: '强调色更醒目' },
+  { value: 'clean', label: '留白社论', detail: '宽留白 · 轻标记' },
+  { value: 'editorial', label: '经典月刊', detail: '宋体标题 · 双细线' },
+  { value: 'focus', label: '蓝线简报', detail: '强调色眉题 · 强网格' },
+  { value: 'index', label: '索引期刊', detail: '大编号 · 左侧索引' },
+  { value: 'headline', label: '专题头条', detail: '超大标题 · 高对比' },
 ]
 
 const TOOL_RAIL_DEFAULT_WIDTH = 280
@@ -140,6 +145,7 @@ const XHS_IMAGE_SPLIT_MAX_WIDTH = 70
 const XHS_IMAGE_POPOVER_WIDTH = 300
 const XHS_IMAGE_POPOVER_HEIGHT = 205
 const XHS_IMAGE_POPOVER_GAP = 12
+const XHS_PAGE_RANGE_SIZE = 10
 
 interface XhsImageResizeSession {
   pointerId: number
@@ -149,6 +155,26 @@ interface XhsImageResizeSession {
   direction: -1 | 1
   layout: XhsImageLayout
   contentWidth: number
+}
+
+interface XhsPageRange {
+  start: number
+  end: number
+  label: string
+}
+
+function formatXhsPageNumber(value: number, total: number): string {
+  return String(value).padStart(Math.max(2, String(total).length), '0')
+}
+
+function createXhsPageRanges(total: number): XhsPageRange[] {
+  return Array.from({ length: Math.ceil(total / XHS_PAGE_RANGE_SIZE) }, (_, rangeIndex) => {
+    const start = rangeIndex * XHS_PAGE_RANGE_SIZE
+    const end = Math.min(total - 1, start + XHS_PAGE_RANGE_SIZE - 1)
+    const first = formatXhsPageNumber(start + 1, total)
+    const last = formatXhsPageNumber(end + 1, total)
+    return { start, end, label: start === end ? first : `${first}–${last}` }
+  })
 }
 
 function readToolRailWidth(): number {
@@ -163,9 +189,9 @@ function readToolRailWidth(): number {
 function readToolRailOpen(): Record<PreviewPlatform, boolean> {
   try {
     const value = JSON.parse(window.localStorage.getItem(TOOL_RAIL_OPEN_KEY) || '{}') as Partial<Record<PreviewPlatform, boolean>>
-    return { wechat: value.wechat ?? true, xhs: value.xhs ?? true, x: value.x ?? true }
+    return { wechat: value.wechat ?? true, xhs: value.xhs ?? true, x: value.x ?? false }
   } catch {
-    return { wechat: true, xhs: true, x: true }
+    return { wechat: true, xhs: true, x: false }
   }
 }
 
@@ -312,7 +338,7 @@ function decorateInteractiveXhsImage(pageHtml: string, selectedKey: string | nul
   return document.body.innerHTML
 }
 
-function ArticleFormattingControls({
+function FontControls({
   formatting,
   onChange,
 }: {
@@ -320,13 +346,7 @@ function ArticleFormattingControls({
   onChange?: (formatting: ArticleFormatting) => void
 }) {
   return (
-    <div className="article-formatting-controls">
-      <section className="x-formatting-section">
-        <strong>版式</strong>
-        <div className="x-formatting-options three" role="radiogroup" aria-label="选择文章版式">
-          {([['clean', '简洁'], ['editorial', '刊物'], ['wechat', '强调']] as const).map(([value, label]) => <button type="button" role="radio" aria-checked={formatting.theme === value} className={formatting.theme === value ? 'selected' : ''} key={value} onClick={() => onChange?.({ ...formatting, theme: value })}>{label}</button>)}
-        </div>
-      </section>
+    <div className="article-formatting-controls article-font-controls">
       <section className="x-formatting-section">
         <strong>字体</strong>
         <div className="x-formatting-options" role="radiogroup" aria-label="选择文章字体">
@@ -339,18 +359,121 @@ function ArticleFormattingControls({
           {([['small', '小'], ['medium', '中'], ['large', '大']] as const).map(([value, label]) => <button type="button" role="radio" aria-checked={formatting.fontSize === value} className={formatting.fontSize === value ? 'selected' : ''} key={value} onClick={() => onChange?.({ ...formatting, fontSize: value })}>{label}</button>)}
         </div>
       </section>
+    </div>
+  )
+}
+
+function SpacingControls({
+  formatting,
+  onChange,
+}: {
+  formatting: ArticleFormatting
+  onChange?: (formatting: ArticleFormatting) => void
+}) {
+  return (
+    <div className="article-formatting-controls article-spacing-controls">
       <section className="x-formatting-section">
         <strong>行距</strong>
         <div className="x-formatting-options three" role="radiogroup" aria-label="选择文章行距">
           {([['compact', '紧凑'], ['comfortable', '舒适'], ['airy', '宽松']] as const).map(([value, label]) => <button type="button" role="radio" aria-checked={formatting.lineHeight === value} className={formatting.lineHeight === value ? 'selected' : ''} key={value} onClick={() => onChange?.({ ...formatting, lineHeight: value })}>{label}</button>)}
         </div>
       </section>
+    </div>
+  )
+}
+
+function AccentControls({
+  formatting,
+  onChange,
+}: {
+  formatting: ArticleFormatting
+  onChange?: (formatting: ArticleFormatting) => void
+}) {
+  return (
+    <div className="article-formatting-controls article-color-controls">
       <section className="x-formatting-section">
         <strong>强调色</strong>
         <div className="x-accent-options" role="radiogroup" aria-label="选择文章强调色">
           {(Object.keys(ARTICLE_ACCENT_COLORS) as Array<keyof typeof ARTICLE_ACCENT_COLORS>).map(value => <button type="button" role="radio" aria-label={value} aria-checked={formatting.accent === value} className={formatting.accent === value ? 'selected' : ''} key={value} style={{ background: ARTICLE_ACCENT_COLORS[value] }} onClick={() => onChange?.({ ...formatting, accent: value })} />)}
         </div>
       </section>
+    </div>
+  )
+}
+
+const FORMATTING_SECTION_META: Array<{
+  value: FormattingSection
+  label: string
+  detail: string
+}> = [
+  { value: 'layout', label: '排版', detail: '主题与视觉结构' },
+  { value: 'font', label: '字体', detail: '字体与字号' },
+  { value: 'spacing', label: '间距', detail: '正文行距' },
+  { value: 'color', label: '颜色', detail: '强调色与主题配色' },
+]
+
+function FormattingAccordion({
+  idPrefix,
+  label,
+  openSection,
+  onSectionToggle,
+  formatting,
+  onFormattingChange,
+  layoutContent,
+  colorContent,
+}: {
+  idPrefix: string
+  label: string
+  openSection: FormattingSection | null
+  onSectionToggle: (section: FormattingSection) => void
+  formatting: ArticleFormatting
+  onFormattingChange?: (formatting: ArticleFormatting) => void
+  layoutContent: ReactNode
+  colorContent?: ReactNode
+}) {
+  const contentBySection: Record<FormattingSection, ReactNode> = {
+    layout: layoutContent,
+    font: <FontControls formatting={formatting} onChange={onFormattingChange} />,
+    spacing: <SpacingControls formatting={formatting} onChange={onFormattingChange} />,
+    color: (
+      <>
+        <AccentControls formatting={formatting} onChange={onFormattingChange} />
+        {colorContent}
+      </>
+    ),
+  }
+
+  return (
+    <div className="settings-accordion" aria-label={label}>
+      {FORMATTING_SECTION_META.map(section => {
+        const expanded = openSection === section.value
+        const triggerId = `${idPrefix}-${section.value}-trigger`
+        const panelId = `${idPrefix}-${section.value}-panel`
+        return (
+          <section className={`settings-accordion-item section-${section.value}${expanded ? ' expanded' : ''}`} key={section.value}>
+            <button
+              id={triggerId}
+              type="button"
+              className="settings-accordion-trigger"
+              aria-expanded={expanded}
+              aria-controls={panelId}
+              onClick={() => onSectionToggle(section.value)}
+            >
+              <span className="settings-accordion-copy"><strong>{section.label}</strong><small>{section.detail}</small></span>
+              <ChevronDown className="settings-accordion-chevron" size={15} aria-hidden="true" />
+            </button>
+            <div
+              id={panelId}
+              className="settings-accordion-panel"
+              role="region"
+              aria-labelledby={triggerId}
+              hidden={!expanded}
+            >
+              {contentBySection[section.value]}
+            </div>
+          </section>
+        )
+      })}
     </div>
   )
 }
@@ -362,12 +485,18 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
   const [selectedTarget, setSelectedTarget] = useState<PreviewEditTarget | null>(null)
   const [activeCard, setActiveCard] = useState(0)
   const [xhsPreviewMode, setXhsPreviewMode] = useState<XhsPreviewMode>('single')
+  const [xhsPageJumpOpen, setXhsPageJumpOpen] = useState(false)
   const [selectedXhsImageKey, setSelectedXhsImageKey] = useState<string | null>(null)
   const [xhsImagePopover, setXhsImagePopover] = useState<XhsImagePopoverPosition | null>(null)
   const [xhsImageResizeSession, setXhsImageResizeSession] = useState<XhsImageResizeSession | null>(null)
   const [wechatThemeCategory, setWechatThemeCategory] = useState<WechatThemeCategory>('简约')
   const [toolRailWidth, setToolRailWidth] = useState(readToolRailWidth)
   const [toolRailOpen, setToolRailOpen] = useState(readToolRailOpen)
+  const [openFormattingSection, setOpenFormattingSection] = useState<Record<PreviewPlatform, FormattingSection | null>>({
+    wechat: 'layout',
+    xhs: 'layout',
+    x: 'layout',
+  })
   const [wechatCopyState, setWechatCopyState] = useState<WechatCopyState>('idle')
   const [exporting, setExporting] = useState<number | 'all' | null>(null)
   const [exportError, setExportError] = useState<string | null>(null)
@@ -453,6 +582,8 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
   const previewStageRef = useRef<HTMLDivElement>(null)
   const xhsLayoutRef = useRef<HTMLDivElement>(null)
   const xhsImagePopoverRef = useRef<HTMLElement>(null)
+  const xhsPageNavigatorRef = useRef<HTMLDivElement>(null)
+  const xhsPageTriggerRef = useRef<HTMLButtonElement>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
   const mobilePreviewButtonRef = useRef<HTMLButtonElement>(null)
   const mobileDialogRef = useRef<HTMLDivElement>(null)
@@ -626,6 +757,13 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
     persistToolRailOpen({ ...toolRailOpen, [platform]: !toolRailOpen[platform] })
   }
 
+  const toggleFormattingSection = (platform: PreviewPlatform, section: FormattingSection) => {
+    setOpenFormattingSection(current => ({
+      ...current,
+      [platform]: current[platform] === section ? null : section,
+    }))
+  }
+
   const resizeToolRail = (clientX: number) => {
     const stage = previewStageRef.current
     if (!stage) return
@@ -754,8 +892,29 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
     setSelectedXhsImageKey(null)
     setXhsImagePopover(null)
     setXhsImageResizeSession(null)
+    setXhsPageJumpOpen(false)
     setExportError(null)
   }, [activePlatform])
+
+  useEffect(() => {
+    if (!xhsPageJumpOpen) return
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!(event.target instanceof Node) || xhsPageNavigatorRef.current?.contains(event.target)) return
+      setXhsPageJumpOpen(false)
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      setXhsPageJumpOpen(false)
+      xhsPageTriggerRef.current?.focus()
+    }
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [xhsPageJumpOpen])
 
   useEffect(() => {
     if (selectedXhsImageKey && !preparedXhsLayout.images.some(image => image.key === selectedXhsImageKey)) {
@@ -1030,8 +1189,6 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
     updateXhsSettings({
       ...xhsSettings,
       template,
-      showPageNumber: template === 'focus',
-      showFooter: template !== 'clean',
     })
   }
 
@@ -1130,12 +1287,74 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
   } as CSSProperties
 
   const spreadStart = activeCard - (activeCard % 2)
+  const xhsPageRanges = createXhsPageRanges(cardPages.length)
+  const activeXhsPageRange = xhsPageRanges.find(range => activeCard >= range.start && activeCard <= range.end)
+    ?? xhsPageRanges[0]
+  const visibleXhsPageNumbers = activeXhsPageRange
+    ? Array.from({ length: activeXhsPageRange.end - activeXhsPageRange.start + 1 }, (_, offset) => activeXhsPageRange.start + offset)
+    : []
+  const xhsPageLabel = xhsPreviewMode === 'spread'
+    ? `${formatXhsPageNumber(spreadStart + 1, cardPages.length)}–${formatXhsPageNumber(Math.min(spreadStart + 2, cardPages.length), cardPages.length)} / ${formatXhsPageNumber(cardPages.length, cardPages.length)}`
+    : `${formatXhsPageNumber(activeCard + 1, cardPages.length)} / ${formatXhsPageNumber(cardPages.length, cardPages.length)}`
+  const xhsPageProgress = cardPages.length ? ((activeCard + 1) / cardPages.length) * 100 : 0
 
   const changeXhsPreviewMode = (mode: XhsPreviewMode) => {
     setXhsPreviewMode(mode)
+    setXhsPageJumpOpen(false)
     closeXhsImagePopover()
     clearSelectedTarget()
   }
+
+  const renderXhsPageNavigator = () => cardPages.length ? (
+    <div ref={xhsPageNavigatorRef} className="xhs-page-navigator" aria-label="小红书卡片定位">
+      <button
+        ref={xhsPageTriggerRef}
+        type="button"
+        className="xhs-page-jump-trigger"
+        aria-expanded={xhsPageJumpOpen}
+        aria-controls="xhs-page-jump-panel"
+        onClick={() => setXhsPageJumpOpen(open => !open)}
+      >
+        <span>{activeXhsPageRange?.label}</span>
+        <strong>{xhsPageLabel}</strong>
+        <ChevronDown size={14} aria-hidden="true" />
+        <i className="xhs-page-progress" aria-hidden="true"><i style={{ width: `${xhsPageProgress}%` }} /></i>
+      </button>
+      {xhsPageJumpOpen && (
+        <div id="xhs-page-jump-panel" className="xhs-page-jump-panel" role="group" aria-label="选择卡片页码">
+          <div className="xhs-page-jump-heading"><strong>跳转到卡片</strong><small>{cardPages.length} 张</small></div>
+          {xhsPageRanges.length > 1 && (
+            <div className="xhs-page-range-options" role="group" aria-label="选择卡片范围">
+              {xhsPageRanges.map(range => (
+                <button
+                  type="button"
+                  className={activeXhsPageRange?.start === range.start ? 'active' : ''}
+                  aria-pressed={activeXhsPageRange?.start === range.start}
+                  key={range.start}
+                  onClick={() => changeActiveCard(range.start)}
+                >{range.label}</button>
+              ))}
+            </div>
+          )}
+          <div className="xhs-page-number-options" role="group" aria-label="选择具体卡片">
+            {visibleXhsPageNumbers.map(index => (
+              <button
+                type="button"
+                className={activeCard === index ? 'active' : ''}
+                aria-label={`查看第 ${index + 1} 张卡片`}
+                aria-current={activeCard === index ? 'page' : undefined}
+                key={index}
+                onClick={() => {
+                  changeActiveCard(index)
+                  setXhsPageJumpOpen(false)
+                }}
+              >{formatXhsPageNumber(index + 1, cardPages.length)}</button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  ) : null
 
   const renderXhsCard = (pageHtml: string, index: number, options: { interactive?: boolean; exportRef?: boolean } = {}) => {
     const interactiveHtml = options.interactive
@@ -1143,7 +1362,7 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
       : pageHtml
     const card = <section
       key={options.exportRef ? index : undefined}
-      className={`xhs-card-page template-${xhsSettings.template}`}
+      className={`xhs-card-page template-${xhsSettings.template}${index === 0 ? ' is-cover' : ''}`}
       aria-label={options.interactive ? `第 ${index + 1} 张，共 ${cardPages.length} 张` : undefined}
       data-xhs-page={options.interactive ? index : undefined}
       ref={options.exportRef ? element => { exportCardRefs.current[index] = element } : undefined}
@@ -1216,6 +1435,19 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
     }
   }
 
+  const activeToolRailPanelId: Record<PreviewPlatform, string> = {
+    wechat: 'wechat-theme-panel',
+    xhs: 'xhs-tool-panel',
+    x: 'x-formatting-panel',
+  }
+  const activeToolRailLabel: Record<PreviewPlatform, string> = {
+    wechat: '公众号排版',
+    xhs: '小红书设置',
+    x: 'X 长文排版',
+  }
+  const activeToolRailOpen = toolRailOpen[activePlatform]
+  const activeToolRailName = `${activePlatform === 'x' ? ' ' : ''}${activeToolRailLabel[activePlatform]}`
+
   return (
     <section
       ref={workbenchRef}
@@ -1246,6 +1478,25 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
               {wechatCopyState === 'copying' ? '复制中' : wechatCopyState === 'success' ? '已复制' : wechatCopyState === 'error' ? '重试复制' : '复制公众号格式'}
             </button>
           )}
+          {activePlatform === 'xhs' && (
+            <div className="xhs-view-modes xhs-context-view-modes" role="group" aria-label="切换小红书预览方式">
+              <button type="button" className={xhsPreviewMode === 'single' ? 'active' : ''} aria-pressed={xhsPreviewMode === 'single'} aria-label="单页预览" onClick={() => changeXhsPreviewMode('single')}><Square size={15} /><span>单页</span></button>
+              <button type="button" className={xhsPreviewMode === 'spread' ? 'active' : ''} aria-pressed={xhsPreviewMode === 'spread'} aria-label="双页预览" onClick={() => changeXhsPreviewMode('spread')}><Columns2 size={15} /><span>双页</span></button>
+              <button type="button" className={xhsPreviewMode === 'all' ? 'active' : ''} aria-pressed={xhsPreviewMode === 'all'} aria-label="整体预览" onClick={() => changeXhsPreviewMode('all')}><LayoutGrid size={15} /><span>整体</span></button>
+            </div>
+          )}
+          <button
+            type="button"
+            className={`preview-tool-toggle preview-settings-toggle${activeToolRailOpen ? ' active' : ''}`}
+            aria-label={`${activeToolRailOpen ? '收起' : '展开'}${activeToolRailName}侧栏`}
+            aria-controls={activeToolRailPanelId[activePlatform]}
+            aria-expanded={activeToolRailOpen}
+            title={`${activeToolRailOpen ? '收起' : '展开'}${activeToolRailName}侧栏`}
+            onClick={() => toggleToolRail(activePlatform)}
+          >
+            {activeToolRailOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
+            <span>设置</span>
+          </button>
           <div className="device-preview-switcher" role="group" aria-label="切换预览设备">
             <button type="button" className={previewDevice === 'desktop' ? 'active' : ''} aria-pressed={previewDevice === 'desktop'} onClick={() => onPreviewDeviceChange('desktop')}><Monitor size={14} />电脑预览</button>
             <button ref={mobilePreviewButtonRef} type="button" className={previewDevice === 'mobile' ? 'active' : ''} aria-pressed={previewDevice === 'mobile'} onClick={() => onPreviewDeviceChange('mobile')}><Smartphone size={14} />手机预览</button>
@@ -1288,54 +1539,61 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
                   onKeyDown={adjustToolRailWithKeyboard}
                 ><span /></div>
               )}
-                <aside id="wechat-theme-panel" className="wechat-theme-rail preview-tool-rail" aria-label="公众号主题库" hidden={!toolRailOpen.wechat}>
+              <aside id="wechat-theme-panel" className="wechat-theme-rail preview-tool-rail" aria-label="公众号排版设置" hidden={!toolRailOpen.wechat}>
                 <header className="wechat-theme-heading preview-tool-rail-heading">
                   <span><strong>公众号主题</strong><small>{WECHAT_THEMES.length} 套排版 · 点击后应用</small></span>
-                  <button type="button" className="preview-tool-close" aria-label="收起公众号主题侧栏" aria-controls="wechat-theme-panel" aria-expanded="true" title="收起公众号主题侧栏" onClick={() => toggleToolRail('wechat')}><PanelRightClose size={18} /></button>
                 </header>
-                <div className="wechat-theme-categories" role="tablist" aria-label="筛选公众号主题">
-                  {WECHAT_THEME_CATEGORIES.map(category => (
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={wechatThemeCategory === category}
-                      className={wechatThemeCategory === category ? 'active' : ''}
-                      key={category}
-                      onClick={() => setWechatThemeCategory(category)}
-                    >{category}</button>
-                  ))}
-                </div>
-                <div className="wechat-theme-grid">
-                  {visibleWechatThemes.map(theme => (
-                    <button
-                      type="button"
-                      className={`wechat-theme-card ${wechatSettings.themeId === theme.id ? 'selected' : ''}`}
-                      aria-pressed={wechatSettings.themeId === theme.id}
-                      key={theme.id}
-                      onClick={() => selectWechatTheme(theme.id)}
-                      style={{
-                        '--theme-primary': theme.primary,
-                        '--theme-surface': theme.surface,
-                      } as CSSProperties}
-                    >
-                      <span className={`wechat-theme-mock mock-${theme.mock}`}><i /><i /><i /></span>
-                      <span><strong>{theme.name}</strong><small>{theme.tag}</small></span>
-                    </button>
-                  ))}
-                </div>
-                <section className="wechat-theme-settings" aria-label={`${activeWechatTheme.name} 设置`}>
-                  <div className="wechat-theme-setting-title"><span><strong>{activeWechatTheme.name}</strong><small>{activeWechatTheme.description}</small></span><button type="button" onClick={resetWechatThemeColors}>重置配色</button></div>
-                  <ArticleFormattingControls formatting={formatting} onChange={onFormattingChange} />
-                  {activeWechatSlots.map(slot => (
-                    <label key={slot.key}><span>{slot.label}</span><input type="color" value={wechatSettings.slotColorsByTheme[wechatSettings.themeId]?.[slot.key] ?? slot.base} onChange={event => updateWechatSlot(slot.key, event.target.value)} /></label>
-                  ))}
-                </section>
+                <FormattingAccordion
+                  idPrefix="wechat-settings"
+                  label="公众号设置模块"
+                  openSection={openFormattingSection.wechat}
+                  onSectionToggle={section => toggleFormattingSection('wechat', section)}
+                  formatting={formatting}
+                  onFormattingChange={onFormattingChange}
+                  layoutContent={(
+                    <section className="wechat-theme-layout" aria-label="公众号主题排版">
+                      <div className="wechat-theme-categories" role="tablist" aria-label="筛选公众号主题">
+                        {WECHAT_THEME_CATEGORIES.map(category => (
+                          <button
+                            type="button"
+                            role="tab"
+                            aria-selected={wechatThemeCategory === category}
+                            className={wechatThemeCategory === category ? 'active' : ''}
+                            key={category}
+                            onClick={() => setWechatThemeCategory(category)}
+                          >{category}</button>
+                        ))}
+                      </div>
+                      <div className="wechat-theme-grid">
+                        {visibleWechatThemes.map(theme => (
+                          <button
+                            type="button"
+                            className={`wechat-theme-card ${wechatSettings.themeId === theme.id ? 'selected' : ''}`}
+                            aria-pressed={wechatSettings.themeId === theme.id}
+                            key={theme.id}
+                            onClick={() => selectWechatTheme(theme.id)}
+                            style={{
+                              '--theme-primary': theme.primary,
+                              '--theme-surface': theme.surface,
+                            } as CSSProperties}
+                          >
+                            <span className={`wechat-theme-mock mock-${theme.mock}`}><i /><i /><i /></span>
+                            <span><strong>{theme.name}</strong><small>{theme.tag}</small></span>
+                          </button>
+                        ))}
+                      </div>
+                    </section>
+                  )}
+                  colorContent={(
+                    <section className="wechat-theme-settings" aria-label={`${activeWechatTheme.name} 配色`}>
+                      <div className="wechat-theme-setting-title"><span><strong>{activeWechatTheme.name}</strong><small>{activeWechatTheme.description}</small></span><button type="button" onClick={resetWechatThemeColors}>重置配色</button></div>
+                      {activeWechatSlots.map(slot => (
+                        <label key={slot.key}><span>{slot.label}</span><input type="color" value={wechatSettings.slotColorsByTheme[wechatSettings.themeId]?.[slot.key] ?? slot.base} onChange={event => updateWechatSlot(slot.key, event.target.value)} /></label>
+                      ))}
+                    </section>
+                  )}
+                />
               </aside>
-              {!toolRailOpen.wechat && (
-                <aside className="preview-tool-collapsed-rail" aria-label="已收起的公众号主题侧栏">
-                  <button type="button" className="preview-tool-expand" aria-label="展开公众号主题侧栏" aria-controls="wechat-theme-panel" aria-expanded="false" title="展开公众号主题侧栏" onClick={() => toggleToolRail('wechat')}><PanelRightOpen size={18} /></button>
-                </aside>
-              )}
             </div>
           </article>
         )}
@@ -1351,11 +1609,7 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
                       {renderXhsCardWithActions(cardPages[activeCard], activeCard, 'focused')}
                       <button type="button" className="card-nav next" onClick={() => changeActiveCard(activeCard + 1)} disabled={activeCard === cardPages.length - 1} aria-label="下一张卡片"><ChevronRight size={20} /></button>
                     </div>
-                    <div className="card-pagination" aria-label="选择图文卡片">
-                      {cardPages.map((_, index) => (
-                        <button type="button" key={index} className={activeCard === index ? 'active' : ''} onClick={() => changeActiveCard(index)} aria-label={`查看第 ${index + 1} 张卡片`} aria-current={activeCard === index ? 'page' : undefined}>{String(index + 1).padStart(2, '0')}</button>
-                      ))}
-                    </div>
+                    {renderXhsPageNavigator()}
                   </>
                 )}
 
@@ -1368,12 +1622,7 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
                       </div>
                       <button type="button" className="card-nav next" onClick={() => changeActiveCard(spreadStart + 2)} disabled={spreadStart + 2 >= cardPages.length} aria-label="下一组卡片"><ChevronRight size={20} /></button>
                     </div>
-                    <div className="card-pagination spread-pagination" aria-label="选择双页预览">
-                      {cardPages.filter((_, index) => index % 2 === 0).map((_, groupIndex) => {
-                        const index = groupIndex * 2
-                        return <button type="button" key={index} className={spreadStart === index ? 'active' : ''} onClick={() => changeActiveCard(index)} aria-label={`查看第 ${index + 1} 至 ${Math.min(index + 2, cardPages.length)} 张卡片`} aria-current={spreadStart === index ? 'page' : undefined}>{String(index + 1).padStart(2, '0')}–{String(Math.min(index + 2, cardPages.length)).padStart(2, '0')}</button>
-                      })}
-                    </div>
+                    {renderXhsPageNavigator()}
                   </>
                 )}
 
@@ -1448,48 +1697,44 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
               <aside id="xhs-tool-panel" className="xhs-tool-rail preview-tool-rail" aria-label="小红书预览工具" hidden={!toolRailOpen.xhs}>
                 <header className="preview-tool-rail-heading xhs-tool-rail-heading">
                   <span><strong>小红书工具</strong><small>预览、排版与图片导出</small></span>
-                  <button type="button" className="preview-tool-close" aria-label="收起小红书工具侧栏" aria-controls="xhs-tool-panel" aria-expanded="true" title="收起小红书工具侧栏" onClick={() => toggleToolRail('xhs')}><PanelRightClose size={18} /></button>
                 </header>
-                <section className="xhs-tool-section">
-                  <div className="xhs-tool-heading"><strong>预览方式</strong><small>{cardPages.length} 张卡片</small></div>
-                  <div className="xhs-view-modes" role="group" aria-label="切换小红书预览方式">
-                    <button type="button" className={xhsPreviewMode === 'single' ? 'active' : ''} aria-pressed={xhsPreviewMode === 'single'} aria-label="单页预览" onClick={() => changeXhsPreviewMode('single')}><Square size={15} /><span>单页</span></button>
-                    <button type="button" className={xhsPreviewMode === 'spread' ? 'active' : ''} aria-pressed={xhsPreviewMode === 'spread'} aria-label="双页预览" onClick={() => changeXhsPreviewMode('spread')}><Columns2 size={15} /><span>双页</span></button>
-                    <button type="button" className={xhsPreviewMode === 'all' ? 'active' : ''} aria-pressed={xhsPreviewMode === 'all'} aria-label="整体预览" onClick={() => changeXhsPreviewMode('all')}><LayoutGrid size={15} /><span>整体</span></button>
-                  </div>
-                </section>
+                <FormattingAccordion
+                  idPrefix="xhs-settings"
+                  label="小红书设置模块"
+                  openSection={openFormattingSection.xhs}
+                  onSectionToggle={section => toggleFormattingSection('xhs', section)}
+                  formatting={formatting}
+                  onFormattingChange={onFormattingChange}
+                  layoutContent={(
+                    <section className="xhs-template-tools" aria-label="小红书视觉模板">
+                      <div className="xhs-tool-heading"><strong>视觉模板</strong><small>{XHS_TEMPLATE_OPTIONS.length} 套</small></div>
+                      <div className="xhs-template-options" role="radiogroup" aria-label="选择卡片模板">
+                        {XHS_TEMPLATE_OPTIONS.map(option => (
+                          <button type="button" role="radio" aria-checked={xhsSettings.template === option.value} className={`xhs-template-option template-${option.value}${xhsSettings.template === option.value ? ' selected' : ''}`} key={option.value} onClick={() => applyXhsTemplate(option.value)}>
+                            <span className="xhs-template-mock" data-template={option.value} aria-hidden="true"><i /><i /><i /><i /></span>
+                            <span className="xhs-template-copy"><strong>{option.label}</strong><small>{option.detail}</small></span>
+                          </button>
+                        ))}
+                      </div>
+                    </section>
+                  )}
+                />
 
-                <section className="xhs-tool-section xhs-style-tools" aria-label="小红书样式与排版">
-                  <div className="xhs-tool-heading"><strong>样式与排版</strong><small>同步到图片</small></div>
-                  <div className="xhs-card-settings">
-                    <div className="xhs-settings-heading"><strong>模板与信息</strong><small>保持卡片干净清晰</small></div>
-                    <div className="xhs-template-options" role="radiogroup" aria-label="选择卡片模板">
-                      {XHS_TEMPLATE_OPTIONS.map(option => (
-                        <button type="button" role="radio" aria-checked={xhsSettings.template === option.value} className={xhsSettings.template === option.value ? 'selected' : ''} key={option.value} onClick={() => applyXhsTemplate(option.value)}>
-                          <strong>{option.label}</strong><small>{option.detail}</small>
-                        </button>
-                      ))}
-                    </div>
-                    <div className="xhs-decoration-options">
-                      <label><input type="checkbox" checked={xhsSettings.showPageNumber} onChange={event => updateXhsSettings({ ...xhsSettings, showPageNumber: event.target.checked })} /> 右上页码</label>
-                      <label><input type="checkbox" checked={xhsSettings.showFooter} onChange={event => updateXhsSettings({ ...xhsSettings, showFooter: event.target.checked })} /> 底部信息</label>
-                    </div>
-                    <label className="xhs-footer-input">左下角文字<input value={xhsSettings.footerText} disabled={!xhsSettings.showFooter} maxLength={24} onChange={event => updateXhsSettings({ ...xhsSettings, footerText: event.target.value })} /></label>
+                <details className="xhs-tool-section xhs-settings-disclosure xhs-metadata-tools xhs-output-tools" aria-label="小红书输出信息">
+                  <summary><span><strong>输出信息</strong><small>页码 · 署名</small></span><ChevronDown size={15} aria-hidden="true" /></summary>
+                  <div className="xhs-decoration-options">
+                    <label><input type="checkbox" checked={xhsSettings.showPageNumber} onChange={event => updateXhsSettings({ ...xhsSettings, showPageNumber: event.target.checked })} /> 显示右上页码</label>
+                    <label><input type="checkbox" checked={xhsSettings.showFooter} onChange={event => updateXhsSettings({ ...xhsSettings, showFooter: event.target.checked })} /> 显示底部信息</label>
                   </div>
-                  <ArticleFormattingControls formatting={formatting} onChange={onFormattingChange} />
-                </section>
+                  <label className="xhs-footer-input">左下角文字<input value={xhsSettings.footerText} disabled={!xhsSettings.showFooter} maxLength={24} onChange={event => updateXhsSettings({ ...xhsSettings, footerText: event.target.value })} /></label>
+                </details>
 
-                <section className="xhs-tool-section xhs-download-tools">
+                <section className="xhs-tool-section xhs-download-tools preview-tool-rail-footer">
                   <div className="xhs-tool-heading"><strong>下载图片</strong><small>PNG / ZIP</small></div>
                   <button type="button" className="xhs-rail-action primary" onClick={() => void downloadAllCards()} disabled={exporting !== null}>{exporting === 'all' ? <LoaderCircle className="spin" size={15} /> : <Layers3 size={15} />}<span>下载全部图片</span></button>
                   {exportError && <div className="xhs-export-error" role="alert">{exportError}</div>}
                 </section>
               </aside>
-              {!toolRailOpen.xhs && (
-                <aside className="preview-tool-collapsed-rail" aria-label="已收起的小红书工具侧栏">
-                  <button type="button" className="preview-tool-expand" aria-label="展开小红书工具侧栏" aria-controls="xhs-tool-panel" aria-expanded="false" title="展开小红书工具侧栏" onClick={() => toggleToolRail('xhs')}><PanelRightOpen size={18} /></button>
-                </aside>
-              )}
             </div>
           </article>
         )}
@@ -1530,18 +1775,27 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
                   onKeyDown={adjustToolRailWithKeyboard}
                 ><span /></div>
               )}
-                <aside id="x-formatting-panel" className="x-formatting-rail preview-tool-rail" aria-label="X 长文排版设置" hidden={!toolRailOpen.x}>
-                  <header className="preview-tool-rail-heading">
-                    <span><strong>X 长文排版</strong><small>设置只在选中后生效</small></span>
-                    <button type="button" className="preview-tool-close" aria-label="收起 X 长文排版侧栏" aria-controls="x-formatting-panel" aria-expanded="true" title="收起 X 长文排版侧栏" onClick={() => toggleToolRail('x')}><PanelRightClose size={18} /></button>
-                  </header>
-                  <ArticleFormattingControls formatting={formatting} onChange={onFormattingChange} />
-                </aside>
-              {!toolRailOpen.x && (
-                <aside className="preview-tool-collapsed-rail" aria-label="已收起的 X 长文排版侧栏">
-                  <button type="button" className="preview-tool-expand" aria-label="展开 X 长文排版侧栏" aria-controls="x-formatting-panel" aria-expanded="false" title="展开 X 长文排版侧栏" onClick={() => toggleToolRail('x')}><PanelRightOpen size={18} /></button>
-                </aside>
-              )}
+              <aside id="x-formatting-panel" className="x-formatting-rail preview-tool-rail" aria-label="X 长文排版设置" hidden={!toolRailOpen.x}>
+                <header className="preview-tool-rail-heading">
+                  <span><strong>X 长文排版</strong><small>设置只在选中后生效</small></span>
+                </header>
+                <FormattingAccordion
+                  idPrefix="x-settings"
+                  label="X 长文设置模块"
+                  openSection={openFormattingSection.x}
+                  onSectionToggle={section => toggleFormattingSection('x', section)}
+                  formatting={formatting}
+                  onFormattingChange={onFormattingChange}
+                  layoutContent={(
+                    <section className="x-formatting-section x-layout-controls">
+                      <strong>版式</strong>
+                      <div className="x-formatting-options three" role="radiogroup" aria-label="选择文章版式">
+                        {([['clean', '简洁'], ['editorial', '刊物'], ['wechat', '强调']] as const).map(([value, label]) => <button type="button" role="radio" aria-checked={formatting.theme === value} className={formatting.theme === value ? 'selected' : ''} key={value} onClick={() => onFormattingChange?.({ ...formatting, theme: value })}>{label}</button>)}
+                      </div>
+                    </section>
+                  )}
+                />
+              </aside>
             </div>
           </article>
         )}

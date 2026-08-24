@@ -5,7 +5,7 @@ export const SAVED_DRAFT_SCHEMA_VERSION = 2
 
 export type DraftKind = 'image' | 'longform'
 
-export type XhsCardTemplate = 'clean' | 'editorial' | 'focus'
+export type XhsCardTemplate = 'clean' | 'editorial' | 'focus' | 'index' | 'headline'
 export type XhsImageLayout = 'full' | 'image-left' | 'image-right'
 
 export interface XhsImageOverride {
@@ -55,7 +55,13 @@ export function normalizeXhsCardSettings(value?: unknown): XhsCardSettings {
   })
 
   return {
-    template: candidate.template === 'clean' || candidate.template === 'editorial' ? candidate.template : 'focus',
+    template:
+      candidate.template === 'clean'
+      || candidate.template === 'editorial'
+      || candidate.template === 'index'
+      || candidate.template === 'headline'
+        ? candidate.template
+        : 'focus',
     showPageNumber: typeof candidate.showPageNumber === 'boolean' ? candidate.showPageNumber : DEFAULT_XHS_CARD_SETTINGS.showPageNumber,
     showFooter: typeof candidate.showFooter === 'boolean' ? candidate.showFooter : DEFAULT_XHS_CARD_SETTINGS.showFooter,
     footerText: typeof candidate.footerText === 'string' ? candidate.footerText.slice(0, 80) : DEFAULT_XHS_CARD_SETTINGS.footerText,

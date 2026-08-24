@@ -823,13 +823,17 @@ export function SourceEditor({ value, language, focusRequest, readOnly = false, 
             if (update.docChanged || update.selectionSet || update.geometryChanged) updateEditorUi(update.view)
           }),
           EditorView.theme({
-            '&': { height: '100%', fontSize: '14.5px', backgroundColor: '#fff' },
-            '.cm-scroller': { fontFamily: '"MiSans", "HarmonyOS Sans SC", "Microsoft YaHei UI", sans-serif', lineHeight: '1.8' },
-            '.cm-gutters': { backgroundColor: '#fbfcfd', borderRight: '1px solid #eef1f3', color: '#c2c8ce' },
-            '.cm-lineNumbers': { fontFamily: '"Cascadia Code", Consolas, monospace', fontSize: '11px' },
+            '&': { height: '100%', fontSize: '15px', backgroundColor: '#fff' },
+            '.cm-scroller': { fontFamily: '"MiSans", "HarmonyOS Sans SC", "Microsoft YaHei UI", sans-serif', lineHeight: '1.9' },
+            '.cm-gutters': { backgroundColor: 'transparent', borderRight: '0', color: '#c2c8ce' },
+            '.cm-lineNumbers': {
+              fontFamily: '"MiSans", "HarmonyOS Sans SC", "Microsoft YaHei UI", sans-serif',
+              fontSize: '11px',
+              fontVariantNumeric: 'tabular-nums',
+            },
             '.cm-foldGutter': { display: 'none' },
-            '.cm-activeLineGutter': { backgroundColor: '#f7f8f9', color: '#9099a2' },
-            '.cm-activeLine': { backgroundColor: 'rgba(35,45,55,0.025)' },
+            '.cm-activeLineGutter': { backgroundColor: 'transparent', color: '#aab1b8' },
+            '.cm-activeLine': { backgroundColor: 'rgba(35,45,55,0.012)' },
             '.cm-cursor': { borderLeftColor: '#1648ff', borderLeftWidth: '2px' },
             '&.cm-focused': { outline: 'none' },
           }),
@@ -913,34 +917,34 @@ export function SourceEditor({ value, language, focusRequest, readOnly = false, 
       <div className="source-editor">
         <div className="source-toolbar" role="toolbar" aria-label="Markdown 文本工具">
           <div className="source-tool-group">
-            <ToolButton label="撤销" shortcut="Ctrl+Z" disabled={!historyAvailability.canUndo} onClick={undoChange}><Undo2 size={16} /></ToolButton>
-            <ToolButton label="重做" shortcut="Ctrl+Y / Ctrl+Shift+Z" disabled={!historyAvailability.canRedo} onClick={redoChange}><Redo2 size={16} /></ToolButton>
+            <ToolButton label="撤销" shortcut="Ctrl+Z" disabled={!historyAvailability.canUndo} onClick={undoChange}><Undo2 size={17} /></ToolButton>
+            <ToolButton label="重做" shortcut="Ctrl+Y / Ctrl+Shift+Z" disabled={!historyAvailability.canRedo} onClick={redoChange}><Redo2 size={17} /></ToolButton>
           </div>
           <div className="source-tool-group">
             <ToolButton label="二级标题" shortcut="Ctrl+Alt+2" onClick={() => insertHeading(2)}><Heading2 size={17} /></ToolButton>
             <ToolButton label="三级标题" shortcut="Ctrl+Alt+3" onClick={() => insertHeading(3)}><Heading3 size={17} /></ToolButton>
           </div>
           <div className="source-tool-group">
-            <ToolButton label="加粗" shortcut="Ctrl+B" onClick={() => wrapSelection('**', '**', '加粗文字', 'strong')}><Bold size={16} /></ToolButton>
-            <ToolButton label="斜体" shortcut="Ctrl+I" onClick={() => wrapSelection('*', '*', '斜体文字', 'em')}><Italic size={16} /></ToolButton>
-            <ToolButton label="删除线" shortcut="Ctrl+Shift+S" onClick={() => wrapSelection('~~', '~~', '删除文字', 'del')}><Strikethrough size={16} /></ToolButton>
-            <ToolButton label="行内代码" shortcut="Ctrl+E" onClick={() => wrapSelection('`', '`', '代码', 'code')}><Code2 size={16} /></ToolButton>
-            <ToolButton label="高亮" shortcut="Ctrl+Shift+H" onClick={() => wrapSelection('==', '==', '高亮文字', 'mark')}><Highlighter size={16} /></ToolButton>
+            <ToolButton label="加粗" shortcut="Ctrl+B" onClick={() => wrapSelection('**', '**', '加粗文字', 'strong')}><Bold size={17} /></ToolButton>
+            <ToolButton label="斜体" shortcut="Ctrl+I" onClick={() => wrapSelection('*', '*', '斜体文字', 'em')}><Italic size={17} /></ToolButton>
+            <ToolButton label="删除线" shortcut="Ctrl+Shift+S" onClick={() => wrapSelection('~~', '~~', '删除文字', 'del')}><Strikethrough size={17} /></ToolButton>
+            <ToolButton label="行内代码" shortcut="Ctrl+E" onClick={() => wrapSelection('`', '`', '代码', 'code')}><Code2 size={17} /></ToolButton>
+            <ToolButton label="高亮" shortcut="Ctrl+Shift+H" onClick={() => wrapSelection('==', '==', '高亮文字', 'mark')}><Highlighter size={17} /></ToolButton>
           </div>
           <div className="source-tool-group">
-            <ToolButton label="引用" onClick={insertQuote}><Quote size={16} /></ToolButton>
-            <ToolButton label="无序列表" shortcut="Ctrl+Shift+8" onClick={() => insertList(false)}><List size={16} /></ToolButton>
-            <ToolButton label="有序列表" shortcut="Ctrl+Shift+7" onClick={() => insertList(true)}><ListOrdered size={16} /></ToolButton>
-            <ToolButton label="警告块" onClick={insertWarning}><TriangleAlert size={16} /></ToolButton>
+            <ToolButton label="引用" onClick={insertQuote}><Quote size={17} /></ToolButton>
+            <ToolButton label="无序列表" shortcut="Ctrl+Shift+8" onClick={() => insertList(false)}><List size={17} /></ToolButton>
+            <ToolButton label="有序列表" shortcut="Ctrl+Shift+7" onClick={() => insertList(true)}><ListOrdered size={17} /></ToolButton>
+            <ToolButton label="警告块" onClick={insertWarning}><TriangleAlert size={17} /></ToolButton>
           </div>
           <div className="source-tool-group">
-            <ToolButton label="代码块" onClick={insertCodeBlock}><Code2 size={16} /></ToolButton>
-            <ToolButton label="链接" shortcut="Ctrl+K" onClick={insertLink}><Link2 size={16} /></ToolButton>
-            <ToolButton label="图片" onClick={() => imageInputRef.current?.click()}><ImagePlus size={16} /></ToolButton>
-            <ToolButton label="表格" onClick={insertTable}><Table2 size={16} /></ToolButton>
-            <ToolButton label="分割线" onClick={() => insertText(languageRef.current === 'markdown' ? '\n\n---\n\n' : '<hr>')}><Minus size={16} /></ToolButton>
+            <ToolButton label="代码块" onClick={insertCodeBlock}><Code2 size={17} /></ToolButton>
+            <ToolButton label="链接" shortcut="Ctrl+K" onClick={insertLink}><Link2 size={17} /></ToolButton>
+            <ToolButton label="图片" onClick={() => imageInputRef.current?.click()}><ImagePlus size={17} /></ToolButton>
+            <ToolButton label="表格" onClick={insertTable}><Table2 size={17} /></ToolButton>
+            <ToolButton label="分割线" onClick={() => insertText(languageRef.current === 'markdown' ? '\n\n---\n\n' : '<hr>')}><Minus size={17} /></ToolButton>
           </div>
-          <span className="source-language-badge">{language === 'markdown' ? 'MARKDOWN' : 'HTML'}</span>
+          <span className="source-language-badge">{language === 'markdown' ? 'Markdown' : 'HTML'}</span>
           <input ref={imageInputRef} type="file" accept="image/*" hidden onChange={handleImageSelection} />
         </div>
         <div ref={hostRef} className="source-editor-host" />
