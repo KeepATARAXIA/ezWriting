@@ -98,6 +98,7 @@ import {
   serializeReliabilityReport,
 } from './services/local-diagnostics'
 import brandLogo from '../SVG/资源 1.svg'
+import githubLogo from '../SVG/github.svg'
 import wechatLogo from '../SVG/公众号.svg'
 import xhsLogo from '../SVG/小红书.svg'
 import xLogo from '../SVG/x.svg'
@@ -1531,10 +1532,20 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   return (
     <div className="app-shell article-open">
       <header ref={topbarRef} className={`topbar ${article ? 'workbench-topbar' : ''}`}>
-        <a className="brand" href="/" aria-label="EZWRITING 首页">
-          <span className="brand-mark" aria-hidden="true"><img src={brandLogo} alt="" /></span>
-          <span>EZWRITING</span>
-        </a>
+        <div className="brand-cluster">
+          <a className="brand" href="/" aria-label="EZWRITING 首页">
+            <span className="brand-mark" aria-hidden="true"><img src={brandLogo} alt="" /></span>
+            <span>EZWRITING</span>
+          </a>
+          <a
+            className="github-repository-link"
+            href="https://github.com/KeepATARAXIA/ezWriting"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="在新标签页打开 GitHub 仓库"
+            title="GitHub 仓库"
+          ><img src={githubLogo} alt="" aria-hidden="true" /></a>
+        </div>
         {article ? (
           <div className="topbar-workbench" role="group" aria-label="工作台操作">
             <nav className="workbench-navigation topbar-command-flow" aria-label="新建、平台与视图">

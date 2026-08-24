@@ -69,6 +69,24 @@ describe('App publishing engine onboarding', () => {
     expect(container.querySelector('button[aria-label^="打开发布面板"]')).toBeNull()
   })
 
+  it('exposes the GitHub repository as a direct external icon link', async () => {
+    bridgeMocks.waitForBridge.mockResolvedValue(false)
+
+    await act(async () => {
+      root.render(<App />)
+      await Promise.resolve()
+    })
+
+    const link = container.querySelector<HTMLAnchorElement>('.github-repository-link')!
+    expect(link.href).toBe('https://github.com/KeepATARAXIA/ezWriting')
+    expect(link.target).toBe('_blank')
+    expect(link.rel).toBe('noopener noreferrer')
+    const iconSource = link.querySelector<HTMLImageElement>('img')?.src || ''
+    expect(iconSource).toContain('data:image/svg+xml')
+    expect(decodeURIComponent(iconSource)).toContain('<title>GitHub</title>')
+    expect(container.querySelector('.brand-cluster details')).toBeNull()
+  })
+
   it('creates an editable blank document without requiring a file', async () => {
     bridgeMocks.waitForBridge.mockResolvedValue(false)
 

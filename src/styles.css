@@ -50,9 +50,13 @@ button:disabled { cursor: not-allowed; }
   z-index: 40;
 }
 
+.brand-cluster { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; }
 .brand { color: var(--ink); text-decoration: none; font-size: 14px; font-weight: 900; letter-spacing: 0.16em; display: flex; align-items: center; gap: 12px; }
 .brand-mark { width: 34px; height: 30px; flex: 0 0 auto; display: block; }
 .brand-mark img { width: 100%; height: 100%; display: block; object-fit: contain; }
+.github-repository-link { width: 34px; height: 34px; flex: 0 0 auto; border-radius: 8px; display: grid; place-items: center; transition: background 140ms ease, transform 140ms ease; }
+.github-repository-link:hover { background: var(--blue-soft); transform: translateY(-1px); }
+.github-repository-link img { width: 19px; height: 19px; display: block; }
 .topbar-meta { display: flex; align-items: center; gap: 10px; }
 .extension-chip, .privacy-chip, .version-chip { border: 1px solid var(--line); background: white; height: 30px; padding: 0 11px; display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; }
 .extension-chip { color: inherit; cursor: pointer; }
@@ -1383,7 +1387,7 @@ button:disabled { cursor: not-allowed; }
 
 @media (max-width: 980px) {
   .topbar.workbench-topbar { height: 104px; flex-basis: 104px; padding: 6px 10px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-rows: 42px 44px; gap: 6px 8px; }
-  .workbench-topbar .brand { grid-column: 1; grid-row: 1; }
+  .workbench-topbar .brand-cluster { grid-column: 1; grid-row: 1; }
   .topbar-workbench { display: contents; }
   .topbar-workbench .workbench-navigation { grid-column: 1 / -1; grid-row: 2; width: 100%; }
   .topbar-workbench .workbench-actions { grid-column: 2 / -1; grid-row: 1; min-width: 0; }
@@ -1396,6 +1400,8 @@ button:disabled { cursor: not-allowed; }
 @media (max-width: 700px) {
   .workbench-topbar .brand > span:last-child { display: none; }
   .workbench-topbar .brand-mark { width: 31px; height: 27px; }
+  .workbench-topbar .brand-cluster { gap: 4px; }
+  .workbench-topbar .github-repository-link { width: 31px; height: 31px; }
   .topbar-workbench .platform-switcher { grid-column: auto; grid-row: auto; }
   .topbar-workbench .workbench-actions { display: flex; }
   .topbar-command-flow { overflow: visible; }
@@ -1424,6 +1430,10 @@ button:disabled { cursor: not-allowed; }
   .workspace-mode-switcher { grid-template-columns: repeat(3, 32px); }
   .workspace-mode-switcher button { width: 32px; }
   .topbar-workbench .extension-chip { width: 38px; padding: 0; justify-content: center; font-size: 0; }
+}
+
+@media (max-width: 380px) {
+  .topbar:not(.workbench-topbar) .brand > span:last-child { display: none; }
 }
 
 @media (max-width: 1280px) {
