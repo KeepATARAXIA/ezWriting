@@ -28,10 +28,16 @@ describe('PlatformPreviews editor-to-preview locating', () => {
   })
 
   it('centers and highlights the requested source block in the right preview', async () => {
-    const scrollIntoView = vi.fn()
-    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
-      configurable: true,
-      value: scrollIntoView,
+    let resizeCallback: ResizeObserverCallback | null = null
+    const disconnect = vi.fn()
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallback = callback
+      }
+
+      observe() {}
+      disconnect() { disconnect() }
+      unobserve() {}
     })
 
     await act(async () => {
@@ -52,6 +58,25 @@ describe('PlatformPreviews editor-to-preview locating', () => {
         await new Promise(resolve => window.setTimeout(resolve, 0))
       })
     }
+
+    const viewport = container.querySelector<HTMLElement>('.platform-preview-viewport')!
+    let targetOffsetTop = 600
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 1600 },
+      scrollTop: { configurable: true, writable: true, value: 0 },
+    })
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this === viewport) return new DOMRect(0, 100, 800, 400)
+      if (this instanceof HTMLElement && this.dataset.sourceBlock === '1') {
+        return new DOMRect(0, 100 + targetOffsetTop - viewport.scrollTop, 500, 40)
+      }
+      return new DOMRect()
+    })
+    const scrollTo = vi.fn((options: ScrollToOptions) => {
+      viewport.scrollTop = Number(options.top) || 0
+    })
+    Object.defineProperty(viewport, 'scrollTo', { configurable: true, value: scrollTo })
 
     await act(async () => {
       root.render(
@@ -77,7 +102,85 @@ describe('PlatformPreviews editor-to-preview locating', () => {
     expect(target?.textContent).toBe('Second block')
     expect(target?.getAttribute('data-preview-selected')).toBe('true')
     expect(target?.classList.contains('preview-located-target')).toBe(true)
-    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'center', inline: 'nearest', behavior: 'smooth' })
+    await vi.waitFor(
+      () => expect(scrollTo).toHaveBeenLastCalledWith({ top: 420, behavior: 'auto' }),
+      { timeout: 500 },
+    )
+
+    targetOffsetTop += 200
+    await act(async () => {
+      resizeCallback?.([] as ResizeObserverEntry[], {} as ResizeObserver)
+    })
+    expect(scrollTo).toHaveBeenLastCalledWith({ top: 620, behavior: 'auto' })
+    expect(disconnect).not.toHaveBeenCalled()
+  })
+
+  it('uses the requested source line when one preview block contains several line targets', async () => {
+    await act(async () => {
+      root.render(
+        <PlatformPreviews
+          activePlatform="wechat"
+          title="Preview line locate"
+          html="<ul><li>项目一</li><li>项目二</li></ul>"
+          sourceText={'- 项目一\n- 项目二'}
+          sourceLanguage="markdown"
+          formatting={DEFAULT_ARTICLE_FORMATTING}
+          previewDevice="desktop"
+          onPreviewDeviceChange={vi.fn()}
+          locateRequest={{ blockIndex: 0, line: 2, requestId: 1 }}
+        />,
+      )
+      await new Promise(resolve => window.setTimeout(resolve, 0))
+    })
+
+    const target = container.querySelector<HTMLElement>('[data-source-block="0"][data-source-line="2"]')
+    expect(target?.textContent).toBe('项目二')
+    expect(target?.getAttribute('data-preview-selected')).toBe('true')
+    expect(target?.classList.contains('preview-located-target')).toBe(true)
+
+    await act(async () => {
+      root.render(
+        <PlatformPreviews
+          activePlatform="wechat"
+          title="Preview line locate"
+          html="<ul><li>项目一</li><li>项目二</li></ul>"
+          sourceText={'- 项目一\n- 项目二'}
+          sourceLanguage="markdown"
+          formatting={DEFAULT_ARTICLE_FORMATTING}
+          previewDevice="desktop"
+          onPreviewDeviceChange={vi.fn()}
+          locateRequest={{ blockIndex: 0, line: 1, requestId: 2 }}
+        />,
+      )
+      await new Promise(resolve => window.setTimeout(resolve, 0))
+    })
+
+    expect(container.querySelector('[data-source-block="0"][data-source-line="1"]')?.getAttribute('data-preview-selected')).toBe('true')
+    expect(container.querySelectorAll('.preview-located-target')).toHaveLength(1)
+  })
+
+  it('falls back to the matching block when a source line has no separate preview element', async () => {
+    await act(async () => {
+      root.render(
+        <PlatformPreviews
+          activePlatform="wechat"
+          title="Preview block fallback"
+          html={'<p>第一行\n第二行</p>'}
+          sourceText={'第一行\n第二行'}
+          sourceLanguage="markdown"
+          formatting={DEFAULT_ARTICLE_FORMATTING}
+          previewDevice="desktop"
+          onPreviewDeviceChange={vi.fn()}
+          locateRequest={{ blockIndex: 0, line: 2, requestId: 1 }}
+        />,
+      )
+      await new Promise(resolve => window.setTimeout(resolve, 0))
+    })
+
+    const target = container.querySelector<HTMLElement>('p[data-source-block="0"]')
+    expect(target?.getAttribute('data-source-line')).toBe('1')
+    expect(target?.getAttribute('data-preview-selected')).toBe('true')
+    expect(target?.classList.contains('preview-located-target')).toBe(true)
   })
 
   it('only runs the expensive formatter for the active platform', async () => {
@@ -244,6 +347,36 @@ describe('PlatformPreviews editor-to-preview locating', () => {
 
     await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="收起 X 长文排版侧栏"]')?.click())
     expect(container.querySelector('.x-layout')?.classList.contains('tool-rail-open')).toBe(false)
+  })
+
+  it('selects text and standalone image lines separately inside one rendered paragraph', async () => {
+    const onEditTarget = vi.fn()
+    await act(async () => root.render(
+      <PlatformPreviews
+        activePlatform="wechat"
+        title="Mixed paragraph mapping"
+        html={'<p>正文内容<img src="first.png" alt="第一张图"><img src="second.png" alt="第二张图"></p>'}
+        sourceText={'正文内容\n![第一张图](first.png)\n![第二张图](second.png)'}
+        sourceLanguage="markdown"
+        formatting={DEFAULT_ARTICLE_FORMATTING}
+        previewDevice="desktop"
+        onPreviewDeviceChange={vi.fn()}
+        onEditTarget={onEditTarget}
+      />,
+    ))
+
+    const textTarget = container.querySelector<HTMLElement>('.wechat-content [data-source-line="1"]')
+    const firstImageTarget = container.querySelector<HTMLElement>('.wechat-content img[data-source-line="2"]')
+    const secondImageTarget = container.querySelector<HTMLElement>('.wechat-content img[data-source-line="3"]')
+
+    expect(textTarget?.textContent).toBe('正文内容')
+    expect(firstImageTarget?.getAttribute('alt')).toBe('第一张图')
+    expect(secondImageTarget?.getAttribute('alt')).toBe('第二张图')
+
+    await act(async () => firstImageTarget?.click())
+    expect(onEditTarget).toHaveBeenLastCalledWith({ kind: 'body', blockIndex: 0, line: 2 })
+    expect(container.querySelector('.wechat-content img[data-source-line="2"]')?.getAttribute('data-preview-selected')).toBe('true')
+    expect(container.querySelector('.wechat-content p[data-source-block="0"]')?.getAttribute('data-preview-selected')).toBeNull()
   })
 
   it('renders source spacers without shifting the following editable block mapping', async () => {

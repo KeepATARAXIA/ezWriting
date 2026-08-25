@@ -86,6 +86,7 @@ export type PreviewEditTarget =
   | { kind: 'body'; blockIndex: number; line?: number }
 export interface PreviewLocateRequest {
   blockIndex: number
+  line?: number
   requestId: number
 }
 
@@ -146,6 +147,7 @@ const XHS_IMAGE_POPOVER_WIDTH = 300
 const XHS_IMAGE_POPOVER_HEIGHT = 205
 const XHS_IMAGE_POPOVER_GAP = 12
 const XHS_PAGE_RANGE_SIZE = 10
+const PREVIEW_LOCATE_SETTLE_MS = 1000
 
 interface XhsImageResizeSession {
   pointerId: number
@@ -205,7 +207,50 @@ function plainTextLength(html: string): number {
   return Array.from(document.body.textContent || '').length
 }
 
-function previewLineTargets(element: HTMLElement): HTMLElement[] {
+function directImageLineTarget(node: ChildNode): HTMLElement | null {
+  if (node instanceof HTMLImageElement) return node
+  if (!(node instanceof HTMLElement) || node.childElementCount !== 1 || node.textContent?.trim()) return null
+  return node.firstElementChild instanceof HTMLImageElement ? node : null
+}
+
+function mixedParagraphLineTargets(element: HTMLElement, expectedLineCount: number): HTMLElement[] | null {
+  if (!element.matches('p') || expectedLineCount < 2) return null
+
+  const groups: Array<{ nodes: ChildNode[]; imageTarget?: HTMLElement }> = []
+  let inlineNodes: ChildNode[] = []
+  let hasImageLine = false
+  const flushInlineNodes = () => {
+    if (inlineNodes.some(node => node instanceof Element || Boolean(node.textContent?.trim()))) {
+      groups.push({ nodes: inlineNodes })
+    }
+    inlineNodes = []
+  }
+
+  Array.from(element.childNodes).forEach(node => {
+    const imageTarget = directImageLineTarget(node)
+    if (!imageTarget) {
+      inlineNodes.push(node)
+      return
+    }
+    flushInlineNodes()
+    groups.push({ nodes: [node], imageTarget })
+    hasImageLine = true
+  })
+  flushInlineNodes()
+
+  if (!hasImageLine || groups.length !== expectedLineCount) return null
+
+  return groups.map(group => {
+    if (group.imageTarget) return group.imageTarget
+    const wrapper = element.ownerDocument.createElement('span')
+    wrapper.className = 'preview-source-line-target'
+    group.nodes[0].before(wrapper)
+    wrapper.append(...group.nodes)
+    return wrapper
+  })
+}
+
+function previewLineTargets(element: HTMLElement, expectedLineCount: number): HTMLElement[] {
   if (element.matches('ul, ol')) {
     return Array.from(element.querySelectorAll<HTMLElement>(':scope > li'))
   }
@@ -224,6 +269,8 @@ function previewLineTargets(element: HTMLElement): HTMLElement[] {
     const children = Array.from(element.querySelectorAll<HTMLElement>(':scope > p, :scope > ul > li, :scope > ol > li'))
     if (children.length) return children
   }
+  const mixedParagraphTargets = mixedParagraphLineTargets(element, expectedLineCount)
+  if (mixedParagraphTargets) return mixedParagraphTargets
   return [element]
 }
 
@@ -296,7 +343,7 @@ function mapPreviewBlocks(
     element.setAttribute('data-source-block', String(index))
     if (element.classList.contains('missing-image-card')) return
     const lines = sourceLines[index] ?? []
-    const targets = lines.length ? previewLineTargets(element) : [element]
+    const targets = lines.length ? previewLineTargets(element, lines.length) : [element]
     targets.forEach((target, targetIndex) => {
       makePreviewTarget(target, index, lines[targetIndex] ?? lines[lines.length - 1])
     })
@@ -593,6 +640,10 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
   const handledLocateRequestRef = useRef(0)
   const pendingLocateRequestRef = useRef<PreviewLocateRequest | null>(null)
   const locatedTargetTimerRef = useRef<number | null>(null)
+  const locatedTargetRef = useRef<HTMLElement | null>(null)
+  const previewLocateFrameRef = useRef<number | null>(null)
+  const previewLocateSettleTimerRef = useRef<number | null>(null)
+  const previewLocateResizeObserverRef = useRef<ResizeObserver | null>(null)
   const wechatCopyTimerRef = useRef<number | null>(null)
   const toolRailResizeRef = useRef<{ pointerId: number; rawWidth: number } | null>(null)
   const xhsSettingsRef = useRef(xhsSettings)
@@ -601,6 +652,59 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
   const pendingXhsImageWidthRef = useRef<number | null>(null)
   xhsSettingsRef.current = xhsSettings
   updateXhsSettingsRef.current = updateXhsSettings
+
+  const stopPreviewCentering = () => {
+    if (previewLocateFrameRef.current !== null) window.cancelAnimationFrame(previewLocateFrameRef.current)
+    previewLocateFrameRef.current = null
+    if (previewLocateSettleTimerRef.current !== null) window.clearTimeout(previewLocateSettleTimerRef.current)
+    previewLocateSettleTimerRef.current = null
+    previewLocateResizeObserverRef.current?.disconnect()
+    previewLocateResizeObserverRef.current = null
+    previewStageRef.current?.classList.remove('preview-locating')
+  }
+
+  const centerPreviewTarget = (anchor: HTMLElement) => {
+    const viewport = viewportRef.current
+    if (!viewport || !viewport.contains(anchor)) return
+
+    const viewportBounds = viewport.getBoundingClientRect()
+    const anchorBounds = anchor.getBoundingClientRect()
+    const targetTop = viewport.scrollTop
+      + anchorBounds.top
+      + anchorBounds.height / 2
+      - viewportBounds.top
+      - viewport.clientHeight / 2
+    const maximumScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
+    const nextScrollTop = Math.min(maximumScrollTop, Math.max(0, targetTop))
+    if (Math.abs(viewport.scrollTop - nextScrollTop) < 1) return
+
+    if (typeof viewport.scrollTo === 'function') viewport.scrollTo({ top: nextScrollTop, behavior: 'auto' })
+    else viewport.scrollTop = nextScrollTop
+  }
+
+  const startPreviewCentering = (stage: HTMLElement, anchor: HTMLElement) => {
+    stopPreviewCentering()
+    stage.classList.add('preview-locating')
+
+    previewLocateFrameRef.current = window.requestAnimationFrame(() => {
+      previewLocateFrameRef.current = null
+      centerPreviewTarget(anchor)
+
+      if (typeof ResizeObserver !== 'undefined') {
+        const layoutRoot = anchor.closest<HTMLElement>('.wechat-document, .x-article, .xhs-card-page') ?? stage
+        previewLocateResizeObserverRef.current = new ResizeObserver(() => centerPreviewTarget(anchor))
+        previewLocateResizeObserverRef.current.observe(layoutRoot)
+      }
+
+      previewLocateSettleTimerRef.current = window.setTimeout(() => {
+        centerPreviewTarget(anchor)
+        previewLocateResizeObserverRef.current?.disconnect()
+        previewLocateResizeObserverRef.current = null
+        stage.classList.remove('preview-locating')
+        previewLocateSettleTimerRef.current = null
+      }, PREVIEW_LOCATE_SETTLE_MS)
+    })
+  }
 
   const xhsMeasurementVariables = useMemo(() => ({
     '--article-accent': ARTICLE_ACCENT_COLORS[formatting.accent],
@@ -992,6 +1096,7 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
 
     handledLocateRequestRef.current = locateRequest.requestId
     pendingLocateRequestRef.current = locateRequest
+    setSelectedTarget(null)
     if (activePlatform === 'xhs') {
       const targetPage = cardPages.findIndex(page => page.includes(`data-source-block="${locateRequest.blockIndex}"`))
       if (targetPage >= 0) setActiveCard(targetPage)
@@ -1000,6 +1105,8 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
 
   useEffect(() => () => {
     if (locatedTargetTimerRef.current !== null) window.clearTimeout(locatedTargetTimerRef.current)
+    locatedTargetRef.current?.classList.remove('preview-located-target')
+    stopPreviewCentering()
     if (wechatCopyTimerRef.current !== null) window.clearTimeout(wechatCopyTimerRef.current)
     if (xhsImagePreview) URL.revokeObjectURL(xhsImagePreview.url)
   }, [xhsImagePreview])
@@ -1041,8 +1148,13 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
     const stage = previewStageRef.current
     stage?.querySelectorAll('[data-preview-selected="true"]').forEach(element => element.removeAttribute('data-preview-selected'))
     const pendingRequest = pendingLocateRequestRef.current
-    const effectiveTarget: PreviewEditTarget | null = selectedTarget
-      ?? (pendingRequest ? { kind: 'body', blockIndex: pendingRequest.blockIndex } : null)
+    const effectiveTarget: PreviewEditTarget | null = pendingRequest
+      ? {
+          kind: 'body',
+          blockIndex: pendingRequest.blockIndex,
+          ...(pendingRequest.line === undefined ? {} : { line: pendingRequest.line }),
+        }
+      : selectedTarget
     if (!stage || !effectiveTarget) return
 
     const selector = effectiveTarget.kind === 'body'
@@ -1051,18 +1163,24 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
         : `[data-source-block="${effectiveTarget.blockIndex}"][data-source-line="${effectiveTarget.line}"]`
       : `[data-edit-target="${effectiveTarget.kind}"]`
     const anchor = stage.querySelector<HTMLElement>(selector)
+      ?? (effectiveTarget.kind === 'body' && effectiveTarget.line !== undefined
+        ? stage.querySelector<HTMLElement>(`[data-source-block="${effectiveTarget.blockIndex}"]`)
+        : null)
     if (!anchor) return
 
     anchor.setAttribute('data-preview-selected', 'true')
 
     if (pendingRequest && effectiveTarget.kind === 'body' && pendingRequest.blockIndex === effectiveTarget.blockIndex) {
       pendingLocateRequestRef.current = null
+      locatedTargetRef.current?.classList.remove('preview-located-target')
+      locatedTargetRef.current = anchor
       anchor.classList.add('preview-located-target')
-      anchor.scrollIntoView?.({ block: 'center', inline: 'nearest', behavior: 'smooth' })
+      startPreviewCentering(stage, anchor)
       if (locatedTargetTimerRef.current !== null) window.clearTimeout(locatedTargetTimerRef.current)
       locatedTargetTimerRef.current = window.setTimeout(() => {
         anchor.classList.remove('preview-located-target')
         if (!selectedTarget) anchor.removeAttribute('data-preview-selected')
+        if (locatedTargetRef.current === anchor) locatedTargetRef.current = null
         locatedTargetTimerRef.current = null
       }, 2000)
     }

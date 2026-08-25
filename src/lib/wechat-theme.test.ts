@@ -65,6 +65,15 @@ describe('wechat theme layer', () => {
     expect(document.querySelectorAll('[data-wechat-theme] > [data-source-block]')).toHaveLength(2)
   })
 
+  it('keeps image alt text without rendering it as a visible caption', () => {
+    const output = applyWechatTheme('<p><img src="image.png" alt="image"></p>', { themeId: 'literary' })
+    const document = new DOMParser().parseFromString(output, 'text/html')
+
+    expect(document.querySelector('img')?.getAttribute('alt')).toBe('image')
+    expect(document.querySelector('[data-wechat-caption]')).toBeNull()
+    expect(document.querySelector('[data-wechat-theme]')?.textContent).not.toContain('image')
+  })
+
   it('adapts shared article typography, spacing, and accent inside WeChat themes', () => {
     const output = applyWechatTheme(
       '<p>共享排版</p><a href="https://example.com">链接</a>',

@@ -52,4 +52,10 @@ describe('platform compatibility formatting', () => {
       ['正文 **重点**', '', '`a == b`', '', '```ts', 'const a = value == other', '```'].join('\n'),
     )
   })
+
+  it('repairs malformed strong spacing before publishing Markdown', () => {
+    expect(applyPlatformMarkdownCompatibility('**问题选择： **判断哪个问题值得解决', 'generic')).toBe(
+      '**问题选择：** 判断哪个问题值得解决',
+    )
+  })
 })

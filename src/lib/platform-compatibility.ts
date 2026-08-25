@@ -1,3 +1,5 @@
+import { normalizeMarkdownStrongWhitespace } from './markdown-compatibility'
+
 export type PlatformContentTarget = 'wechat' | 'xhs' | 'x' | 'generic'
 
 const DEFAULT_HIGHLIGHT_COLOR = '#fff1a8'
@@ -94,12 +96,13 @@ export function applyPlatformMarkdownCompatibility(
   target: PlatformContentTarget,
 ): string | undefined {
   if (markdown === undefined) return undefined
+  const normalizedMarkdown = normalizeMarkdownStrongWhitespace(markdown)
   if (target === 'wechat') {
     return replaceMarkdownHighlightsOutsideCode(
-      markdown,
+      normalizedMarkdown,
       content =>
         `<span style="background-color:#fff1a8;padding:0.08em 0.2em;border-radius:3px">${content}</span>`,
     )
   }
-  return replaceMarkdownHighlightsOutsideCode(markdown, content => `**${content}**`)
+  return replaceMarkdownHighlightsOutsideCode(normalizedMarkdown, content => `**${content}**`)
 }

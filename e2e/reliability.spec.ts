@@ -16,7 +16,7 @@ interface BridgeTestWindow extends Window {
 }
 
 async function importFixture(page: Page, name: string): Promise<void> {
-  const fileInput = page.locator('.empty-import-card input[type="file"][accept*=".md"]')
+  const fileInput = page.locator('.empty-workbench-content > input[type="file"][accept*=".md"]')
   await fileInput.setInputFiles(path.join(FIXTURE_DIRECTORY, name))
   await expect(page.getByLabel('文章标题')).toBeVisible()
 }
@@ -24,6 +24,57 @@ async function importFixture(page: Page, name: string): Promise<void> {
 async function waitForLocalSave(page: Page): Promise<void> {
   await expect(page.locator('.history-sync-state', { hasText: '已保存' }).first()).toBeVisible({ timeout: 10_000 })
 }
+
+async function openLocalDataActions(page: Page): Promise<void> {
+  const trigger = page.getByRole('button', { name: /本地数据/ })
+  if (await trigger.getAttribute('aria-expanded') !== 'true') await trigger.click()
+  await expect(page.locator('.history-data-actions')).toBeVisible()
+}
+
+test('keeps the selected source line centered after large images settle and on repeated clicks', async ({ page }) => {
+  const largeSvg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="900" height="900" viewBox="0 0 900 900"><rect width="900" height="900" fill="#dce5ff"/></svg>').toString('base64')
+  const trailingParagraphs = Array.from({ length: 8 }, (_, index) => `后续段落 ${index + 1}，用于保留足够的预览滚动空间。`).join('\n\n')
+  const markdown = [
+    '# 预览居中回归',
+    '图片前正文。',
+    `![第一张大图](data:image/svg+xml;base64,${largeSvg})`,
+    `![第二张大图](data:image/svg+xml;base64,${largeSvg})`,
+    '目标定位行，应当出现在右侧正中间。',
+    trailingParagraphs,
+  ].join('\n\n')
+
+  await page.goto('/')
+  await page.locator('input[type="file"][accept*=".md"]').first().setInputFiles({
+    name: 'preview-center.md',
+    mimeType: 'text/markdown',
+    buffer: Buffer.from(markdown),
+  })
+  await expect(page.getByLabel('文章标题')).toHaveValue('预览居中回归')
+
+  const sourceLine = page.locator('.cm-line').filter({ hasText: '目标定位行，应当出现在右侧正中间。' }).first()
+  const previewViewport = page.locator('.platform-preview-viewport')
+  const selectedTarget = page.locator('.wechat-content [data-preview-selected="true"]').first()
+  const centerOffset = () => page.evaluate(() => {
+    const viewport = document.querySelector<HTMLElement>('.platform-preview-viewport')
+    const target = document.querySelector<HTMLElement>('.wechat-content [data-preview-selected="true"]')
+    if (!viewport || !target) return Number.POSITIVE_INFINITY
+    const viewportBounds = viewport.getBoundingClientRect()
+    const targetBounds = target.getBoundingClientRect()
+    return Math.abs(
+      targetBounds.top + targetBounds.height / 2
+      - (viewportBounds.top + viewport.clientHeight / 2),
+    )
+  })
+
+  await sourceLine.click()
+  await expect(selectedTarget).toContainText('目标定位行')
+  await expect.poll(centerOffset).toBeLessThan(4)
+
+  await previewViewport.evaluate(element => { element.scrollTop = 0 })
+  await sourceLine.click()
+  await expect(selectedTarget).toContainText('目标定位行')
+  await expect.poll(centerOffset).toBeLessThan(4)
+})
 
 test('imports, autosaves, restores, and exports a privacy-safe diagnostic report', async ({ page }) => {
   await page.goto('/')
@@ -34,6 +85,7 @@ test('imports, autosaves, restores, and exports a privacy-safe diagnostic report
   await page.reload()
   await expect(page.getByLabel('文章标题')).toHaveValue('Reliability Baseline')
 
+  await openLocalDataActions(page)
   const downloadPromise = page.waitForEvent('download')
   await page.getByRole('button', { name: '导出诊断报告' }).click()
   const download = await downloadPromise
@@ -55,6 +107,7 @@ test('moves a complete local backup to a different browser origin', async ({ pag
   await importFixture(page, 'obsidian-complex.md')
   await waitForLocalSave(page)
 
+  await openLocalDataActions(page)
   const downloadPromise = page.waitForEvent('download')
   await page.getByRole('button', { name: '导出备份' }).click()
   const backup = await downloadPromise
@@ -62,7 +115,7 @@ test('moves a complete local backup to a different browser origin', async ({ pag
   expect(backupPath).not.toBeNull()
 
   await page.goto('http://localhost:4174/')
-  await expect(page.getByRole('heading', { name: '新建或导入一篇稿件' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '写一次，适配并发布到多个平台' })).toBeVisible()
   await page.locator('input[accept*=".ezwriting-backup"]').setInputFiles(backupPath!)
 
   await expect(page.getByLabel('文章标题')).toHaveValue('Obsidian Compatibility')
@@ -90,7 +143,7 @@ test('exports the Xiaohongshu card master at 1080 by 1440 pixels', async ({ page
 
 test('blocks publishing for a blank document', async ({ page }) => {
   await page.goto('/')
-  await page.getByRole('button', { name: '新建文档' }).click()
+  await page.getByRole('button', { name: '开始创作' }).click()
   await expect(page.getByRole('button', { name: /打开发布面板/ })).toBeDisabled()
 })
 
@@ -101,7 +154,7 @@ test('sanitizes imported HTML before previews can trigger hidden requests or for
     await route.abort()
   })
   await page.goto('/')
-  await page.locator('.empty-import-card input[type="file"][accept*=".md"]').setInputFiles({
+  await page.locator('.empty-workbench-content > input[type="file"][accept*=".md"]').setInputFiles({
     name: 'unsafe-network.html',
     mimeType: 'text/html',
     buffer: Buffer.from(`
@@ -186,6 +239,7 @@ test('flushes an immediate edit before delete and restores the latest version', 
   await page.getByLabel('文章标题').fill('删除前最后一版')
   await page.locator('.history-draft-menu-button').first().click()
   await page.getByRole('menuitem', { name: '删除' }).click()
+  await page.getByRole('button', { name: '展开历史记录' }).click()
   await page.locator('.history-undo-notice button').click()
   await page.locator('.history-draft-open').first().click()
 
@@ -215,6 +269,7 @@ test('turns simultaneous backup clicks into one download', async ({ page }) => {
   await importFixture(page, 'markdown-baseline.md')
   await waitForLocalSave(page)
 
+  await openLocalDataActions(page)
   const downloads: string[] = []
   page.on('download', download => downloads.push(download.suggestedFilename()))
   await page.getByRole('button', { name: '导出备份' }).evaluate((button: HTMLButtonElement) => {

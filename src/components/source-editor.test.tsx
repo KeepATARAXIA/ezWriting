@@ -1,4 +1,5 @@
 import { act } from 'react'
+import { EditorView } from '@codemirror/view'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SourceEditor } from './source-editor'
@@ -26,6 +27,7 @@ describe('SourceEditor', () => {
   afterEach(async () => {
     await act(async () => root.unmount())
     container.remove()
+    vi.restoreAllMocks()
   })
 
   it('renders a line-numbered Markdown source surface and inserts warning syntax', async () => {
@@ -71,7 +73,9 @@ describe('SourceEditor', () => {
     const widget = container.querySelector('.source-image-widget.block')
     expect(widget).not.toBeNull()
     expect(widget?.querySelector('img')?.getAttribute('src')).toBe(dataUri)
-    expect(widget?.querySelector('figcaption')?.textContent).toContain('流程图')
+    expect(widget?.querySelector('figcaption')?.textContent).not.toContain('流程图')
+    expect(widget?.getAttribute('aria-label')).toBe('图片：流程图')
+    expect(widget?.querySelector('button')?.getAttribute('aria-label')).toBe('替换图片 流程图')
     expect(container.querySelector('.cm-content')?.textContent).not.toContain('![流程图]')
     expect(container.querySelector('.cm-content')?.textContent).not.toContain('PHN2Zy')
   })
@@ -175,6 +179,196 @@ describe('SourceEditor', () => {
 
     expect(container.querySelector('.cm-content')?.textContent).toBe('父级恢复的第二版正文')
     expect(container.querySelector<HTMLButtonElement>('button[aria-label="撤销"]')?.disabled).toBe(true)
+  })
+
+  it('restores cut content at its original position after a controlled source refresh', async () => {
+    const onChange = vi.fn()
+    const original = '开头段落\n需要恢复的内容\n结尾段落'
+    const afterCut = '开头段落\n结尾段落'
+    await act(async () => root.render(
+      <SourceEditor value={original} language="markdown" onChange={onChange} />,
+    ))
+    await act(async () => new Promise(resolve => window.setTimeout(resolve, 0)))
+
+    const editor = container.querySelector<HTMLElement>('.cm-content')!
+    const view = EditorView.findFromDOM(editor)!
+    const from = original.indexOf('需要恢复的内容')
+    const to = from + '需要恢复的内容\n'.length
+    await act(async () => {
+      view.dispatch({ changes: { from, to }, userEvent: 'delete.cut' })
+      await vi.waitFor(() => expect(onChange).toHaveBeenLastCalledWith(afterCut), { timeout: 600 })
+    })
+
+    const refreshed = `${afterCut}\n父层同步补充`
+    await act(async () => root.render(
+      <SourceEditor value={refreshed} language="markdown" onChange={onChange} />,
+    ))
+    await act(async () => new Promise(resolve => window.setTimeout(resolve, 0)))
+
+    await act(async () => {
+      editor.dispatchEvent(new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        key: 'z',
+        ctrlKey: true,
+      }))
+      await Promise.resolve()
+    })
+
+    expect(view.state.doc.toString()).toBe(`${original}\n父层同步补充`)
+  })
+
+  it('ignores a delayed local source echo after the editor has moved ahead', async () => {
+    const onChange = vi.fn()
+    await act(async () => root.render(
+      <SourceEditor value="初始内容" language="markdown" onChange={onChange} />,
+    ))
+    await act(async () => new Promise(resolve => window.setTimeout(resolve, 0)))
+
+    const editor = container.querySelector<HTMLElement>('.cm-content')!
+    const view = EditorView.findFromDOM(editor)!
+    await act(async () => {
+      view.dispatch({ changes: { from: view.state.doc.length, insert: '第一次编辑' } })
+      await vi.waitFor(() => expect(onChange).toHaveBeenLastCalledWith('初始内容第一次编辑'), { timeout: 600 })
+    })
+
+    await act(async () => {
+      view.dispatch({ changes: { from: view.state.doc.length, insert: '第二次编辑' } })
+      root.render(
+        <SourceEditor value="初始内容第一次编辑" language="markdown" onChange={onChange} />,
+      )
+      await Promise.resolve()
+    })
+
+    expect(editor.textContent).toBe('初始内容第一次编辑第二次编辑')
+  })
+
+  it('opens safe Markdown links from the editor with Ctrl or Command click', async () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+    await act(async () => root.render(
+      <SourceEditor value="[打开 OpenAI](https://openai.com/index/example)" language="markdown" onChange={vi.fn()} />,
+    ))
+    await act(async () => new Promise(resolve => window.setTimeout(resolve, 0)))
+
+    const link = container.querySelector<HTMLElement>('.cm-editor-direct-link')!
+    expect(link.getAttribute('title')).toBe('Ctrl / Command + 点击打开链接')
+
+    await act(async () => link.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    expect(open).not.toHaveBeenCalled()
+
+    await act(async () => link.dispatchEvent(new MouseEvent('click', {
+      bubbles: true,
+      cancelable: true,
+      ctrlKey: true,
+    })))
+    expect(open).toHaveBeenCalledWith('https://openai.com/index/example', '_blank', 'noopener,noreferrer')
+  })
+
+  it('shows one clear line highlight for preview-to-editor locating', async () => {
+    await act(async () => root.render(
+      <SourceEditor
+        value={'第一段\n第二段\n第三段'}
+        language="markdown"
+        focusRequest={{ line: 2, requestId: 1 }}
+        onChange={vi.fn()}
+      />,
+    ))
+    await act(async () => new Promise(resolve => window.setTimeout(resolve, 0)))
+
+    expect(container.querySelectorAll('.cm-located-source-line')).toHaveLength(1)
+    expect(container.querySelector('.cm-located-source-line')?.textContent).toBe('第二段')
+
+    await act(async () => root.render(
+      <SourceEditor
+        value={'第一段\n第二段\n第三段'}
+        language="markdown"
+        focusRequest={{ line: 3, requestId: 2 }}
+        onChange={vi.fn()}
+      />,
+    ))
+
+    expect(container.querySelectorAll('.cm-located-source-line')).toHaveLength(1)
+    expect(container.querySelector('.cm-located-source-line')?.textContent).toBe('第三段')
+  })
+
+  it('reports the active Markdown block together with the exact source line', async () => {
+    const onActiveBlockChange = vi.fn()
+    await act(async () => root.render(
+      <SourceEditor
+        value={'第一段\n\n- 项目一\n- 项目二'}
+        language="markdown"
+        focusRequest={{ line: 4, requestId: 1 }}
+        onChange={vi.fn()}
+        onActiveBlockChange={onActiveBlockChange}
+      />,
+    ))
+
+    await act(async () => {
+      await vi.waitFor(
+        () => expect(onActiveBlockChange).toHaveBeenLastCalledWith({ blockIndex: 1, line: 4 }),
+        { timeout: 500 },
+      )
+    })
+
+    onActiveBlockChange.mockClear()
+    await act(async () => {
+      container.querySelector<HTMLElement>('.cm-content')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await vi.waitFor(
+        () => expect(onActiveBlockChange).toHaveBeenLastCalledWith({ blockIndex: 1, line: 4 }),
+        { timeout: 500 },
+      )
+    })
+  })
+
+  it('waits for Chinese IME composition to finish before syncing a Markdown heading', async () => {
+    const onChange = vi.fn()
+    await act(async () => root.render(
+      <SourceEditor value="企业缺的不是模型" language="markdown" onChange={onChange} />,
+    ))
+    await act(async () => new Promise(resolve => window.setTimeout(resolve, 0)))
+
+    const editor = container.querySelector<HTMLElement>('.cm-content')!
+    editor.focus()
+
+    await act(async () => {
+      editor.dispatchEvent(new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        key: '2',
+        ctrlKey: true,
+        altKey: true,
+      }))
+      editor.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true, data: 'xian' }))
+      const line = editor.querySelector<HTMLElement>('.cm-line')!
+      line.textContent = '## 企业缺的不是xian'
+      editor.dispatchEvent(new CompositionEvent('compositionupdate', { bubbles: true, data: 'xian' }))
+      editor.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        data: 'xian',
+        inputType: 'insertCompositionText',
+        isComposing: true,
+      }))
+      await new Promise(resolve => window.setTimeout(resolve, 320))
+    })
+
+    expect(onChange).not.toHaveBeenCalled()
+
+    await act(async () => {
+      const line = editor.querySelector<HTMLElement>('.cm-line')!
+      line.textContent = '## 企业缺的不是现实'
+      editor.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '现实' }))
+      editor.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        data: '现实',
+        inputType: 'insertText',
+        isComposing: false,
+      }))
+      await vi.waitFor(
+        () => expect(onChange).toHaveBeenLastCalledWith('## 企业缺的不是现实'),
+        { timeout: 700 },
+      )
+    })
+    expect(onChange).toHaveBeenCalledTimes(1)
   })
 
   it('preserves the outer workspace scroll position while undoing repeatedly', async () => {

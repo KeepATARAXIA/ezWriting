@@ -7,6 +7,7 @@ import {
 } from 'react'
 import {
   CheckCircle2,
+  ChevronDown,
   FileDown,
   Download,
   FileText,
@@ -158,6 +159,7 @@ export function HistorySidebar({
   className = '',
 }: HistorySidebarProps) {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null)
+  const [dataActionsExpanded, setDataActionsExpanded] = useState(false)
   const menuButtonRefs = useRef(new Map<string, HTMLButtonElement>())
   const menuRefs = useRef(new Map<string, HTMLDivElement>())
   const draftButtonRefs = useRef(new Map<string, HTMLButtonElement>())
@@ -178,7 +180,10 @@ export function HistorySidebar({
   }, [now, visibleDrafts])
 
   useEffect(() => {
-    if (!isExpanded) setOpenMenuId(null)
+    if (!isExpanded) {
+      setOpenMenuId(null)
+      setDataActionsExpanded(false)
+    }
   }, [isExpanded])
 
   useEffect(() => {
@@ -437,29 +442,42 @@ export function HistorySidebar({
           </div>
         )}
 
-        <footer className="history-account-footer">
-          <div className="history-local-storage">
+        <footer className={`history-account-footer ${dataActionsExpanded ? 'expanded' : ''}`}>
+          <button
+            type="button"
+            className="history-data-trigger"
+            aria-expanded={dataActionsExpanded}
+            aria-controls="history-data-actions"
+            onClick={() => setDataActionsExpanded(current => !current)}
+          >
             <span className="history-storage-icon"><HardDrive size={17} aria-hidden="true" /></span>
             <span>
               <strong>本地数据</strong>
-              <small>{storagePersistent === true ? '已启用持久化存储' : '建议定期导出备份'}</small>
+              <small>{storagePersistent === true ? '已启用持久化存储' : '已自动保存在此浏览器'}</small>
             </span>
-            {storagePersistent === true && <CheckCircle2 size={15} aria-hidden="true" />}
-          </div>
-          <div className="history-backup-actions">
-            <button type="button" disabled={interactionLocked || backupStatus !== 'idle'} onClick={onExportBackup}>
-              {backupStatus === 'exporting' ? <LoaderCircle className="spin" size={14} /> : <Download size={14} />}
-              {backupStatus === 'exporting' ? '导出中' : '导出备份'}
-            </button>
-            <button type="button" disabled={interactionLocked || backupStatus !== 'idle'} onClick={onImportBackup}>
-              {backupStatus === 'importing' ? <LoaderCircle className="spin" size={14} /> : <Upload size={14} />}
-              {backupStatus === 'importing' ? '导入中' : '导入备份'}
-            </button>
-            <button type="button" disabled={interactionLocked} style={{ gridColumn: '1 / -1' }} onClick={onExportDiagnostics}>
-              <FileDown size={14} /> 导出诊断报告
-            </button>
-          </div>
-          <p><HardDrive size={12} aria-hidden="true" /> 数据仅保存在此设备和浏览器；换域名或清理网站数据前请先导出。</p>
+            <span className="history-data-state" aria-hidden="true">
+              {storagePersistent === true && <CheckCircle2 size={15} />}
+              <ChevronDown size={16} />
+            </span>
+          </button>
+          {dataActionsExpanded && (
+            <div id="history-data-actions" className="history-data-actions">
+              <div className="history-backup-actions">
+                <button type="button" disabled={interactionLocked || backupStatus !== 'idle'} onClick={onExportBackup}>
+                  {backupStatus === 'exporting' ? <LoaderCircle className="spin" size={14} /> : <Download size={14} />}
+                  {backupStatus === 'exporting' ? '导出中' : '导出备份'}
+                </button>
+                <button type="button" disabled={interactionLocked || backupStatus !== 'idle'} onClick={onImportBackup}>
+                  {backupStatus === 'importing' ? <LoaderCircle className="spin" size={14} /> : <Upload size={14} />}
+                  {backupStatus === 'importing' ? '导入中' : '导入备份'}
+                </button>
+                <button type="button" disabled={interactionLocked} style={{ gridColumn: '1 / -1' }} onClick={onExportDiagnostics}>
+                  <FileDown size={14} /> 导出诊断报告
+                </button>
+              </div>
+              <p><HardDrive size={12} aria-hidden="true" /> 换域名或清理网站数据前，请先导出备份。</p>
+            </div>
+          )}
         </footer>
       </div>
     </aside>

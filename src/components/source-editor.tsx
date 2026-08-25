@@ -4,7 +4,7 @@ import { basicSetup } from 'codemirror'
 import { html } from '@codemirror/lang-html'
 import { markdown } from '@codemirror/lang-markdown'
 import { redo, redoDepth, undo, undoDepth } from '@codemirror/commands'
-import { Annotation, Compartment, EditorState, Facet, Prec, StateField, Transaction } from '@codemirror/state'
+import { Annotation, Compartment, EditorState, Facet, Prec, StateEffect, StateField, Transaction } from '@codemirror/state'
 import {
   Decoration,
   EditorView,
@@ -42,13 +42,18 @@ export interface SourceEditorFocusRequest {
   requestId: number
 }
 
+export interface SourceEditorActiveLocation {
+  blockIndex: number
+  line: number
+}
+
 interface SourceEditorProps {
   value: string
   language: ArticleSourceLanguage
   focusRequest?: SourceEditorFocusRequest | null
   readOnly?: boolean
   onChange: (value: string) => void
-  onActiveBlockChange?: (blockIndex: number | null) => void
+  onActiveBlockChange?: (location: SourceEditorActiveLocation | null) => void
 }
 
 interface ToolButtonProps {
@@ -99,11 +104,51 @@ function readFileAsDataUrl(file: File): Promise<string> {
 }
 
 const MARKDOWN_IMAGE_SOURCE = /!\[([^\]\n]*)\]\(\s*(?:<([^>\n]+)>|([^\s)\n]+))(?:\s+["'][^"'\n]*["'])?\s*\)/g
+const MARKDOWN_LINK_SOURCE = /(?<!!)\[([^\]\n]+)\]\(\s*(?:<([^>\n]+)>|([^\s)\n]+))(?:\s+["'][^"'\n]*["'])?\s*\)/g
 const EMBEDDED_IMAGE_TOKEN = /dispatch-editor-image:\/\/[a-z0-9-]+/gi
 const EMBEDDED_IMAGE_PREFIX = 'dispatch-editor-image://image-'
 const controlledValueUpdate = Annotation.define<boolean>()
+const setLocatedSourceLine = StateEffect.define<number | null>()
 const SOURCE_CHANGE_DEBOUNCE_MS = 240
 const IMAGE_SOURCE_CHANGE_DEBOUNCE_MS = 320
+const sourceLanguageFacet = Facet.define<ArticleSourceLanguage, ArticleSourceLanguage>({
+  combine: values => values[0] ?? 'markdown',
+})
+
+const locatedSourceLineField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update: (decorations, transaction) => {
+    const effect = transaction.effects.find(candidate => candidate.is(setLocatedSourceLine))
+    if (!effect) return decorations.map(transaction.changes)
+    if (effect.value === null) return Decoration.none
+    const lineNumber = Math.min(Math.max(1, effect.value), transaction.state.doc.lines)
+    return Decoration.set([
+      Decoration.line({ class: 'cm-located-source-line' }).range(transaction.state.doc.line(lineNumber).from),
+    ])
+  },
+  provide: field => EditorView.decorations.from(field),
+})
+
+function markdownLinkDecorations(state: EditorState): DecorationSet {
+  if (state.facet(sourceLanguageFacet) === 'html') return Decoration.none
+  const ranges = Array.from(state.doc.toString().matchAll(MARKDOWN_LINK_SOURCE)).flatMap(match => {
+    if (!safeExternalUrl(match[2] || match[3] || '')) return []
+    return [Decoration.mark({
+      class: 'cm-editor-direct-link',
+      attributes: { title: 'Ctrl / Command + 点击打开链接' },
+    }).range(match.index, match.index + match[0].length)]
+  })
+  return Decoration.set(ranges, true)
+}
+
+const markdownLinkField = StateField.define<DecorationSet>({
+  create: markdownLinkDecorations,
+  update: (decorations, transaction) => transaction.docChanged
+    || transaction.startState.facet(sourceLanguageFacet) !== transaction.state.facet(sourceLanguageFacet)
+    ? markdownLinkDecorations(transaction.state)
+    : decorations.map(transaction.changes),
+  provide: field => EditorView.decorations.from(field),
+})
 
 interface EmbeddedImageContext {
   sources: Map<string, string>
@@ -149,6 +194,26 @@ function compactEmbeddedImages(text: string, previous: Map<string, string>): { t
 
 function expandEmbeddedImages(text: string, sources: Map<string, string>): string {
   return text.replace(EMBEDDED_IMAGE_TOKEN, token => sources.get(token) ?? token)
+}
+
+function minimalTextChange(current: string, next: string): { from: number; to: number; insert: string } | null {
+  if (current === next) return null
+  let from = 0
+  const sharedLength = Math.min(current.length, next.length)
+  while (from < sharedLength && current.charCodeAt(from) === next.charCodeAt(from)) from += 1
+
+  let currentTo = current.length
+  let nextTo = next.length
+  while (
+    currentTo > from
+    && nextTo > from
+    && current.charCodeAt(currentTo - 1) === next.charCodeAt(nextTo - 1)
+  ) {
+    currentTo -= 1
+    nextTo -= 1
+  }
+
+  return { from, to: currentTo, insert: next.slice(from, nextTo) }
 }
 
 function imageLabel(alt: string, source: string): string {
@@ -215,19 +280,18 @@ class MarkdownImageWidget extends WidgetType {
     }
 
     const footer = document.createElement('figcaption')
-    const label = document.createElement('span')
-    label.textContent = imageLabel(this.alt, this.source)
+    const accessibleLabel = imageLabel(this.alt, this.source)
     const actions = document.createElement('span')
     actions.className = 'source-image-actions'
     const replaceButton = document.createElement('button')
     replaceButton.type = 'button'
     replaceButton.textContent = '替换'
-    replaceButton.setAttribute('aria-label', `替换图片 ${label.textContent}`)
+    replaceButton.setAttribute('aria-label', `替换图片 ${accessibleLabel}`)
     const deleteButton = document.createElement('button')
     deleteButton.type = 'button'
     deleteButton.textContent = '删除'
     deleteButton.className = 'delete'
-    deleteButton.setAttribute('aria-label', `删除图片 ${label.textContent}`)
+    deleteButton.setAttribute('aria-label', `删除图片 ${accessibleLabel}`)
     const input = document.createElement('input')
     input.type = 'file'
     input.accept = 'image/*'
@@ -290,7 +354,7 @@ class MarkdownImageWidget extends WidgetType {
     })
 
     actions.append(replaceButton, deleteButton)
-    footer.append(label, actions, input)
+    footer.append(actions, input)
     figure.append(media, footer)
     return figure
   }
@@ -369,6 +433,25 @@ function clearHtmlFormatting(text: string): string {
   return text.replace(/<[^>]+>/g, '')
 }
 
+function safeExternalUrl(value: string): string | null {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : null
+  } catch {
+    return null
+  }
+}
+
+function markdownLinkAtOffset(text: string, offset: number): string | null {
+  for (const match of text.matchAll(MARKDOWN_LINK_SOURCE)) {
+    const from = match.index
+    const to = from + match[0].length
+    if (offset < from || offset > to) continue
+    return safeExternalUrl(match[2] || match[3] || '')
+  }
+  return null
+}
+
 export function SourceEditor({ value, language, focusRequest, readOnly = false, onChange, onActiveBlockChange }: SourceEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -383,7 +466,11 @@ export function SourceEditor({ value, language, focusRequest, readOnly = false, 
   const readOnlyRef = useRef(readOnly)
   const lastFocusRequestRef = useRef(0)
   const changeTimerRef = useRef<number | null>(null)
+  const compositionEndTimerRef = useRef<number | null>(null)
+  const compositionActiveRef = useRef(false)
   const activeBlockTimerRef = useRef<number | null>(null)
+  const locatedLineTimerRef = useRef<number | null>(null)
+  const pendingLocalEchoesRef = useRef<string[]>([])
   const [selectionMenu, setSelectionMenu] = useState<SelectionMenuState | null>(null)
   const [historyAvailability, setHistoryAvailability] = useState({ canUndo: false, canRedo: false })
 
@@ -393,9 +480,11 @@ export function SourceEditor({ value, language, focusRequest, readOnly = false, 
   readOnlyRef.current = readOnly
 
   const reportActiveBlock = (view: EditorView) => {
-    onActiveBlockChangeRef.current?.(
-      sourceBlockIndexAtOffset(view.state.doc.toString(), languageRef.current, view.state.selection.main.head),
-    )
+    const head = view.state.selection.main.head
+    const blockIndex = sourceBlockIndexAtOffset(view.state.doc.toString(), languageRef.current, head)
+    onActiveBlockChangeRef.current?.(blockIndex === null
+      ? null
+      : { blockIndex, line: view.state.doc.lineAt(head).number })
   }
 
   const scheduleActiveBlock = (view: EditorView, immediate = false) => {
@@ -449,7 +538,12 @@ export function SourceEditor({ value, language, focusRequest, readOnly = false, 
   const emitSourceChange = (view: EditorView) => {
     if (changeTimerRef.current !== null) window.clearTimeout(changeTimerRef.current)
     changeTimerRef.current = null
-    onChangeRef.current(expandEmbeddedImages(view.state.doc.toString(), embeddedImagesRef.current))
+    if (compositionActiveRef.current || view.compositionStarted) return
+    const compactedText = view.state.doc.toString()
+    const pendingEchoes = pendingLocalEchoesRef.current
+    if (pendingEchoes.at(-1) !== compactedText) pendingEchoes.push(compactedText)
+    if (pendingEchoes.length > 20) pendingEchoes.splice(0, pendingEchoes.length - 20)
+    onChangeRef.current(expandEmbeddedImages(compactedText, embeddedImagesRef.current))
   }
 
   const scheduleSourceChange = (view: EditorView) => {
@@ -743,12 +837,17 @@ export function SourceEditor({ value, language, focusRequest, readOnly = false, 
           basicSetup,
           imageSourceCompartment.of(embeddedImageFacet.of({ sources: compacted.sources })),
           imagePreviewField,
+          locatedSourceLineField,
+          markdownLinkField,
           readOnlyCompartment.of([
             EditorState.readOnly.of(readOnly),
             EditorView.editable.of(!readOnly),
           ]),
           EditorView.atomicRanges.of(view => view.state.field(imagePreviewField)),
-          languageCompartment.of(language === 'markdown' ? markdown() : html()),
+          languageCompartment.of([
+            sourceLanguageFacet.of(language),
+            language === 'markdown' ? markdown() : html(),
+          ]),
           Prec.high(EditorView.domEventHandlers({
             keydown: event => {
               if (readOnlyRef.current) return false
@@ -788,8 +887,45 @@ export function SourceEditor({ value, language, focusRequest, readOnly = false, 
             spellcheck: 'true',
           }),
           EditorView.domEventHandlers({
+            compositionstart: () => {
+              compositionActiveRef.current = true
+              if (compositionEndTimerRef.current !== null) window.clearTimeout(compositionEndTimerRef.current)
+              compositionEndTimerRef.current = null
+              if (changeTimerRef.current !== null) window.clearTimeout(changeTimerRef.current)
+              changeTimerRef.current = null
+              return false
+            },
+            compositionupdate: () => {
+              compositionActiveRef.current = true
+              if (changeTimerRef.current !== null) window.clearTimeout(changeTimerRef.current)
+              changeTimerRef.current = null
+              return false
+            },
+            compositionend: (_event, currentView) => {
+              compositionActiveRef.current = false
+              if (compositionEndTimerRef.current !== null) window.clearTimeout(compositionEndTimerRef.current)
+              compositionEndTimerRef.current = window.setTimeout(() => {
+                compositionEndTimerRef.current = null
+                if (viewRef.current === currentView) scheduleSourceChange(currentView)
+              }, 0)
+              return false
+            },
             blur: (_event, currentView) => {
               if (changeTimerRef.current !== null) emitSourceChange(currentView)
+              return false
+            },
+            click: (event, currentView) => {
+              if (languageRef.current === 'markdown' && (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey) {
+                const position = currentView.posAtCoords({ x: event.clientX, y: event.clientY })
+                  ?? currentView.state.selection.main.head
+                const link = markdownLinkAtOffset(currentView.state.doc.toString(), position)
+                if (link) {
+                  event.preventDefault()
+                  window.open(link, '_blank', 'noopener,noreferrer')
+                  return true
+                }
+              }
+              scheduleActiveBlock(currentView)
               return false
             },
             paste: event => {
@@ -818,7 +954,14 @@ export function SourceEditor({ value, language, focusRequest, readOnly = false, 
             const isControlledValueUpdate = update.transactions.some(
               transaction => transaction.annotation(controlledValueUpdate) === true,
             )
-            if (update.docChanged && !isControlledValueUpdate) scheduleSourceChange(update.view)
+            if (update.docChanged && !isControlledValueUpdate) {
+              if (compositionActiveRef.current || update.view.compositionStarted) {
+                if (changeTimerRef.current !== null) window.clearTimeout(changeTimerRef.current)
+                changeTimerRef.current = null
+              } else {
+                scheduleSourceChange(update.view)
+              }
+            }
             if (update.docChanged || update.selectionSet) scheduleActiveBlock(update.view)
             if (update.docChanged || update.selectionSet || update.geometryChanged) updateEditorUi(update.view)
           }),
@@ -841,11 +984,13 @@ export function SourceEditor({ value, language, focusRequest, readOnly = false, 
       }),
     })
     viewRef.current = view
-    scheduleActiveBlock(view, true)
     updateEditorUi(view)
     return () => {
       if (changeTimerRef.current !== null) window.clearTimeout(changeTimerRef.current)
+      if (compositionEndTimerRef.current !== null) window.clearTimeout(compositionEndTimerRef.current)
+      compositionActiveRef.current = false
       if (activeBlockTimerRef.current !== null) window.clearTimeout(activeBlockTimerRef.current)
+      if (locatedLineTimerRef.current !== null) window.clearTimeout(locatedLineTimerRef.current)
       view.destroy()
       viewRef.current = null
     }
@@ -854,10 +999,24 @@ export function SourceEditor({ value, language, focusRequest, readOnly = false, 
   useEffect(() => {
     const view = viewRef.current
     if (!view) return
+    if (compositionActiveRef.current || view.compositionStarted) return
     const previousSources = embeddedImagesRef.current
     const compacted = compactEmbeddedImages(value, previousSources)
-    embeddedImagesRef.current = compacted.sources
     const current = view.state.doc.toString()
+    const pendingEchoes = pendingLocalEchoesRef.current
+    let echoIndex = -1
+    for (let index = pendingEchoes.length - 1; index >= 0; index -= 1) {
+      if (pendingEchoes[index] === compacted.text) {
+        echoIndex = index
+        break
+      }
+    }
+    if (echoIndex >= 0) {
+      pendingEchoes.splice(0, echoIndex + 1)
+      if (current !== compacted.text) return
+    }
+
+    embeddedImagesRef.current = compacted.sources
     const sourcesChanged = compacted.sources !== previousSources
     if (current === compacted.text && !sourcesChanged) return
     const effects = sourcesChanged
@@ -865,12 +1024,9 @@ export function SourceEditor({ value, language, focusRequest, readOnly = false, 
       : undefined
     const scrollTop = view.scrollDOM.scrollTop
     const scrollLeft = view.scrollDOM.scrollLeft
-    const { anchor, head } = view.state.selection.main
+    const changes = minimalTextChange(current, compacted.text)
     view.dispatch({
-      ...(current === compacted.text ? {} : {
-        changes: { from: 0, to: current.length, insert: compacted.text },
-        selection: { anchor: Math.min(anchor, compacted.text.length), head: Math.min(head, compacted.text.length) },
-      }),
+      ...(changes ? { changes } : {}),
       effects,
       annotations: [controlledValueUpdate.of(true), Transaction.addToHistory.of(false)],
     })
@@ -895,7 +1051,10 @@ export function SourceEditor({ value, language, focusRequest, readOnly = false, 
     if (!view) return
     languageRef.current = language
     view.dispatch({
-      effects: languageCompartmentRef.current.reconfigure(language === 'markdown' ? markdown() : html()),
+      effects: languageCompartmentRef.current.reconfigure([
+        sourceLanguageFacet.of(language),
+        language === 'markdown' ? markdown() : html(),
+      ]),
     })
   }, [language])
 
@@ -907,8 +1066,16 @@ export function SourceEditor({ value, language, focusRequest, readOnly = false, 
     const position = view.state.doc.line(lineNumber).to
     view.dispatch({
       selection: { anchor: position },
-      effects: EditorView.scrollIntoView(position, { y: 'center', yMargin: 32 }),
+      effects: [
+        EditorView.scrollIntoView(position, { y: 'center', yMargin: 32 }),
+        setLocatedSourceLine.of(lineNumber),
+      ],
     })
+    if (locatedLineTimerRef.current !== null) window.clearTimeout(locatedLineTimerRef.current)
+    locatedLineTimerRef.current = window.setTimeout(() => {
+      locatedLineTimerRef.current = null
+      if (viewRef.current === view) view.dispatch({ effects: setLocatedSourceLine.of(null) })
+    }, 2200)
     view.focus()
   }, [focusRequest])
 

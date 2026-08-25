@@ -3,6 +3,8 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
+import { DEFAULT_ARTICLE_FORMATTING } from './domain/formatting'
+import { createPersistedDraft } from './domain/saved-draft'
 import { LOCAL_BACKUP_FORMAT, LOCAL_BACKUP_VERSION } from './services/local-backup'
 import { LocalDraftRepository, resetLocalDraftDatabase } from './services/local-draft-repository'
 
@@ -49,6 +51,15 @@ describe('App local draft history', () => {
     await repository.getSetting('last-active-draft-id')
     await act(async () => root.render(<App draftRepository={repository} />))
     await act(async () => new Promise(resolve => window.setTimeout(resolve, 30)))
+  }
+
+  async function openLocalDataActions() {
+    const expandHistory = container.querySelector<HTMLButtonElement>('[aria-label="展开历史记录"]')
+    if (expandHistory) await act(async () => expandHistory.click())
+    const trigger = container.querySelector<HTMLButtonElement>('.history-data-trigger')!
+    if (trigger.getAttribute('aria-expanded') !== 'true') {
+      await act(async () => trigger.click())
+    }
   }
 
   it('autosaves a new draft, restores it after remount, and supports delete undo', async () => {
@@ -100,8 +111,43 @@ describe('App local draft history', () => {
     expect((await repository.listDrafts()).map(draft => draft.title)).toEqual(['本地历史测试稿'])
   })
 
+  it('repairs and autosaves malformed strong spacing when restoring an existing Markdown draft', async () => {
+    const malformedSource = '- **问题选择： **判断哪个问题值得解决；'
+    const draft = createPersistedDraft({
+      id: 'legacy-strong-spacing',
+      title: '旧加粗语法',
+      html: '<ul><li>**问题选择： **判断哪个问题值得解决；</li></ul>',
+      markdown: malformedSource,
+      sourceText: malformedSource,
+      sourceLanguage: 'markdown',
+      tags: [],
+      sourceFile: 'legacy.md',
+      sourceKind: 'markdown',
+      importedAt: '2026-08-25T00:00:00.000Z',
+      warnings: [],
+      missingAssets: [],
+    }, DEFAULT_ARTICLE_FORMATTING)
+    await repository.saveDraft(draft)
+
+    await renderApp()
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(container.querySelector('.cm-content')?.textContent).toContain('**问题选择：** 判断哪个问题值得解决；')
+        expect(container.querySelector('.wechat-content strong')?.textContent).toBe('问题选择：')
+      })
+      await new Promise(resolve => window.setTimeout(resolve, 760))
+    })
+
+    const saved = await repository.getDraft(draft.id)
+    expect(saved?.article.sourceText).toBe('- **问题选择：** 判断哪个问题值得解决；')
+    expect(saved?.article.markdown).toBe(saved?.article.sourceText)
+    expect(saved?.article.html).toContain('<strong>问题选择：</strong> 判断哪个问题值得解决；')
+  })
+
   it('shows local backup controls without account or cloud-sync entry points', async () => {
     await renderApp()
+    expect(container.textContent).not.toContain('导出备份')
+    await openLocalDataActions()
     expect(container.textContent).toContain('本地数据')
     expect(container.textContent).toContain('导出备份')
     expect(container.textContent).toContain('导入备份')
@@ -142,6 +188,7 @@ describe('App local draft history', () => {
       container.querySelector<HTMLButtonElement>('.drop-actions .primary-button')?.click()
       await new Promise(resolve => window.setTimeout(resolve, 40))
     })
+    await openLocalDataActions()
     const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
     const exportButton = Array.from(container.querySelectorAll<HTMLButtonElement>('.history-backup-actions button'))
       .find(button => button.textContent?.includes('导出备份'))!
@@ -174,6 +221,7 @@ describe('App local draft history', () => {
       titleInput.dispatchEvent(new Event('input', { bubbles: true }))
     })
 
+    await openLocalDataActions()
     const exportButton = Array.from(container.querySelectorAll<HTMLButtonElement>('.history-backup-actions button'))
       .find(button => button.textContent?.includes('导出备份'))!
     await act(async () => {

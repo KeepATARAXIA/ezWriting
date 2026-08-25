@@ -113,6 +113,18 @@ describe('parseContentFile', () => {
     expect(article.html).not.toContain('<h1>发布测试</h1>')
   })
 
+  it('repairs malformed strong spacing in imported Markdown source and HTML', async () => {
+    const file = new File([
+      '# 加粗修复\n\n- **问题选择： **判断哪个问题值得解决；',
+    ], 'strong-spacing.md', { type: 'text/markdown' })
+
+    const article = await parseContentFile(file)
+
+    expect(article.sourceText).toBe('- **问题选择：** 判断哪个问题值得解决；')
+    expect(article.markdown).toBe(article.sourceText)
+    expect(article.html).toContain('<strong>问题选择：</strong> 判断哪个问题值得解决；')
+  })
+
   it('sanitizes unsafe HTML while preserving article content', async () => {
     const file = new File([
       '<html><head><title>安全测试</title></head><body><article><h1>安全测试</h1><p>正文</p><script>alert(1)</script><img src="https://example.test/image.png" onerror="alert(2)" data-missing-id="forged" data-missing-asset="secrets.png"><video autoplay poster="https://example.test/poster.png" src="https://example.test/video.mp4"></video><table background="https://example.test/tracker.png"><tr><td>表格</td></tr></table></article></body></html>',

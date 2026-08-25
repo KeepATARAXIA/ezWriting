@@ -206,6 +206,10 @@ describe('HistorySidebar', () => {
     await act(async () => undoButton.dispatchEvent(new MouseEvent('click', { bubbles: true })))
     expect(onUndoDelete).toHaveBeenCalledWith('deleted-id')
 
+    const dataTrigger = container.querySelector<HTMLButtonElement>('.history-data-trigger')!
+    expect(dataTrigger.getAttribute('aria-expanded')).toBe('false')
+    await act(async () => dataTrigger.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    expect(dataTrigger.getAttribute('aria-expanded')).toBe('true')
     const exportButton = Array.from(container.querySelectorAll<HTMLButtonElement>('.history-backup-actions button'))
       .find(button => button.textContent?.includes('导出备份'))!
     const importButton = Array.from(container.querySelectorAll<HTMLButtonElement>('.history-backup-actions button'))
@@ -218,7 +222,7 @@ describe('HistorySidebar', () => {
     expect(onExportBackup).toHaveBeenCalledTimes(1)
     expect(onImportBackup).toHaveBeenCalledTimes(1)
     expect(onExportDiagnostics).toHaveBeenCalledTimes(1)
-    expect(container.textContent).toContain('数据仅保存在此设备和浏览器')
+    expect(container.textContent).toContain('换域名或清理网站数据前，请先导出备份')
   })
 
   it('disables draft mutations and backup actions while an exclusive operation is running', async () => {
@@ -231,6 +235,7 @@ describe('HistorySidebar', () => {
     expect(container.querySelector<HTMLButtonElement>('.history-draft-open')?.disabled).toBe(true)
     expect(container.querySelector<HTMLButtonElement>('.history-draft-menu-button')?.disabled).toBe(true)
     expect(container.querySelector<HTMLButtonElement>('.history-undo-notice button')?.disabled).toBe(true)
+    await act(async () => container.querySelector<HTMLButtonElement>('.history-data-trigger')?.click())
     expect(Array.from(container.querySelectorAll<HTMLButtonElement>('.history-backup-actions button')).every(button => button.disabled)).toBe(true)
   })
 

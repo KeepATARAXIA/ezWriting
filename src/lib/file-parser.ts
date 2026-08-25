@@ -2,6 +2,7 @@ import JSZip from 'jszip'
 import { parse as parseYaml } from 'yaml'
 import type { ArticleDraft, ArticleSourceLanguage, SourceKind } from '../domain/article'
 import {
+  normalizeMarkdownStrongWhitespace,
   normalizeObsidianImages,
   renderMarkdownToSafeHtml,
   sanitizeContentHtml,
@@ -540,11 +541,12 @@ function parseMarkdown(markdown: string, fallbackTitle: string, warnings: string
   const { metadata, body: rawBody, warning } = splitFrontMatter(markdown)
   if (warning) warnings.push(warning)
 
-  const heading = rawBody.match(/^#\s+(.+)$/m)
+  const normalizedBody = normalizeMarkdownStrongWhitespace(rawBody)
+  const heading = normalizedBody.match(/^#\s+(.+)$/m)
   const title = metadata.title?.trim() || heading?.[1]?.trim() || fallbackTitle
   const body = heading && heading[1].trim() === title
-    ? rawBody.replace(/^#\s+.+\r?\n+/, '')
-    : rawBody
+    ? normalizedBody.replace(/^#\s+.+\r?\n+/, '')
+    : normalizedBody
   return {
     title,
     html: renderMarkdownToSafeHtml(body),

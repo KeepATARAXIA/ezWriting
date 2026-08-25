@@ -190,13 +190,6 @@ export function applyWechatTheme(
 
   container.querySelectorAll<HTMLImageElement>('img').forEach(image => {
     applyStyle(image, styles.img)
-    const alt = image.alt.trim()
-    if (!alt || image.nextElementSibling?.hasAttribute('data-wechat-caption')) return
-    const caption = document.createElement('span')
-    caption.dataset.wechatCaption = 'true'
-    caption.textContent = alt
-    applyStyle(caption, styles.caption)
-    image.after(caption)
   })
 
   container.querySelectorAll<HTMLTableElement>('table').forEach(table => applyStyle(table, styles.table))

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  normalizeMarkdownStrongWhitespace,
   renderMarkdownToSafeHtml,
   sanitizeContentHtml,
   sanitizeInternalContentHtml,
@@ -118,6 +119,25 @@ describe('sanitizeContentHtml', () => {
 })
 
 describe('renderMarkdownToSafeHtml', () => {
+  it('repairs whitespace placed before a closing strong marker', () => {
+    const markdown = [
+      '- **问题选择： **判断哪个问题值得解决；',
+      '- **领域理解：  ** 理解行业规则和现场语境；',
+    ].join('\n')
+    const html = renderMarkdownToSafeHtml(markdown)
+    const document = new DOMParser().parseFromString(html, 'text/html')
+    const items = document.querySelectorAll('li')
+
+    expect(items[0].innerHTML).toBe('<strong>问题选择：</strong> 判断哪个问题值得解决；')
+    expect(items[1].innerHTML).toBe('<strong>领域理解：</strong> 理解行业规则和现场语境；')
+  })
+
+  it('does not repair strong-like text inside inline or fenced code', () => {
+    const markdown = ['`**保留空格 **`', '', '```md', '**保留空格 **', '```'].join('\n')
+
+    expect(normalizeMarkdownStrongWhitespace(markdown)).toBe(markdown)
+  })
+
   it('converts Obsidian callouts into semantic editable containers', () => {
     const html = renderMarkdownToSafeHtml([
       '> [!warning] 先备份，再接入同步',

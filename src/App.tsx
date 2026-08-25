@@ -16,7 +16,9 @@ import {
   ArrowRight,
   ChevronDown,
   CircleAlert,
+  Clock3,
   Columns2,
+  FileText,
   FilePlus2,
   FileUp,
   FolderOpen,
@@ -29,7 +31,6 @@ import {
   PanelRight,
   PlugZap,
   RotateCcw,
-  ScanSearch,
   ShieldCheck,
   Upload,
   XCircle,
@@ -38,7 +39,7 @@ import type { ArticleDraft, MissingImageAction, MissingImageTarget, PlatformAcco
 import { DEFAULT_ARTICLE_FORMATTING, type ArticleFormatting } from './domain/formatting'
 import { DispatchControls, type BridgeState, type WorkState } from './components/dispatch-controls'
 import { HistorySidebar, type HistoryUndoDraft } from './components/history-sidebar'
-import type { SourceEditorFocusRequest } from './components/source-editor'
+import type { SourceEditorActiveLocation, SourceEditorFocusRequest } from './components/source-editor'
 import type { PreviewDevice, PreviewEditTarget, PreviewLocateRequest, PreviewPlatform } from './components/platform-previews'
 import {
   DEFAULT_XHS_CARD_SETTINGS,
@@ -79,6 +80,7 @@ import {
   validateImageResourceFiles,
 } from './lib/file-parser'
 import { extractMissingImageTargets } from './lib/missing-assets'
+import { normalizeMarkdownStrongWhitespace } from './lib/markdown-compatibility'
 import { getBrowserExtensionGuide } from './lib/browser-extension-install'
 import { getPlatformAccounts, publishDraft, waitForBridge } from './lib/wechatsync-bridge'
 import { useDraftAutosave } from './hooks/use-draft-autosave'
@@ -154,6 +156,46 @@ const PREVIEW_PLATFORMS: Array<{ id: PreviewPlatform; label: string; accessibleL
   { id: 'wechat', label: '公众号', accessibleLabel: '微信公众号', logo: wechatLogo },
   { id: 'xhs', label: '小红书', accessibleLabel: '小红书', logo: xhsLogo },
   { id: 'x', label: 'X', accessibleLabel: 'X 长文', logo: xLogo },
+]
+
+interface HomeStarterTemplate {
+  id: string
+  title: string
+  description: string
+  initialTitle: string
+  platform: PreviewPlatform
+  kind: DraftKind
+  source: string
+}
+
+const HOME_STARTER_TEMPLATES: HomeStarterTemplate[] = [
+  {
+    id: 'wechat-longform',
+    title: '公众号长文',
+    description: '用开场、正文与结尾搭好一篇完整长文。',
+    initialTitle: '公众号长文草稿',
+    platform: 'wechat',
+    kind: 'longform',
+    source: '## 开场\n\n用一个具体问题或真实场景，让读者知道这篇内容和自己有什么关系。\n\n## 核心内容\n\n写下你的主要观点，并用案例、步骤或证据把它讲清楚。\n\n## 结尾\n\n总结最值得记住的一点，并给出下一步行动。',
+  },
+  {
+    id: 'xhs-image-post',
+    title: '小红书图文',
+    description: '从一句亮点和三条要点快速组织图文内容。',
+    initialTitle: '小红书图文草稿',
+    platform: 'xhs',
+    kind: 'image',
+    source: '## 一句话亮点\n\n先写下这篇内容最想让人记住的一句话。\n\n## 重点清单\n\n- 要点一：给出最直接的结论\n- 要点二：补充具体方法或经验\n- 要点三：提醒容易忽略的问题\n\n## 行动建议\n\n告诉读者看完之后可以马上做什么。',
+  },
+  {
+    id: 'x-longform',
+    title: 'X 长文',
+    description: '围绕一个鲜明观点展开论据与结论。',
+    initialTitle: 'X 长文草稿',
+    platform: 'x',
+    kind: 'longform',
+    source: '## 核心观点\n\n用一句清楚、可讨论的话写下你的判断。\n\n## 为什么\n\n补充事实、案例或推理，让观点站得住。\n\n## 结论\n\n收束全文，并留下一个值得继续讨论的问题。',
+  },
 ]
 
 type EditorPanePercents = Record<PreviewPlatform, number>
@@ -333,6 +375,21 @@ function reconcileSourceUpdate(previous: ArticleDraft, next: ArticleDraft): Arti
   return reconcileMissingAssetState(next, annotated.html, previous.html)
 }
 
+function repairLoadedMarkdownStrongWhitespace(article: ArticleDraft): { article: ArticleDraft; changed: boolean } {
+  if (article.sourceLanguage !== 'markdown' && typeof article.markdown !== 'string') {
+    return { article, changed: false }
+  }
+
+  const source = resolveArticleSource(article)
+  const normalizedSource = normalizeMarkdownStrongWhitespace(source.text)
+  if (normalizedSource === source.text) return { article, changed: false }
+
+  return {
+    article: reconcileSourceUpdate(article, updateArticleFromSource(article, normalizedSource)),
+    changed: true,
+  }
+}
+
 function createBlankArticle(): ArticleDraft {
   return {
     id: crypto.randomUUID(),
@@ -348,6 +405,27 @@ function createBlankArticle(): ArticleDraft {
     warnings: [],
     missingAssets: [],
   }
+}
+
+function createStarterArticle(template: HomeStarterTemplate): ArticleDraft {
+  const article = createBlankArticle()
+  return updateArticleFromSource({
+    ...article,
+    title: template.initialTitle,
+    sourceFile: `${template.title}模板`,
+  }, template.source)
+}
+
+function formatHomeDraftDate(timestamp: string): string {
+  const date = new Date(timestamp)
+  if (Number.isNaN(date.getTime())) return '最近编辑'
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(date)
 }
 
 function hasArticleBodyContent(html: string): boolean {
@@ -463,7 +541,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   const [editorPanePercents, setEditorPanePercents] = useState(readEditorPanePercents)
   const [editorFocusRequest, setEditorFocusRequest] = useState<SourceEditorFocusRequest | null>(null)
   const [previewLocateRequest, setPreviewLocateRequest] = useState<PreviewLocateRequest | null>(null)
-  const [activeEditorBlockIndex, setActiveEditorBlockIndex] = useState<number | null>(null)
+  const [activeEditorLocation, setActiveEditorLocation] = useState<SourceEditorActiveLocation | null>(null)
   const [editorView, setEditorView] = useState<EditorView>('edit')
   const [previewDevice, setPreviewDevice] = useState<PreviewDevice>('desktop')
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('split')
@@ -493,6 +571,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   const locatedFieldTimerRef = useRef<number | null>(null)
   const activeDraftRecordRef = useRef<PersistedDraft | null>(null)
   const activeDraftIdRef = useRef<string | null>(null)
+  const previousHomeDraftCountRef = useRef<number | null>(null)
   const draftRevisionRef = useRef(0)
   const documentGenerationRef = useRef(0)
   const exclusiveOperationRef = useRef<ExclusiveOperation | null>(null)
@@ -526,6 +605,10 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     xhsSettings,
     sourceInfo: fileInfo,
   }), [article, draftKind, fileInfo, formatting, xhsSettings])
+
+  const homeDrafts = useMemo(() => drafts
+    .filter(draft => !draft.deletedAt)
+    .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()), [drafts])
 
   const markDraftDirty = useCallback(() => {
     draftRevisionRef.current += 1
@@ -604,6 +687,14 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   }, [historyExpanded])
 
   useEffect(() => {
+    if (hydrationPhase !== 'ready') return
+    const previousCount = previousHomeDraftCountRef.current
+    if (homeDrafts.length === 0) setHistoryExpanded(false)
+    else if (previousCount === 0) setHistoryExpanded(true)
+    previousHomeDraftCountRef.current = homeDrafts.length
+  }, [homeDrafts.length, hydrationPhase])
+
+  useEffect(() => {
     if (!historyOverlayOpen) return
     const previousOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
@@ -628,21 +719,25 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
 
   const applyPersistedDraft = useCallback((persisted: PersistedDraft) => {
     const restored = snapshotFromPersistedDraft(persisted)
-    const snapshot: CurrentDraftSnapshot = {
-      ...restored,
-      article: {
-        ...restored.article,
-        html: sanitizeEditedHtml(restored.article.html),
-        tags: Array.isArray(restored.article.tags) ? restored.article.tags : [],
-        warnings: Array.isArray(restored.article.warnings) ? restored.article.warnings : [],
-        missingAssets: Array.isArray(restored.article.missingAssets) ? restored.article.missingAssets : [],
-      },
+    const restoredArticle: ArticleDraft = {
+      ...restored.article,
+      html: sanitizeEditedHtml(restored.article.html),
+      tags: Array.isArray(restored.article.tags) ? restored.article.tags : [],
+      warnings: Array.isArray(restored.article.warnings) ? restored.article.warnings : [],
+      missingAssets: Array.isArray(restored.article.missingAssets) ? restored.article.missingAssets : [],
     }
+    const persistedSnapshot: CurrentDraftSnapshot = {
+      ...restored,
+      article: restoredArticle,
+    }
+    const repaired = repairLoadedMarkdownStrongWhitespace(restoredArticle)
+    const snapshot: CurrentDraftSnapshot = { ...persistedSnapshot, article: repaired.article }
     documentGenerationRef.current += 1
     draftRevisionRef.current += 1
     activeDraftRecordRef.current = persisted
     activeDraftIdRef.current = persisted.id
-    autosave.markSaved(snapshot, draftRevisionRef.current)
+    autosave.markSaved(persistedSnapshot, draftRevisionRef.current)
+    if (repaired.changed) draftRevisionRef.current += 1
     setDraftRevision(draftRevisionRef.current)
     setArticle(snapshot.article)
     setFormatting(snapshot.formatting)
@@ -653,6 +748,8 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     setResults([])
     setError(null)
     setEditorFocusRequest(null)
+    setPreviewLocateRequest(null)
+    setActiveEditorLocation(null)
     setEditorView('edit')
     setPreviewDevice('desktop')
     setWarningsExpanded(false)
@@ -661,7 +758,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   }, [autosave.markSaved])
   applyPersistedDraftRef.current = applyPersistedDraft
 
-  const activateNewDraft = useCallback((snapshot: DraftWorkspaceSnapshot) => {
+  const activateNewDraft = useCallback((snapshot: DraftWorkspaceSnapshot, platform: PreviewPlatform = 'wechat') => {
     documentGenerationRef.current += 1
     draftRevisionRef.current += 1
     activeDraftRecordRef.current = null
@@ -673,10 +770,12 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     setXhsSettings(snapshot.xhsSettings)
     setFileInfo(snapshot.sourceInfo)
     setWorkState('ready')
-    setActivePlatform('wechat')
+    setActivePlatform(platform)
     setResults([])
     setError(null)
     setEditorFocusRequest(null)
+    setPreviewLocateRequest(null)
+    setActiveEditorLocation(null)
     setEditorView('edit')
     setPreviewDevice('desktop')
     setWorkspaceMode('split')
@@ -714,7 +813,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     setXhsSettings(emptySnapshot.xhsSettings)
     setEditorFocusRequest(null)
     setPreviewLocateRequest(null)
-    setActiveEditorBlockIndex(null)
+    setActiveEditorLocation(null)
     setEditorView('edit')
     setPreviewDevice('desktop')
     setWorkspaceMode('split')
@@ -838,7 +937,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     setResults([])
     setEditorFocusRequest(null)
     setPreviewLocateRequest(null)
-    setActiveEditorBlockIndex(null)
+    setActiveEditorLocation(null)
     setWarningsExpanded(false)
     setWorkspaceMode('split')
     setWorkState('parsing')
@@ -889,6 +988,20 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
       endExclusiveOperation('create-draft')
     }
     activateNewDraft(createDraftSnapshot(createBlankArticle()))
+  }
+
+  const createArticleFromTemplate = async (template: HomeStarterTemplate) => {
+    if (!beginExclusiveOperation('create-draft')) return
+    try {
+      await autosave.flush()
+    } catch (saveError) {
+      setHistoryError(`使用模板前保存失败：${(saveError as Error).message}`)
+      return
+    } finally {
+      endExclusiveOperation('create-draft')
+    }
+    const snapshot = createDraftSnapshot(createStarterArticle(template))
+    activateNewDraft({ ...snapshot, kind: template.kind }, template.platform)
   }
 
   const exportLocalData = async () => {
@@ -999,7 +1112,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     setResults([])
     setEditorFocusRequest(null)
     setPreviewLocateRequest(null)
-    setActiveEditorBlockIndex(null)
+    setActiveEditorLocation(null)
     setWarningsExpanded(false)
     setWorkState('parsing')
 
@@ -1220,15 +1333,8 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     })
   }
 
-  const previewCurrentEditorBlock = () => {
-    if (activeEditorBlockIndex === null) return
-    setWorkspaceMode('split')
-    setPreviewDevice('desktop')
-    previewLocateRequestIdRef.current += 1
-    setPreviewLocateRequest({
-      blockIndex: activeEditorBlockIndex,
-      requestId: previewLocateRequestIdRef.current,
-    })
+  const updateActiveEditorLocation = (location: SourceEditorActiveLocation | null) => {
+    setActiveEditorLocation(location)
   }
 
   const locateResourceInPreview = (resource: ArticleResource) => {
@@ -1503,6 +1609,15 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   const deferredArticleHtml = useDeferredValue(articleHtml)
   const deferredFormatting = useDeferredValue(formatting)
   const isPreviewUpdating = deferredArticleHtml !== articleHtml || deferredFormatting !== formatting
+  useEffect(() => {
+    if (!article || !activeEditorLocation || isPreviewUpdating) return
+    previewLocateRequestIdRef.current += 1
+    setPreviewLocateRequest({
+      blockIndex: activeEditorLocation.blockIndex,
+      line: activeEditorLocation.line,
+      requestId: previewLocateRequestIdRef.current,
+    })
+  }, [activeEditorLocation, activePlatform, article?.id, isPreviewUpdating])
   const previewFormatting = useMemo(
     () => articleFormattingForTarget(formatting, activePlatform),
     [activePlatform, formatting],
@@ -1664,10 +1779,10 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
             />
           </div>
         ) : (
-          <div className="topbar-meta">
+          <div className="topbar-meta home-topbar-meta">
             <button
               type="button"
-              className={`extension-chip ${bridgeState}`}
+              className={`home-status-summary ${bridgeState}`}
               onClick={handleBridgeStatusClick}
               disabled={bridgeState === 'checking' || isOperationLocked}
               aria-label={bridgeState === 'missing' || bridgeState === 'error' ? '打开发布引擎安装指引' : '重新检测发布引擎'}
@@ -1678,10 +1793,12 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
               {bridgeState === 'checking' && <LoaderCircle className="spin" size={14} />}
               {bridgeState === 'connected' && <PlugZap size={14} />}
               {(bridgeState === 'missing' || bridgeState === 'error') && <CircleAlert size={14} />}
-              {bridgeState === 'checking' ? '正在连接发布引擎' : bridgeState === 'connected' ? `发布引擎已就绪 · ${accounts.length} 平台` : bridgeState === 'error' ? '发布引擎连接异常' : '发布引擎待连接'}
+              <span>{bridgeState === 'checking' ? '正在检测发布通道' : bridgeState === 'connected' ? `已连接 ${accounts.length} 个平台` : bridgeState === 'error' ? '发布通道异常' : '发布通道待连接'}</span>
+              <span className="home-status-divider" aria-hidden="true" />
+              <ShieldCheck size={14} aria-hidden="true" />
+              <span>文件保存在本地</span>
             </button>
-            <span className="privacy-chip"><ShieldCheck size={14} /> 文件留在本地</span>
-            <span className="version-chip">PUBLIC BETA · 0.2</span>
+            <span className="version-chip home-version-chip">BETA · 0.2</span>
             <DispatchControls
               accounts={accounts}
               bridgeError={bridgeError}
@@ -1764,42 +1881,163 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
               </section>
             ) : !article ? (
               <section className="empty-import-stage">
-                <section
-                  className={`workbench-drop-zone empty-import-card ${isDragging ? 'dragging' : ''}`}
-                  aria-label="导入稿件"
-                  onDragEnter={event => { event.preventDefault(); setIsDragging(true) }}
-                  onDragOver={event => event.preventDefault()}
-                  onDragLeave={event => { event.preventDefault(); setIsDragging(false) }}
-                  onDrop={event => {
-                    event.preventDefault()
-                    setIsDragging(false)
-                    void importSelection(Array.from(event.dataTransfer.files))
-                  }}
-                >
+                <div className="empty-workbench-content">
                   <input ref={fileInputRef} type="file" accept=".md,.markdown,.html,.htm,.zip" onChange={event => void importSelection(Array.from(event.target.files || []))} hidden />
                   <input ref={directoryInputRef} type="file" multiple onChange={event => void importSelection(Array.from(event.target.files || []))} {...{ webkitdirectory: '', directory: '' }} hidden />
-                  <div className="drop-orbit" aria-hidden="true">{workState === 'parsing' ? <LoaderCircle className="spin" size={34} /> : <Upload size={34} />}</div>
-                  <p className="drop-index">START YOUR DRAFT</p>
-                  <h2>{workState === 'parsing' ? '正在拆解内容…' : '新建或导入一篇稿件'}</h2>
-                  <p>从空白文档开始，或把本地稿件带入工作台</p>
-                  {error && (
-                    <div className="import-error" role="alert">
-                      <CircleAlert size={16} />
-                      <span>{error}</span>
-                      <button type="button" onClick={() => setError(null)} aria-label="关闭错误提示"><XCircle size={15} /></button>
+                  <section className="empty-workbench-hero" aria-labelledby="empty-workbench-title">
+                    <div className="home-platform-list" aria-label="支持的内容平台">
+                      {PREVIEW_PLATFORMS.map(platform => (
+                        <span key={platform.id}>
+                          <span className={`platform-logo ${platform.id}`} aria-hidden="true"><img src={platform.logo} alt="" /></span>
+                          <strong>{platform.label}</strong>
+                        </span>
+                      ))}
+                      <small>持续扩展</small>
                     </div>
+                    <h1 id="empty-workbench-title">写一次，适配并发布到多个平台</h1>
+                    <p>支持微信公众号、小红书、X 等平台的内容编辑、预览与分发</p>
+                    <div className="drop-actions">
+                      <button type="button" className="primary-button" onClick={() => void createNewArticle()} disabled={workState === 'parsing' || isOperationLocked}>
+                        <FilePlus2 size={19} />
+                        开始创作
+                        <ArrowRight size={18} />
+                      </button>
+                    </div>
+                  </section>
+
+                  <section
+                    className={`workbench-drop-zone home-import-zone ${isDragging ? 'dragging' : ''}`}
+                    aria-label="导入已有内容"
+                    aria-busy={workState === 'parsing'}
+                    onDragEnter={event => { event.preventDefault(); setIsDragging(true) }}
+                    onDragOver={event => {
+                      event.preventDefault()
+                      event.dataTransfer.dropEffect = 'copy'
+                      setIsDragging(true)
+                    }}
+                    onDragLeave={event => {
+                      event.preventDefault()
+                      if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return
+                      setIsDragging(false)
+                    }}
+                    onDrop={event => {
+                      event.preventDefault()
+                      setIsDragging(false)
+                      void importSelection(Array.from(event.dataTransfer.files))
+                    }}
+                  >
+                    <button
+                      type="button"
+                      className="home-import-drop-target"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={workState === 'parsing' || isOperationLocked}
+                    >
+                      <span className="home-import-icon" aria-hidden="true">
+                        {workState === 'parsing' ? <LoaderCircle className="spin" size={28} /> : <FileUp size={28} />}
+                      </span>
+                      <span className="home-import-copy" aria-live="polite">
+                        <strong>{workState === 'parsing' ? '正在解析并整理内容…' : isDragging ? '松开即可导入内容' : '将文件拖到这里，或点击选择文件'}</strong>
+                        <span>{isDragging ? '我们会在本地解析文件，并直接打开编辑工作台' : '支持 Markdown、HTML、ZIP · 导入后进入编辑与多平台预览'}</span>
+                      </span>
+                    </button>
+                    <div className="home-import-actions">
+                      <button type="button" className="folder-button" onClick={() => fileInputRef.current?.click()} disabled={workState === 'parsing' || isOperationLocked}><FileUp size={17} /> 选择文件</button>
+                      <button type="button" className="directory-link" onClick={() => directoryInputRef.current?.click()} disabled={workState === 'parsing' || isOperationLocked}><FolderOpen size={17} /> 选择文件夹</button>
+                    </div>
+                    {error && (
+                      <div className="import-error" role="alert">
+                        <CircleAlert size={17} />
+                        <span>{error}</span>
+                        <button type="button" onClick={() => setError(null)} aria-label="关闭错误提示"><XCircle size={16} /></button>
+                      </div>
+                    )}
+                  </section>
+
+                  <section className="home-workbench-overview" aria-labelledby="home-workbench-heading">
+                    <header>
+                      <div>
+                        <h2 id="home-workbench-heading">内容从文件进入发布轨道</h2>
+                        <p>本地完成整理和预览，确认后再保存到各平台草稿箱。</p>
+                      </div>
+                      <dl className="home-workbench-stats" aria-label="工作台状态">
+                        <div><dt>本地草稿</dt><dd>{homeDrafts.length}</dd></div>
+                        <div><dt>已连接平台</dt><dd>{bridgeState === 'connected' ? accounts.length : '—'}</dd></div>
+                      </dl>
+                    </header>
+                    <ol className="home-workflow">
+                      <li>
+                        <span><FilePlus2 size={21} /></span>
+                        <div><strong>创建或导入</strong><small>从空白文档、文件或内容包开始</small></div>
+                        <ArrowRight className="home-workflow-arrow" size={18} aria-hidden="true" />
+                      </li>
+                      <li>
+                        <span><Columns2 size={21} /></span>
+                        <div><strong>编辑与预览</strong><small>同步检查不同平台的实际效果</small></div>
+                        <ArrowRight className="home-workflow-arrow" size={18} aria-hidden="true" />
+                      </li>
+                      <li>
+                        <span><Upload size={21} /></span>
+                        <div><strong>保存或发布</strong><small>人工复核后，再进入平台发布流程</small></div>
+                      </li>
+                    </ol>
+                  </section>
+
+                  {homeDrafts.length > 0 && (
+                    <section className="home-recent-section" aria-labelledby="home-recent-heading">
+                      <header>
+                        <div>
+                          <h2 id="home-recent-heading">最近文档</h2>
+                          <p>继续处理保存在本机的内容。</p>
+                        </div>
+                        <span>{homeDrafts.length} 篇本地稿件</span>
+                      </header>
+                      <div className="home-recent-grid">
+                        {homeDrafts.slice(0, 3).map(draft => (
+                          <button type="button" key={draft.id} onClick={() => void selectHistoryDraft(draft.id)} disabled={isOperationLocked}>
+                            <span className="home-recent-icon"><FileText size={20} aria-hidden="true" /></span>
+                            <span>
+                              <strong>{draft.title.trim() || '未命名稿件'}</strong>
+                              <small><Clock3 size={13} aria-hidden="true" /> {formatHomeDraftDate(draft.updatedAt)}</small>
+                            </span>
+                            <ArrowRight size={17} aria-hidden="true" />
+                          </button>
+                        ))}
+                      </div>
+                    </section>
                   )}
-                  <div className="drop-actions">
-                    <button type="button" className="primary-button" onClick={() => void createNewArticle()} disabled={workState === 'parsing' || isOperationLocked}><FilePlus2 size={18} /> 新建文档 <ArrowRight size={18} /></button>
-                    <button type="button" className="folder-button" onClick={() => fileInputRef.current?.click()} disabled={workState === 'parsing' || isOperationLocked}><FileUp size={16} /> 选择文件</button>
-                  </div>
-                  <button type="button" className="directory-link" onClick={() => directoryInputRef.current?.click()} disabled={workState === 'parsing' || isOperationLocked}><FolderOpen size={14} /> 文章和配图在同一目录？选择文章文件夹</button>
-                  <div className="format-tags" aria-label="支持的文件格式">
-                    <span>Markdown</span>
-                    <span>HTML</span>
-                    <span>ZIP</span>
-                  </div>
-                </section>
+
+                  <section className="home-template-section" aria-labelledby="home-template-heading">
+                    <header>
+                      <div>
+                        <h2 id="home-template-heading">常用模板</h2>
+                        <p>{homeDrafts.length === 0 ? '还没有最近文档，先用一个轻量结构开始。' : '需要新起一篇时，直接套用常用结构。'}</p>
+                      </div>
+                      <span>3 个起稿模板</span>
+                    </header>
+                    <div className="home-template-grid">
+                      {HOME_STARTER_TEMPLATES.map(template => {
+                        const platform = PREVIEW_PLATFORMS.find(item => item.id === template.platform)!
+                        return (
+                          <button
+                            type="button"
+                            className="home-template-card"
+                            key={template.id}
+                            onClick={() => void createArticleFromTemplate(template)}
+                            disabled={isOperationLocked}
+                            aria-label={`使用${template.title}模板开始`}
+                          >
+                            <span className={`platform-logo ${platform.id}`} aria-hidden="true"><img src={platform.logo} alt="" /></span>
+                            <span className="home-template-copy">
+                              <strong>{template.title}</strong>
+                              <small>{template.description}</small>
+                            </span>
+                            <ArrowRight size={17} aria-hidden="true" />
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </section>
+                </div>
               </section>
             ) : (
               <div
@@ -1913,7 +2151,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                             focusRequest={editorFocusRequest}
                             readOnly={isOperationLocked}
                             onChange={updateArticleSource}
-                            onActiveBlockChange={setActiveEditorBlockIndex}
+                            onActiveBlockChange={updateActiveEditorLocation}
                           />
                         </Suspense>
                       </section>
@@ -1922,14 +2160,6 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                         <span>字数 <strong>{articleContent.characterCount}</strong></span>
                         <span>图片 <strong>{articleContent.bodyImageCount}</strong></span>
                         <span>{sourceLabel(article)}</span>
-                        <button
-                          type="button"
-                          className="preview-current-block"
-                          disabled={activeEditorBlockIndex === null}
-                          onClick={previewCurrentEditorBlock}
-                        >
-                          <ScanSearch size={14} />在右侧预览
-                        </button>
                       </footer>
                     </div>
                   ) : (

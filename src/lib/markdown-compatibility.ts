@@ -271,6 +271,40 @@ export function normalizeObsidianImages(markdown: string): string {
   })
 }
 
+export function normalizeMarkdownStrongWhitespace(markdown: string): string {
+  let fencedCodeMarker: string | null = null
+
+  return markdown
+    .split('\n')
+    .map(line => {
+      const fence = line.match(/^\s*(`{3,}|~{3,})/)
+      if (fence) {
+        const marker = fence[1]
+        if (!fencedCodeMarker) {
+          fencedCodeMarker = marker
+        } else if (marker[0] === fencedCodeMarker[0] && marker.length >= fencedCodeMarker.length) {
+          fencedCodeMarker = null
+        }
+        return line
+      }
+
+      if (fencedCodeMarker) return line
+
+      return line
+        .split(/(`+[^`\n]*?`+)/g)
+        .map(segment => segment.startsWith('`')
+          ? segment
+          : segment.replace(
+              /(^|[^\\*])\*\*([^*\n]*?\S)([ \t]+)\*\*([ \t]*)(?!\*)/g,
+              (_match, prefix: string, content: string, innerSpace: string, outerSpace: string) => (
+                `${prefix}**${content}**${outerSpace || innerSpace}`
+              ),
+            ))
+        .join('')
+    })
+    .join('\n')
+}
+
 function escapeMarkdownText(value: string): string {
   return value.replace(/([\\`*_[\]<>#])/g, '\\$1')
 }
@@ -427,7 +461,7 @@ function convertCallouts(document: Document): void {
 
 export function renderMarkdownToSafeHtml(markdown: string): string {
   const normalized = preserveMarkdownBlankLines(separateCalloutMarker(
-    normalizeObsidianInlineSyntax(normalizeObsidianImages(markdown)),
+    normalizeObsidianInlineSyntax(normalizeObsidianImages(normalizeMarkdownStrongWhitespace(markdown))),
   ))
   const parsed = String(marked.parse(normalized, { gfm: true, breaks: false }))
   const document = new DOMParser().parseFromString(parsed, 'text/html')
