@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { prepareXhsImageLayout } from './xhs-image-layout'
+import { paginateForXhsCards } from './xhs-pagination'
 
 describe('prepareXhsImageLayout', () => {
   it('assigns stable unique keys to images without changing the default full-width flow', () => {
@@ -43,5 +44,24 @@ describe('prepareXhsImageLayout', () => {
 
     expect(document.querySelector('[data-xhs-media-layout]')).toBeNull()
     expect(document.querySelector<HTMLImageElement>('[data-xhs-image-key]')?.dataset.xhsImageLayout).toBe('full')
+  })
+
+  it('splits text and consecutive images into independently paginated blocks', () => {
+    const html = '<p data-source-block="12" role="button" tabindex="0"><u>第一张图前的说明</u>\n<img src="one.png" alt="图一" data-source-line="42"><img src="two.png" alt="图二" data-source-line="43"><strong>两张图后的结论</strong><img src="three.png" alt="图三" data-source-line="45"></p>'
+
+    const prepared = prepareXhsImageLayout(html, {})
+    const document = new DOMParser().parseFromString(prepared.html, 'text/html')
+    const blocks = Array.from(document.body.children)
+    const pages = paginateForXhsCards(prepared.html, { title: '连续图片分页' })
+    const imagesPerPage = pages.map(page => new DOMParser().parseFromString(page, 'text/html').images.length)
+
+    expect(blocks.map(block => block.querySelectorAll('img').length)).toEqual([0, 1, 1, 0, 1])
+    expect(blocks.every(block => block.getAttribute('data-source-block') === '12')).toBe(true)
+    expect(document.querySelector('u')?.textContent).toBe('第一张图前的说明')
+    expect(document.querySelector('strong')?.textContent).toBe('两张图后的结论')
+    expect(Array.from(document.images, image => image.dataset.sourceLine)).toEqual(['42', '43', '45'])
+    expect(imagesPerPage.reduce((total, count) => total + count, 0)).toBe(3)
+    expect(Math.max(...imagesPerPage)).toBeLessThanOrEqual(2)
+    expect(pages.length).toBeGreaterThan(1)
   })
 })

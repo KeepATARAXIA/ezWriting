@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeXhsCardSettings } from './saved-draft'
+import { normalizeXhsCardSettings, XHS_CARD_TEMPLATES } from './saved-draft'
 
 describe('normalizeXhsCardSettings', () => {
   it('restores old drafts with an empty image override map', () => {
@@ -17,7 +17,7 @@ describe('normalizeXhsCardSettings', () => {
     })
   })
 
-  it.each(['index', 'headline'] as const)('preserves the %s card template', (template) => {
+  it.each(XHS_CARD_TEMPLATES)('preserves the %s card template', (template) => {
     expect(normalizeXhsCardSettings({ template }).template).toBe(template)
   })
 

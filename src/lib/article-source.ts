@@ -161,13 +161,37 @@ function markdownBlocks(text: string): SourceBlock[] {
   const blocks: SourceBlock[] = []
   let cursor = 0
 
-  tokens.forEach((token: Token) => {
-    const raw = 'raw' in token && typeof token.raw === 'string' ? token.raw : ''
+  const tokenRaw = (token: Token | undefined): string => (
+    token && 'raw' in token && typeof token.raw === 'string' ? token.raw : ''
+  )
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index] as Token
+    let raw = tokenRaw(token)
+    if (token.type === 'def' && /^ {0,3}\[\^/.test(raw)) {
+      while (index + 1 < tokens.length) {
+        const next = tokens[index + 1] as Token
+        const afterSpace = tokens[index + 2] as Token | undefined
+        if (next.type === 'code' && /^(?: {4}|\t)/.test(tokenRaw(next))) {
+          raw += tokenRaw(next)
+          index += 1
+          continue
+        }
+        if (next.type === 'space'
+          && afterSpace?.type === 'code'
+          && /^(?: {4}|\t)/.test(tokenRaw(afterSpace))) {
+          raw += tokenRaw(next) + tokenRaw(afterSpace)
+          index += 2
+          continue
+        }
+        break
+      }
+    }
     const located = raw ? text.indexOf(raw, cursor) : cursor
     const from = located >= cursor ? located : cursor
     if (token.type !== 'space') blocks.push({ from, to: from + raw.length, line: lineAtOffset(text, from) })
     cursor = Math.max(cursor, from + raw.length)
-  })
+  }
 
   return blocks
 }

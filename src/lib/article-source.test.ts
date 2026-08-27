@@ -84,6 +84,13 @@ describe('article source', () => {
     expect(sourceLinesByBlock('- 第一项\n- 第二项\n- 第三项', 'markdown')).toEqual([[1, 2, 3]])
   })
 
+  it('maps appended footnote blocks back to their Markdown definitions', () => {
+    const source = '正文脚注[^a]。\n\n[^a]: 第一行\n    第二行'
+
+    expect(sourceLinesByBlock(source, 'markdown')).toEqual([[1], [3, 4]])
+    expect(sourceLineForBlock(source, 'markdown', 1)).toBe(3)
+  })
+
   it('marks unresolved local image references and repairs the Markdown source', () => {
     const missing = annotateLocalImagesAsMissing('<p>正文</p><img src="assets/flow.png" alt="流程图">')
     expect(missing.references).toEqual(['assets/flow.png'])

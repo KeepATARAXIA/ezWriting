@@ -68,6 +68,10 @@ const SAFE_CONTENT_DATA_ATTRIBUTES = [
   'data-checked',
   'data-ez-format',
   'data-ez-task-marker',
+  'data-footnote-content',
+  'data-footnote-item',
+  'data-footnote-number',
+  'data-footnote-reference',
   'data-source-spacer',
   'data-type',
 ]
@@ -295,14 +299,189 @@ export function normalizeMarkdownStrongWhitespace(markdown: string): string {
         .map(segment => segment.startsWith('`')
           ? segment
           : segment.replace(
-              /(^|[^\\*])\*\*([^*\n]*?\S)([ \t]+)\*\*([ \t]*)(?!\*)/g,
-              (_match, prefix: string, content: string, innerSpace: string, outerSpace: string) => (
-                `${prefix}**${content}**${outerSpace || innerSpace}`
-              ),
+              /(^|[^\\*])\*\*([ \t]*)([^*\n]*?\S)([ \t]*)\*\*([ \t]*)(?!\*)/g,
+              (
+                _match,
+                prefix: string,
+                openingSpace: string,
+                content: string,
+                closingSpace: string,
+                outerSpace: string,
+              ) => {
+                const leadingSpace = openingSpace && prefix && !/[ \t]$/.test(prefix) ? openingSpace : ''
+                return `${prefix}${leadingSpace}**${content}**${outerSpace || closingSpace}`
+              },
             ))
         .join('')
     })
     .join('\n')
+}
+
+interface MarkdownFootnoteDefinition {
+  key: string
+  markdown: string
+}
+
+interface MarkdownFootnoteReference {
+  definition: MarkdownFootnoteDefinition
+  number: number
+  referenceIds: string[]
+}
+
+function normalizeFootnoteKey(value: string): string {
+  return value.trim().replace(/\s+/g, ' ').toLocaleLowerCase()
+}
+
+function indentedFootnoteLine(line: string): string | null {
+  const match = line.match(/^(?: {4}|\t)(.*)$/)
+  return match ? match[1] : null
+}
+
+function extractMarkdownFootnotes(markdown: string): {
+  body: string
+  definitions: Map<string, MarkdownFootnoteDefinition>
+} {
+  const lines = markdown.split(/\r?\n/)
+  const bodyLines: string[] = []
+  const definitions = new Map<string, MarkdownFootnoteDefinition>()
+  let fence: { character: string; length: number } | null = null
+  let index = 0
+
+  while (index < lines.length) {
+    const line = lines[index]
+    const fenceMatch = line.match(/^\s{0,3}(`{3,}|~{3,})/)
+    if (fenceMatch) {
+      const marker = fenceMatch[1]
+      if (!fence) fence = { character: marker[0], length: marker.length }
+      else if (marker[0] === fence.character && marker.length >= fence.length) fence = null
+      bodyLines.push(line)
+      index += 1
+      continue
+    }
+
+    const definitionMatch = !fence
+      ? line.match(/^ {0,3}\[\^([^\]\r\n]+)\]:[ \t]*(.*)$/)
+      : null
+    if (!definitionMatch) {
+      bodyLines.push(line)
+      index += 1
+      continue
+    }
+
+    const key = normalizeFootnoteKey(definitionMatch[1])
+    if (!key) {
+      bodyLines.push(line)
+      index += 1
+      continue
+    }
+    const contentLines = [definitionMatch[2]]
+    let nextIndex = index + 1
+    while (nextIndex < lines.length) {
+      const continuation = indentedFootnoteLine(lines[nextIndex])
+      if (continuation !== null) {
+        contentLines.push(continuation)
+        nextIndex += 1
+        continue
+      }
+      if (!lines[nextIndex].trim() && indentedFootnoteLine(lines[nextIndex + 1] || '') !== null) {
+        contentLines.push('')
+        nextIndex += 1
+        continue
+      }
+      break
+    }
+
+    if (!definitions.has(key)) {
+      definitions.set(key, { key, markdown: contentLines.join('\n').trim() })
+    }
+    const previousLine = bodyLines.at(-1)
+    const nextLine = lines[nextIndex]
+    if (previousLine?.trim() && nextLine?.trim() && !/^ {0,3}\[\^([^\]\r\n]+)\]:/.test(nextLine)) {
+      bodyLines.push('')
+    }
+    index = nextIndex
+  }
+
+  return { body: bodyLines.join('\n'), definitions }
+}
+
+function injectMarkdownFootnoteReferences(
+  markdown: string,
+  definitions: Map<string, MarkdownFootnoteDefinition>,
+): { markdown: string; references: Map<string, MarkdownFootnoteReference> } {
+  const references = new Map<string, MarkdownFootnoteReference>()
+  let fencedCodeMarker: string | null = null
+
+  const rendered = markdown
+    .split('\n')
+    .map(line => {
+      const fence = line.match(/^\s*(`{3,}|~{3,})/)
+      if (fence) {
+        const marker = fence[1]
+        if (!fencedCodeMarker) fencedCodeMarker = marker
+        else if (marker[0] === fencedCodeMarker[0] && marker.length >= fencedCodeMarker.length) fencedCodeMarker = null
+        return line
+      }
+      if (fencedCodeMarker) return line
+
+      return line
+        .split(/(`+[^`\n]*?`+)/g)
+        .map(segment => {
+          if (segment.startsWith('`')) return segment
+          return segment.replace(/(\\*)\[\^([^\]\n]+)\]/g, (match, slashes: string, rawKey: string) => {
+            if (slashes.length % 2 === 1) return match
+            const key = normalizeFootnoteKey(rawKey)
+            const definition = definitions.get(key)
+            if (!definition) return match
+
+            let reference = references.get(key)
+            if (!reference) {
+              reference = { definition, number: references.size + 1, referenceIds: [] }
+              references.set(key, reference)
+            }
+            const occurrence = reference.referenceIds.length + 1
+            const referenceId = occurrence === 1
+              ? `ez-footnote-ref-${reference.number}`
+              : `ez-footnote-ref-${reference.number}-${occurrence}`
+            reference.referenceIds.push(referenceId)
+            return `${slashes}<sup data-footnote-reference="${reference.number}" id="${referenceId}"><a href="#ez-footnote-${reference.number}" aria-label="跳转到脚注 ${reference.number}">${reference.number}</a></sup>`
+          })
+        })
+        .join('')
+    })
+    .join('\n')
+
+  return { markdown: rendered, references }
+}
+
+function appendMarkdownFootnotes(
+  document: Document,
+  references: Map<string, MarkdownFootnoteReference>,
+): void {
+  references.forEach(reference => {
+    const item = document.createElement('div')
+    item.dataset.footnoteItem = 'true'
+    item.id = `ez-footnote-${reference.number}`
+
+    const number = document.createElement('span')
+    number.dataset.footnoteNumber = 'true'
+    number.textContent = `${reference.number}.`
+
+    const content = document.createElement('div')
+    content.dataset.footnoteContent = 'true'
+    content.innerHTML = String(marked.parseInline(reference.definition.markdown, { gfm: true, breaks: false }))
+    reference.referenceIds.forEach((referenceId, index) => {
+      const backlink = document.createElement('a')
+      backlink.className = 'ez-footnote-backref'
+      backlink.setAttribute('href', `#${referenceId}`)
+      backlink.setAttribute('aria-label', `返回脚注引用 ${reference.number}${reference.referenceIds.length > 1 ? `-${index + 1}` : ''}`)
+      backlink.textContent = '↩'
+      content.append(' ', backlink)
+    })
+
+    item.append(number, content)
+    document.body.append(item)
+  })
 }
 
 function escapeMarkdownText(value: string): string {
@@ -460,12 +639,16 @@ function convertCallouts(document: Document): void {
 }
 
 export function renderMarkdownToSafeHtml(markdown: string): string {
-  const normalized = preserveMarkdownBlankLines(separateCalloutMarker(
+  const syntaxNormalized = separateCalloutMarker(
     normalizeObsidianInlineSyntax(normalizeObsidianImages(normalizeMarkdownStrongWhitespace(markdown))),
-  ))
+  )
+  const extracted = extractMarkdownFootnotes(syntaxNormalized)
+  const footnotes = injectMarkdownFootnoteReferences(extracted.body, extracted.definitions)
+  const normalized = preserveMarkdownBlankLines(footnotes.markdown)
   const parsed = String(marked.parse(normalized, { gfm: true, breaks: false }))
   const document = new DOMParser().parseFromString(parsed, 'text/html')
 
+  appendMarkdownFootnotes(document, footnotes.references)
   convertTaskLists(document)
   convertCallouts(document)
 

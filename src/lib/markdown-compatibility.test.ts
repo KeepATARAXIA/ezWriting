@@ -119,6 +119,24 @@ describe('sanitizeContentHtml', () => {
 })
 
 describe('renderMarkdownToSafeHtml', () => {
+  it('repairs whitespace placed after an opening strong marker', () => {
+    const markdown = [
+      '支持** 100 万 Token 上下文**，也支持正常的 **标准粗体**。',
+      '- ** 列表中的粗体**',
+      '** 行首粗体**',
+    ].join('\n')
+    const html = renderMarkdownToSafeHtml(markdown)
+    const document = new DOMParser().parseFromString(html, 'text/html')
+    const strong = document.querySelectorAll('strong')
+
+    expect(strong).toHaveLength(4)
+    expect(strong[0]?.textContent).toBe('100 万 Token 上下文')
+    expect(strong[1]?.textContent).toBe('标准粗体')
+    expect(strong[2]?.textContent).toBe('列表中的粗体')
+    expect(strong[3]?.textContent).toBe('行首粗体')
+    expect(document.querySelector('p')?.textContent).toBe('支持 100 万 Token 上下文，也支持正常的 标准粗体。')
+  })
+
   it('repairs whitespace placed before a closing strong marker', () => {
     const markdown = [
       '- **问题选择： **判断哪个问题值得解决；',
@@ -133,7 +151,13 @@ describe('renderMarkdownToSafeHtml', () => {
   })
 
   it('does not repair strong-like text inside inline or fenced code', () => {
-    const markdown = ['`**保留空格 **`', '', '```md', '**保留空格 **', '```'].join('\n')
+    const markdown = ['`** 保留空格 **`', '', '```md', '** 保留空格 **', '```'].join('\n')
+
+    expect(normalizeMarkdownStrongWhitespace(markdown)).toBe(markdown)
+  })
+
+  it('does not reinterpret escaped strong markers', () => {
+    const markdown = String.raw`\** 保留空格 **`
 
     expect(normalizeMarkdownStrongWhitespace(markdown)).toBe(markdown)
   })
@@ -185,6 +209,59 @@ describe('renderMarkdownToSafeHtml', () => {
     expect(html).toContain('查看说明')
     expect(html).not.toContain('[[')
     expect(html).not.toContain('内部备注')
+  })
+
+  it('renders referenced Markdown footnotes with inline formatting and stable numbering', () => {
+    const html = renderMarkdownToSafeHtml([
+      '正文先引用脚注[^note]，稍后再次引用[^note]，并补充第二条[^2]。',
+      '',
+      '[^note]: 支持 **加粗** 与 `行内代码`。',
+      '[^2]: 第二条说明',
+      '    可以跨行书写。',
+    ].join('\n'))
+    const document = new DOMParser().parseFromString(html, 'text/html')
+    const references = document.querySelectorAll('sup[data-footnote-reference]')
+    const notes = document.querySelectorAll('[data-footnote-item]')
+
+    expect(references).toHaveLength(3)
+    expect(Array.from(references).map(reference => reference.textContent)).toEqual(['1', '1', '2'])
+    expect(notes).toHaveLength(2)
+    expect(notes[0]?.id).toBe('ez-footnote-1')
+    expect(notes[0]?.querySelector('strong')?.textContent).toBe('加粗')
+    expect(notes[0]?.querySelector('code')?.textContent).toBe('行内代码')
+    expect(notes[1]?.textContent).toContain('第二条说明')
+    expect(notes[1]?.textContent).toContain('可以跨行书写')
+  })
+
+  it('keeps unknown footnote references literal and sanitizes definition HTML', () => {
+    const html = renderMarkdownToSafeHtml([
+      '未知引用[^missing]，有效引用[^safe]。',
+      '',
+      '[^safe]: 安全正文<script>alert(1)</script><img src="x" onerror="alert(2)">',
+    ].join('\n'))
+    const document = new DOMParser().parseFromString(html, 'text/html')
+
+    expect(document.body.textContent).toContain('[^missing]')
+    expect(document.querySelectorAll('[data-footnote-item]')).toHaveLength(1)
+    expect(html).not.toContain('<script')
+    expect(html).not.toContain('onerror')
+  })
+
+  it('does not turn footnote-like text inside code into references', () => {
+    const html = renderMarkdownToSafeHtml([
+      '有效引用[^note]，代码中保留 `[^note]`。',
+      '',
+      '```md',
+      '[^note]',
+      '```',
+      '',
+      '[^note]: 正常脚注',
+    ].join('\n'))
+    const document = new DOMParser().parseFromString(html, 'text/html')
+
+    expect(document.querySelectorAll('sup[data-footnote-reference]')).toHaveLength(1)
+    expect(document.querySelector('p code')?.textContent).toBe('[^note]')
+    expect(document.querySelector('pre')?.textContent).toContain('[^note]')
   })
 
   it('sanitizes unsafe HTML embedded in Markdown', () => {

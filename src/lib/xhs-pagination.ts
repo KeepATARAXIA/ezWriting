@@ -289,7 +289,9 @@ function splitOversizedRange(text: string, start: number, end: number): Array<{ 
 }
 
 function splitLongParagraph(element: Element, textScale: number): Element[] {
-  if (element.tagName !== 'P' || estimateElementHeight(element, false, textScale) <= MAX_TEXT_FRAGMENT_HEIGHT) {
+  if (element.tagName !== 'P'
+    || containsProtectedContent(element)
+    || estimateElementHeight(element, false, textScale) <= MAX_TEXT_FRAGMENT_HEIGHT) {
     return [element.cloneNode(true) as Element]
   }
 

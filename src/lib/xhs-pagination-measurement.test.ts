@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { XhsCardTemplate } from '../domain/saved-draft'
+import { XHS_CARD_TEMPLATES, type XhsCardTemplate } from '../domain/saved-draft'
 import { createXhsCardPageMeasurer } from './xhs-pagination-measurement'
 
-const templates: XhsCardTemplate[] = ['clean', 'editorial', 'focus', 'index', 'headline']
+const templates: XhsCardTemplate[] = [...XHS_CARD_TEMPLATES]
 
 function mockCardBounds() {
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({

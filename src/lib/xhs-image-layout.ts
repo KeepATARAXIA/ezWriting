@@ -51,11 +51,53 @@ function defaultOverride(): XhsImageOverride {
   return { layout: 'full', widthPercent: 100 }
 }
 
+function nodeContainsImage(node: Node): boolean {
+  return node instanceof Element
+    && (node.matches('img') || Boolean(node.querySelector('img')))
+}
+
+function hasRenderableContent(nodes: Node[]): boolean {
+  return nodes.some(node => node instanceof Element || Boolean(node.textContent?.trim()))
+}
+
+function cloneParagraphWithNodes(paragraph: HTMLParagraphElement, nodes: Node[]): HTMLParagraphElement {
+  const fragment = paragraph.cloneNode(false) as HTMLParagraphElement
+  nodes.forEach(node => fragment.append(node.cloneNode(true)))
+  return fragment
+}
+
+function splitMixedImageParagraphs(document: Document): void {
+  Array.from(document.body.querySelectorAll<HTMLParagraphElement>(':scope > p')).forEach(paragraph => {
+    const nodes = Array.from(paragraph.childNodes)
+    if (!nodes.some(nodeContainsImage)) return
+
+    const fragments: HTMLParagraphElement[] = []
+    let textNodes: Node[] = []
+    const pushTextFragment = () => {
+      if (hasRenderableContent(textNodes)) fragments.push(cloneParagraphWithNodes(paragraph, textNodes))
+      textNodes = []
+    }
+
+    nodes.forEach(node => {
+      if (!nodeContainsImage(node)) {
+        textNodes.push(node)
+        return
+      }
+      pushTextFragment()
+      fragments.push(cloneParagraphWithNodes(paragraph, [node]))
+    })
+    pushTextFragment()
+
+    if (fragments.length > 1) paragraph.replaceWith(...fragments)
+  })
+}
+
 export function prepareXhsImageLayout(
   html: string,
   imageOverrides: Record<string, XhsImageOverride>,
 ): XhsPreparedLayout {
   const document = new DOMParser().parseFromString(html, 'text/html')
+  splitMixedImageParagraphs(document)
   const occurrences = new Map<string, number>()
   const images: XhsPreparedImage[] = []
 

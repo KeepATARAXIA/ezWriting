@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_ARTICLE_FORMATTING } from '../domain/formatting'
+import { applyArticleFormatting } from './article-formatting'
 import {
   applyWechatTheme,
   getWechatTheme,
@@ -18,7 +19,7 @@ describe('wechat theme layer', () => {
   })
 
   it('renders every theme as self-contained inline HTML without undefined style fragments', () => {
-    const source = '<h2>主题标题</h2><p>正文 <strong>重点</strong> 与 <a href="https://example.com">链接</a></p><blockquote><p>引用</p></blockquote><pre><code>const ok = true</code></pre>'
+    const source = '<h2>主题标题</h2><p>正文 <strong>重点</strong>、<em>斜体</em> 与 <a href="https://example.com">链接</a></p><blockquote><p>引用</p></blockquote><pre><code>const ok = true</code></pre>'
     const outputs = WECHAT_THEMES.map(theme => applyWechatTheme(source, { themeId: theme.id }))
 
     expect(new Set(outputs).size).toBe(26)
@@ -26,6 +27,8 @@ describe('wechat theme layer', () => {
       const document = new DOMParser().parseFromString(output, 'text/html')
       expect(document.body.firstElementChild?.getAttribute('data-wechat-theme')).toBe(WECHAT_THEMES[index].id)
       expect(document.querySelector('h2')?.getAttribute('style')).toBeTruthy()
+      expect(document.querySelector<HTMLElement>('p strong')?.style.fontWeight, WECHAT_THEMES[index].id).toBe('800')
+      expect(document.querySelector<HTMLElement>('em')?.style.fontStyle, WECHAT_THEMES[index].id).toBe('italic')
       expect(output).not.toMatch(/undefined|null/)
     })
   })
@@ -94,5 +97,99 @@ describe('wechat theme layer', () => {
     expect(paragraph?.style.lineHeight).toBe('2.15')
     expect(container?.style.fontFamily).toContain('Microsoft YaHei')
     expect(document.querySelector<HTMLElement>('a')?.style.color).toBe('rgb(240, 106, 42)')
+  })
+
+  it('keeps semantic inline formatting from overriding the foreground of decorated headings', () => {
+    const output = applyWechatTheme(
+      '<h2><strong>代码越来越便宜</strong>，<a href="https://example.com">开始变贵了</a></h2>',
+      { themeId: 'cyan-scape' },
+      { ...DEFAULT_ARTICLE_FORMATTING, accent: 'green' },
+    )
+    const document = new DOMParser().parseFromString(output, 'text/html')
+    const headingBand = document.querySelector<HTMLElement>('h2 > span')
+
+    expect(headingBand?.style.backgroundImage).toContain('linear-gradient')
+    expect(headingBand?.style.color).toBe('rgb(255, 255, 255)')
+    expect(headingBand?.style.display).toBe('block')
+    expect(headingBand?.style.width).toBe('100%')
+    expect(headingBand?.style.boxSizing).toBe('border-box')
+    expect(document.querySelector<HTMLElement>('h2 strong')?.style.color).toBe('inherit')
+    expect(document.querySelector<HTMLElement>('h2 a')?.style.color).toBe('inherit')
+  })
+
+  it('turns boxed heading decorations into single responsive blocks without flattening inline highlighters', () => {
+    const boxedThemes = ['cream-orange', 'mori-journal', 'peach-soda', 'wisteria', 'hk-neon', 'cyan-scape'] as const
+
+    boxedThemes.forEach(themeId => {
+      const document = new DOMParser().parseFromString(
+        applyWechatTheme('<h2><strong>这是一个需要在窄版中稳定换行的长标题</strong></h2>', { themeId }),
+        'text/html',
+      )
+      const wrapper = document.querySelector<HTMLElement>('h2 strong')?.closest<HTMLElement>('span')
+
+      expect(wrapper?.style.display, themeId).toBe('block')
+      expect(wrapper?.style.width, themeId).toBe('100%')
+      expect(wrapper?.style.maxWidth, themeId).toBe('100%')
+      expect(wrapper?.style.boxSizing, themeId).toBe('border-box')
+    })
+
+    const highlighted = new DOMParser().parseFromString(
+      applyWechatTheme('<h2><strong>荧光笔标题保持行内效果</strong></h2>', { themeId: 'lemon-sea' }),
+      'text/html',
+    )
+    const highlighter = highlighted.querySelector<HTMLElement>('h2 strong')?.closest<HTMLElement>('span')
+    expect(highlighter?.style.display).toBe('')
+    expect(highlighter?.style.width).toBe('')
+    expect(highlighter?.style.boxDecorationBreak).toBe('clone')
+  })
+
+  it('adds narrow-layout safety to tables, code blocks, images, and task lists in every theme', () => {
+    const source = applyArticleFormatting(
+      '<ul data-type="taskList"><li data-type="taskItem" data-checked="true"><div><p>已完成任务</p></div></li></ul><pre><code class="language-ts">const veryLongToken = "abcdefghijklmnopqrstuvwxyz0123456789"</code></pre><table><thead><tr><th>很长的字段名称</th></tr></thead><tbody><tr><td>abcdefghijklmnopqrstuvwxyz0123456789</td></tr></tbody></table><img src="image.png" alt="示例图"><hr data-source-block="4">',
+      DEFAULT_ARTICLE_FORMATTING,
+    )
+
+    WECHAT_THEMES.forEach(theme => {
+      const output = applyWechatTheme(source, { themeId: theme.id })
+      const document = new DOMParser().parseFromString(output, 'text/html')
+      const task = document.querySelector<HTMLElement>('li[data-type="taskItem"]')
+      const pre = document.querySelector<HTMLElement>('pre')
+      const blockCode = pre?.querySelector<HTMLElement>('code')
+      const table = document.querySelector<HTMLTableElement>('table')
+      const cell = document.querySelector<HTMLElement>('th, td')
+      const image = document.querySelector<HTMLImageElement>('img')
+      const separator = document.querySelector<HTMLElement>('[data-source-block="4"]')
+
+      expect(task?.style.display, theme.id).toBe('grid')
+      expect(task?.style.gridTemplateColumns, theme.id).toMatch(/minmax\(0,\s*1fr\)/)
+      expect(pre?.style.maxWidth, theme.id).toBe('100%')
+      expect(pre?.style.overflow, theme.id).toBe('hidden')
+      expect(blockCode?.style.display, theme.id).toBe('block')
+      expect(blockCode?.style.whiteSpace, theme.id).toBe('pre-wrap')
+      expect(blockCode?.style.overflowWrap, theme.id).toBe('anywhere')
+      expect(table?.style.maxWidth, theme.id).toBe('100%')
+      expect(table?.style.minWidth, theme.id).toBe('0px')
+      expect(table?.style.tableLayout, theme.id).toBe('fixed')
+      expect(cell?.style.overflowWrap, theme.id).toBe('anywhere')
+      expect(image?.style.height, theme.id).toBe('auto')
+      expect(separator, theme.id).not.toBeNull()
+    })
+  })
+
+  it('renders theme code labels and decorative separators without losing source mapping', () => {
+    const output = applyWechatTheme(
+      '<pre data-source-block="0"><code>const ok = true</code></pre><hr data-source-block="1">',
+      { themeId: 'cyan-scape' },
+    )
+    const document = new DOMParser().parseFromString(output, 'text/html')
+
+    expect(document.querySelector('[data-wechat-code-label]')).toBeNull()
+    expect(document.querySelector('[data-wechat-separator][data-source-block="1"]')).not.toBeNull()
+
+    const labeled = new DOMParser().parseFromString(
+      applyWechatTheme('<pre><code>const ok = true</code></pre>', { themeId: 'blueprint' }),
+      'text/html',
+    )
+    expect(labeled.querySelector('[data-wechat-code-label]')?.textContent).toBe('DRAWING')
   })
 })

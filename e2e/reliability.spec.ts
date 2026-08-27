@@ -76,6 +76,194 @@ test('keeps the selected source line centered after large images settle and on r
   await expect.poll(centerOffset).toBeLessThan(4)
 })
 
+test('keeps the preview position fixed when a preview target locates the source editor', async ({ page }) => {
+  const targetText = '目标段落 12，点击后只定位左侧编辑器。'
+  const firstSourceText = '目标段落 4，用于撑开右侧预览滚动空间。'
+  const secondSourceText = '目标段落 15，用于撑开右侧预览滚动空间。'
+  const secondPreviewText = '目标段落 7，用于撑开右侧预览滚动空间。'
+  const markdown = [
+    '# 预览位置稳定性回归',
+    ...Array.from(
+      { length: 24 },
+      (_, index) => `目标段落 ${index + 1}，${index === 11 ? '点击后只定位左侧编辑器。' : '用于撑开右侧预览滚动空间。'}`,
+    ),
+  ].join('\n\n')
+
+  await page.goto('/')
+  await page.locator('input[type="file"][accept*=".md"]').first().setInputFiles({
+    name: 'preview-position.md',
+    mimeType: 'text/markdown',
+    buffer: Buffer.from(markdown),
+  })
+  await expect(page.getByLabel('文章标题')).toHaveValue('预览位置稳定性回归')
+
+  const previewViewport = page.locator('.platform-preview-viewport')
+  const previewTarget = page.locator('.wechat-content [data-source-line]').filter({ hasText: targetText }).first()
+  const firstSourceLine = page.locator('.cm-line').filter({ hasText: firstSourceText }).first()
+  const secondSourceLine = page.locator('.cm-line').filter({ hasText: secondSourceText }).first()
+  const secondPreviewTarget = page.locator('.wechat-content [data-source-line]').filter({ hasText: secondPreviewText }).first()
+  const previewCenterOffset = (text: string) => page.evaluate(targetTextValue => {
+    const viewport = document.querySelector<HTMLElement>('.platform-preview-viewport')
+    const target = Array.from(document.querySelectorAll<HTMLElement>('.wechat-content [data-source-line]'))
+      .find(element => element.textContent?.includes(targetTextValue))
+    if (!viewport || !target) return Number.POSITIVE_INFINITY
+    const viewportBounds = viewport.getBoundingClientRect()
+    const targetBounds = target.getBoundingClientRect()
+    return Math.abs(
+      targetBounds.top + targetBounds.height / 2
+      - (viewportBounds.top + viewport.clientHeight / 2),
+    )
+  }, text)
+  const sourceCenterOffset = () => page.locator('.source-editor .cm-activeLine').evaluate(element => {
+    const scroller = element.closest<HTMLElement>('.cm-scroller')!
+    const scrollerBounds = scroller.getBoundingClientRect()
+    const lineBounds = element.getBoundingClientRect()
+    return Math.abs(
+      lineBounds.top + lineBounds.height / 2
+      - (scrollerBounds.top + scroller.clientHeight / 2),
+    )
+  })
+  await expect(previewTarget).toBeVisible()
+  await page.waitForTimeout(800)
+  await firstSourceLine.click()
+  await expect(page.locator('.wechat-content [data-preview-selected="true"]')).toContainText(firstSourceText)
+  await expect.poll(() => previewCenterOffset(firstSourceText)).toBeLessThan(4)
+
+  const initialScrollTop = await previewTarget.evaluate(element => {
+    const viewport = element.closest<HTMLElement>('.platform-preview-viewport')!
+    const viewportBounds = viewport.getBoundingClientRect()
+    const targetBounds = element.getBoundingClientRect()
+    viewport.scrollTop += targetBounds.top - viewportBounds.top - viewport.clientHeight * 0.3
+    return viewport.scrollTop
+  })
+
+  await previewTarget.click()
+  const activeSourceLine = page.locator('.source-editor .cm-activeLine')
+  await expect(activeSourceLine).toContainText(targetText)
+  await expect(page.locator('.cm-located-source-line')).toHaveCount(0)
+  await expect.poll(sourceCenterOffset).toBeLessThan(32)
+
+  const settledScrollTop = await previewViewport.evaluate(element => element.scrollTop)
+  expect(Math.abs(settledScrollTop - initialScrollTop)).toBeLessThan(2)
+  await page.waitForTimeout(1200)
+  expect(Math.abs(await previewViewport.evaluate(element => element.scrollTop) - settledScrollTop)).toBeLessThan(2)
+  await expect(page.locator('.wechat-content [data-preview-selected="true"]')).toHaveCount(0, { timeout: 1000 })
+
+  await secondSourceLine.click()
+  await expect.poll(() => previewCenterOffset(secondSourceText)).toBeLessThan(4)
+
+  await secondPreviewTarget.click()
+  await expect(activeSourceLine).toContainText(secondPreviewText)
+  await expect.poll(sourceCenterOffset).toBeLessThan(32)
+  const secondSettledScrollTop = await previewViewport.evaluate(element => element.scrollTop)
+  await page.waitForTimeout(1200)
+  expect(Math.abs(await previewViewport.evaluate(element => element.scrollTop) - secondSettledScrollTop)).toBeLessThan(2)
+  await expect(page.locator('.wechat-content [data-preview-selected="true"]')).toHaveCount(0, { timeout: 1000 })
+})
+
+test('keeps a deeply scrolled WeChat target visually fixed on its first click', async ({ page }) => {
+  const paragraphCount = 236
+  const markdown = [
+    '# 公众号深度滚动回归',
+    ...Array.from(
+      { length: paragraphCount },
+      (_, index) => `深度滚动段落 ${index + 1}，${'这段内容用于模拟公众号长正文在不同宽度与主题下产生的真实换行。'.repeat(index % 5 + 1)}点击右侧后只允许左侧编辑器定位。`,
+    ),
+  ].join('\n\n')
+
+  await page.goto('/')
+  const renderStartedAt = Date.now()
+  await page.locator('input[type="file"][accept*=".md"]').first().setInputFiles({
+    name: 'wechat-deep-scroll.md',
+    mimeType: 'text/markdown',
+    buffer: Buffer.from(markdown),
+  })
+  await expect(page.getByLabel('文章标题')).toHaveValue('公众号深度滚动回归')
+
+  await page.getByRole('tab', { name: '活力' }).click()
+  await page.locator('.wechat-theme-card').filter({ hasText: '薄荷气泡' }).click()
+  await expect(page.locator('[data-wechat-theme="mint-soda"]')).toBeVisible()
+
+  const previewViewport = page.locator('.platform-preview-viewport')
+  const previewBlocks = page.locator('.wechat-content [data-wechat-theme] > [data-source-block]')
+  await expect(previewBlocks).toHaveCount(paragraphCount)
+  const initialRenderMs = Date.now() - renderStartedAt
+  expect(initialRenderMs).toBeLessThan(10_000)
+  await waitForLocalSave(page)
+  await page.waitForTimeout(1_000)
+
+  const viewportBounds = await previewViewport.boundingBox()
+  expect(viewportBounds).not.toBeNull()
+  await page.mouse.move(
+    viewportBounds!.x + viewportBounds!.width / 2,
+    viewportBounds!.y + viewportBounds!.height / 2,
+  )
+  for (let index = 0; index < 10; index += 1) {
+    await page.mouse.wheel(0, 900)
+    await page.waitForTimeout(30)
+  }
+  await page.waitForTimeout(500)
+
+  const targetBeforeClick = await page.evaluate(() => {
+    const viewport = document.querySelector<HTMLElement>('.platform-preview-viewport')
+    const blocks = Array.from(
+      document.querySelectorAll<HTMLElement>('.wechat-content [data-wechat-theme] > [data-source-block]'),
+    )
+    if (!viewport) return null
+    const viewportRect = viewport.getBoundingClientRect()
+    const viewportCenter = viewportRect.top + viewport.clientHeight / 2
+    const visibleBlocks = blocks
+      .map(element => ({ element, rect: element.getBoundingClientRect() }))
+      .filter(({ rect }) => rect.top >= viewportRect.top && rect.bottom <= viewportRect.bottom)
+      .sort((first, second) => (
+        Math.abs(first.rect.top + first.rect.height / 2 - viewportCenter)
+        - Math.abs(second.rect.top + second.rect.height / 2 - viewportCenter)
+      ))
+    const target = visibleBlocks[0]
+    if (!target) return null
+    return {
+      block: target.element.dataset.sourceBlock!,
+      line: target.element.dataset.sourceLine!,
+      text: target.element.textContent?.trim() ?? '',
+      clickX: target.rect.left + Math.min(target.rect.width / 2, 120),
+      clickY: target.rect.top + target.rect.height / 2,
+      viewportOffset: target.rect.top - viewportRect.top,
+      scrollTop: viewport.scrollTop,
+      scrollHeight: viewport.scrollHeight,
+    }
+  })
+  expect(targetBeforeClick).not.toBeNull()
+  expect(targetBeforeClick!.scrollTop).toBeGreaterThan(4_000)
+
+  await page.mouse.click(targetBeforeClick!.clickX, targetBeforeClick!.clickY)
+  await expect(page.locator('.source-editor .cm-activeLine')).toContainText(targetBeforeClick!.text)
+  await expect(page.locator(
+    `.wechat-content [data-source-block="${targetBeforeClick!.block}"][data-preview-selected="true"]`,
+  )).toHaveCount(1)
+  await page.waitForTimeout(1_200)
+
+  const targetAfterClick = await page.evaluate(({ block, line }) => {
+    const viewport = document.querySelector<HTMLElement>('.platform-preview-viewport')
+    const target = document.querySelector<HTMLElement>(
+      `.wechat-content [data-source-block="${block}"][data-source-line="${line}"]`,
+    )
+    if (!viewport || !target) return null
+    const viewportRect = viewport.getBoundingClientRect()
+    const targetRect = target.getBoundingClientRect()
+    return {
+      viewportOffset: targetRect.top - viewportRect.top,
+      scrollTop: viewport.scrollTop,
+      scrollHeight: viewport.scrollHeight,
+      isVisible: targetRect.bottom > viewportRect.top && targetRect.top < viewportRect.bottom,
+    }
+  }, { block: targetBeforeClick!.block, line: targetBeforeClick!.line })
+  expect(targetAfterClick).not.toBeNull()
+  expect(targetAfterClick!.isVisible).toBe(true)
+  expect(Math.abs(targetAfterClick!.viewportOffset - targetBeforeClick!.viewportOffset)).toBeLessThan(4)
+  expect(Math.abs(targetAfterClick!.scrollTop - targetBeforeClick!.scrollTop)).toBeLessThan(2)
+  expect(Math.abs(targetAfterClick!.scrollHeight - targetBeforeClick!.scrollHeight)).toBeLessThan(4)
+})
+
 test('imports, autosaves, restores, and exports a privacy-safe diagnostic report', async ({ page }) => {
   await page.goto('/')
   await importFixture(page, 'markdown-baseline.md')

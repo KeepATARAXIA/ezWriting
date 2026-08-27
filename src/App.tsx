@@ -1320,6 +1320,8 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   }
 
   const editPreviewTarget = (target: PreviewEditTarget) => {
+    setActiveEditorLocation(null)
+    setPreviewLocateRequest(null)
     if (target.kind === 'title') {
       locateEditorField(titleInputRef.current, titleInputRef.current)
       return

@@ -4,7 +4,7 @@ import { basicSetup } from 'codemirror'
 import { html } from '@codemirror/lang-html'
 import { markdown } from '@codemirror/lang-markdown'
 import { redo, redoDepth, undo, undoDepth } from '@codemirror/commands'
-import { Annotation, Compartment, EditorState, Facet, Prec, StateEffect, StateField, Transaction } from '@codemirror/state'
+import { Annotation, Compartment, EditorState, Facet, Prec, StateField, Transaction } from '@codemirror/state'
 import {
   Decoration,
   EditorView,
@@ -108,25 +108,11 @@ const MARKDOWN_LINK_SOURCE = /(?<!!)\[([^\]\n]+)\]\(\s*(?:<([^>\n]+)>|([^\s)\n]+
 const EMBEDDED_IMAGE_TOKEN = /dispatch-editor-image:\/\/[a-z0-9-]+/gi
 const EMBEDDED_IMAGE_PREFIX = 'dispatch-editor-image://image-'
 const controlledValueUpdate = Annotation.define<boolean>()
-const setLocatedSourceLine = StateEffect.define<number | null>()
+const externalFocusUpdate = Annotation.define<boolean>()
 const SOURCE_CHANGE_DEBOUNCE_MS = 240
 const IMAGE_SOURCE_CHANGE_DEBOUNCE_MS = 320
 const sourceLanguageFacet = Facet.define<ArticleSourceLanguage, ArticleSourceLanguage>({
   combine: values => values[0] ?? 'markdown',
-})
-
-const locatedSourceLineField = StateField.define<DecorationSet>({
-  create: () => Decoration.none,
-  update: (decorations, transaction) => {
-    const effect = transaction.effects.find(candidate => candidate.is(setLocatedSourceLine))
-    if (!effect) return decorations.map(transaction.changes)
-    if (effect.value === null) return Decoration.none
-    const lineNumber = Math.min(Math.max(1, effect.value), transaction.state.doc.lines)
-    return Decoration.set([
-      Decoration.line({ class: 'cm-located-source-line' }).range(transaction.state.doc.line(lineNumber).from),
-    ])
-  },
-  provide: field => EditorView.decorations.from(field),
 })
 
 function markdownLinkDecorations(state: EditorState): DecorationSet {
@@ -469,7 +455,6 @@ export function SourceEditor({ value, language, focusRequest, readOnly = false, 
   const compositionEndTimerRef = useRef<number | null>(null)
   const compositionActiveRef = useRef(false)
   const activeBlockTimerRef = useRef<number | null>(null)
-  const locatedLineTimerRef = useRef<number | null>(null)
   const pendingLocalEchoesRef = useRef<string[]>([])
   const [selectionMenu, setSelectionMenu] = useState<SelectionMenuState | null>(null)
   const [historyAvailability, setHistoryAvailability] = useState({ canUndo: false, canRedo: false })
@@ -837,7 +822,6 @@ export function SourceEditor({ value, language, focusRequest, readOnly = false, 
           basicSetup,
           imageSourceCompartment.of(embeddedImageFacet.of({ sources: compacted.sources })),
           imagePreviewField,
-          locatedSourceLineField,
           markdownLinkField,
           readOnlyCompartment.of([
             EditorState.readOnly.of(readOnly),
@@ -954,6 +938,13 @@ export function SourceEditor({ value, language, focusRequest, readOnly = false, 
             const isControlledValueUpdate = update.transactions.some(
               transaction => transaction.annotation(controlledValueUpdate) === true,
             )
+            const isExternalFocusUpdate = update.transactions.some(
+              transaction => transaction.annotation(externalFocusUpdate) === true,
+            )
+            if (isExternalFocusUpdate && activeBlockTimerRef.current !== null) {
+              window.clearTimeout(activeBlockTimerRef.current)
+              activeBlockTimerRef.current = null
+            }
             if (update.docChanged && !isControlledValueUpdate) {
               if (compositionActiveRef.current || update.view.compositionStarted) {
                 if (changeTimerRef.current !== null) window.clearTimeout(changeTimerRef.current)
@@ -962,7 +953,7 @@ export function SourceEditor({ value, language, focusRequest, readOnly = false, 
                 scheduleSourceChange(update.view)
               }
             }
-            if (update.docChanged || update.selectionSet) scheduleActiveBlock(update.view)
+            if ((update.docChanged || update.selectionSet) && !isExternalFocusUpdate) scheduleActiveBlock(update.view)
             if (update.docChanged || update.selectionSet || update.geometryChanged) updateEditorUi(update.view)
           }),
           EditorView.theme({
@@ -990,7 +981,6 @@ export function SourceEditor({ value, language, focusRequest, readOnly = false, 
       if (compositionEndTimerRef.current !== null) window.clearTimeout(compositionEndTimerRef.current)
       compositionActiveRef.current = false
       if (activeBlockTimerRef.current !== null) window.clearTimeout(activeBlockTimerRef.current)
-      if (locatedLineTimerRef.current !== null) window.clearTimeout(locatedLineTimerRef.current)
       view.destroy()
       viewRef.current = null
     }
@@ -1066,16 +1056,9 @@ export function SourceEditor({ value, language, focusRequest, readOnly = false, 
     const position = view.state.doc.line(lineNumber).to
     view.dispatch({
       selection: { anchor: position },
-      effects: [
-        EditorView.scrollIntoView(position, { y: 'center', yMargin: 32 }),
-        setLocatedSourceLine.of(lineNumber),
-      ],
+      effects: EditorView.scrollIntoView(position, { y: 'center', yMargin: 32 }),
+      annotations: externalFocusUpdate.of(true),
     })
-    if (locatedLineTimerRef.current !== null) window.clearTimeout(locatedLineTimerRef.current)
-    locatedLineTimerRef.current = window.setTimeout(() => {
-      locatedLineTimerRef.current = null
-      if (viewRef.current === view) view.dispatch({ effects: setLocatedSourceLine.of(null) })
-    }, 2200)
     view.focus()
   }, [focusRequest])
 

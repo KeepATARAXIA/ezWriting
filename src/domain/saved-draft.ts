@@ -5,8 +5,33 @@ export const SAVED_DRAFT_SCHEMA_VERSION = 2
 
 export type DraftKind = 'image' | 'longform'
 
-export type XhsCardTemplate = 'clean' | 'editorial' | 'focus' | 'index' | 'headline'
+export const XHS_CARD_TEMPLATES = [
+  'clean',
+  'focus',
+  'index',
+  'memo',
+  'headline',
+  'journal',
+  'quote',
+  'soft',
+  'fresh',
+  'editorial',
+  'retro',
+  'geometry',
+  'doodle',
+  'texture',
+  'logic',
+  'mono',
+  'hero',
+  'narrative',
+  'dust',
+  'topology',
+] as const
+
+export type XhsCardTemplate = typeof XHS_CARD_TEMPLATES[number]
 export type XhsImageLayout = 'full' | 'image-left' | 'image-right'
+
+const XHS_CARD_TEMPLATE_SET = new Set<string>(XHS_CARD_TEMPLATES)
 
 export interface XhsImageOverride {
   layout: XhsImageLayout
@@ -55,13 +80,9 @@ export function normalizeXhsCardSettings(value?: unknown): XhsCardSettings {
   })
 
   return {
-    template:
-      candidate.template === 'clean'
-      || candidate.template === 'editorial'
-      || candidate.template === 'index'
-      || candidate.template === 'headline'
-        ? candidate.template
-        : 'focus',
+    template: typeof candidate.template === 'string' && XHS_CARD_TEMPLATE_SET.has(candidate.template)
+      ? candidate.template as XhsCardTemplate
+      : 'focus',
     showPageNumber: typeof candidate.showPageNumber === 'boolean' ? candidate.showPageNumber : DEFAULT_XHS_CARD_SETTINGS.showPageNumber,
     showFooter: typeof candidate.showFooter === 'boolean' ? candidate.showFooter : DEFAULT_XHS_CARD_SETTINGS.showFooter,
     footerText: typeof candidate.footerText === 'string' ? candidate.footerText.slice(0, 80) : DEFAULT_XHS_CARD_SETTINGS.footerText,

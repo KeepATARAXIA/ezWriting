@@ -78,6 +78,35 @@ describe('paginateForXhsCards', () => {
     expect(renderedWideImages).toBe(8)
   })
 
+  it('preserves an image and inline formatting when they share a paragraph', () => {
+    const image = pngDataUri(2400, 720)
+    const html = `<p data-source-block="3"><u>图片前的说明文字</u><img src="${image}" alt="模型发布时间轴"></p><h2 data-source-block="4">后续标题</h2>`
+
+    const pages = paginateForXhsCards(html, { title: '图文混排' })
+    const rendered = parsePage(pages.join(''))
+
+    expect(rendered.querySelectorAll('img')).toHaveLength(1)
+    expect(rendered.querySelector('img')?.getAttribute('alt')).toBe('模型发布时间轴')
+    expect(rendered.querySelector('u')?.textContent).toBe('图片前的说明文字')
+    expect(rendered.body.textContent).toContain('后续标题')
+  })
+
+  it('preserves common Markdown inline semantics across card pagination', () => {
+    const filler = '这段文字用于触发分页，同时验证行内语义不会在拆分过程中丢失。'.repeat(30)
+    const html = `<p data-source-block="0"><strong>粗体</strong>、<em>斜体</em>、<del>删除线</del>、<mark>高亮</mark>、<code>代码</code>与<a href="https://example.com">链接</a>。${filler}</p>`
+
+    const pages = paginateForXhsCards(html, { title: 'Markdown 兼容性' })
+    const rendered = parsePage(pages.join(''))
+
+    expect(pages.length).toBeGreaterThan(1)
+    expect(rendered.querySelector('strong')?.textContent).toBe('粗体')
+    expect(rendered.querySelector('em')?.textContent).toBe('斜体')
+    expect(rendered.querySelector('del')?.textContent).toBe('删除线')
+    expect(rendered.querySelector('mark')?.textContent).toBe('高亮')
+    expect(rendered.querySelector('code')?.textContent).toBe('代码')
+    expect(rendered.querySelector('a')?.getAttribute('href')).toBe('https://example.com')
+  })
+
   it('fills text-only cards using the rendered heading and list metrics', () => {
     const sections = Array.from({ length: 6 }, (_, sectionIndex) => {
       const items = Array.from({ length: 3 }, (_, itemIndex) => (

@@ -119,13 +119,84 @@ interface PlatformPreviewsProps {
   onMissingImageAction?: (target: MissingImageTarget, action: MissingImageAction) => void
 }
 
-const XHS_TEMPLATE_OPTIONS: Array<{ value: XhsCardTemplate; label: string; detail: string }> = [
-  { value: 'clean', label: '留白社论', detail: '宽留白 · 轻标记' },
-  { value: 'editorial', label: '经典月刊', detail: '宋体标题 · 双细线' },
-  { value: 'focus', label: '蓝线简报', detail: '强调色眉题 · 强网格' },
-  { value: 'index', label: '索引期刊', detail: '大编号 · 左侧索引' },
-  { value: 'headline', label: '专题头条', detail: '超大标题 · 高对比' },
+interface XhsTemplateOption {
+  value: XhsCardTemplate
+  label: string
+  detail: string
+}
+
+type XhsTemplateCategoryId = 'inspiration' | 'editorial' | 'paper' | 'information' | 'composition'
+
+interface XhsTemplateCategory {
+  id: XhsTemplateCategoryId
+  label: string
+  detail: string
+  templates: XhsTemplateOption[]
+}
+
+const XHS_TEMPLATE_CATEGORIES: XhsTemplateCategory[] = [
+  {
+    id: 'inspiration',
+    label: '灵感',
+    detail: '明快、手写与情绪表达',
+    templates: [
+      { value: 'memo', label: '灵感备忘', detail: '深色卡片 · 亮黄标注' },
+      { value: 'quote', label: '轻感明快', detail: '柠檬纸色 · 大号引语' },
+      { value: 'doodle', label: '涂鸦马克', detail: '手写标记 · 蓝色涂鸦' },
+      { value: 'soft', label: '黄昏手稿', detail: '暖粉纸色 · 手稿气质' },
+    ],
+  },
+  {
+    id: 'editorial',
+    label: '杂志',
+    detail: '网格、几何与编辑设计',
+    templates: [
+      { value: 'retro', label: '线条复古', detail: '细线框架 · 复古图文' },
+      { value: 'geometry', label: '优雅几何', detail: '留白几何 · 柔色构成' },
+      { value: 'headline', label: '杂志先锋', detail: '荧光标题 · 杂志网格' },
+      { value: 'editorial', label: '文艺清新', detail: '书卷留白 · 图文散文' },
+    ],
+  },
+  {
+    id: 'paper',
+    label: '纸感',
+    detail: '手帐、纹理与书卷气质',
+    templates: [
+      { value: 'journal', label: '手帐书写', detail: '胶带照片 · 旅行手帐' },
+      { value: 'texture', label: '素雅底纹', detail: '淡蓝纸纹 · 典雅宋体' },
+      { value: 'mono', label: '黑白极简', detail: '暖白纸张 · 极简长文' },
+      { value: 'dust', label: '札记集尘', detail: '竖排题签 · 旧纸札记' },
+    ],
+  },
+  {
+    id: 'information',
+    label: '信息',
+    detail: '知识、结构与清晰阅读',
+    templates: [
+      { value: 'focus', label: '清晰明朗', detail: '建筑留白 · 清晰标题' },
+      { value: 'index', label: '理性现代', detail: '红黑秩序 · 学术信息' },
+      { value: 'logic', label: '逻辑结构', detail: '粉色标线 · 逻辑拆解' },
+      { value: 'clean', label: '简约基础', detail: '中性留白 · 基础长文' },
+    ],
+  },
+  {
+    id: 'composition',
+    label: '构成',
+    detail: '大图、叙事与色块编排',
+    templates: [
+      { value: 'hero', label: '大图纯字', detail: '大图封面 · 纯字叠加' },
+      { value: 'narrative', label: '平实叙事', detail: '黑白图文 · 平实叙述' },
+      { value: 'fresh', label: '拼接色块', detail: '荧光拼接 · 信息卡片' },
+      { value: 'topology', label: '交叉拓扑', detail: '绿橙色块 · 交叉构成' },
+    ],
+  },
 ]
+
+const XHS_TEMPLATE_OPTIONS = XHS_TEMPLATE_CATEGORIES.flatMap(category => category.templates)
+
+function xhsTemplateCategoryFor(template: XhsCardTemplate): XhsTemplateCategoryId {
+  return XHS_TEMPLATE_CATEGORIES.find(category => category.templates.some(option => option.value === template))?.id ?? 'information'
+}
 
 const TOOL_RAIL_DEFAULT_WIDTH = 280
 const TOOL_RAIL_MIN_WIDTH = 240
@@ -148,6 +219,7 @@ const XHS_IMAGE_POPOVER_HEIGHT = 205
 const XHS_IMAGE_POPOVER_GAP = 12
 const XHS_PAGE_RANGE_SIZE = 10
 const PREVIEW_LOCATE_SETTLE_MS = 1000
+const PREVIEW_TARGET_FLASH_MS = 1500
 
 interface XhsImageResizeSession {
   pointerId: number
@@ -529,6 +601,8 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
   const [uncontrolledXhsSettings, setUncontrolledXhsSettings] = useState<XhsCardSettings>(DEFAULT_XHS_CARD_SETTINGS)
   const xhsSettings = controlledXhsSettings ?? uncontrolledXhsSettings
   const updateXhsSettings = onXhsSettingsChange ?? setUncontrolledXhsSettings
+  const [xhsTemplateCategory, setXhsTemplateCategory] = useState<XhsTemplateCategoryId>(() => xhsTemplateCategoryFor(xhsSettings.template))
+  const activeXhsTemplateCategory = XHS_TEMPLATE_CATEGORIES.find(category => category.id === xhsTemplateCategory) ?? XHS_TEMPLATE_CATEGORIES[3]
   const [selectedTarget, setSelectedTarget] = useState<PreviewEditTarget | null>(null)
   const [activeCard, setActiveCard] = useState(0)
   const [xhsPreviewMode, setXhsPreviewMode] = useState<XhsPreviewMode>('single')
@@ -552,6 +626,11 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
   const [xhsImagePreview, setXhsImagePreview] = useState<{ index: number; url: string } | null>(null)
   const [xhsImageZoom, setXhsImageZoom] = useState(100)
   const [measuredPagination, setMeasuredPagination] = useState<{ key: string; pages: string[] } | null>(null)
+
+  useEffect(() => {
+    setXhsTemplateCategory(xhsTemplateCategoryFor(xhsSettings.template))
+  }, [xhsSettings.template])
+
   const sourceLineMap = useMemo(
     () => sourceText ? sourceLinesByBlock(sourceText, sourceLanguage ?? 'markdown') : [],
     [sourceLanguage, sourceText],
@@ -641,6 +720,7 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
   const pendingLocateRequestRef = useRef<PreviewLocateRequest | null>(null)
   const locatedTargetTimerRef = useRef<number | null>(null)
   const locatedTargetRef = useRef<HTMLElement | null>(null)
+  const selectedTargetTimerRef = useRef<number | null>(null)
   const previewLocateFrameRef = useRef<number | null>(null)
   const previewLocateSettleTimerRef = useRef<number | null>(null)
   const previewLocateResizeObserverRef = useRef<ResizeObserver | null>(null)
@@ -661,6 +741,20 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
     previewLocateResizeObserverRef.current?.disconnect()
     previewLocateResizeObserverRef.current = null
     previewStageRef.current?.classList.remove('preview-locating')
+  }
+
+  const clearLocatedTarget = () => {
+    if (locatedTargetTimerRef.current !== null) window.clearTimeout(locatedTargetTimerRef.current)
+    locatedTargetTimerRef.current = null
+    locatedTargetRef.current?.classList.remove('preview-located-target')
+    locatedTargetRef.current?.removeAttribute('data-preview-selected')
+    locatedTargetRef.current = null
+  }
+
+  const cancelEditorDrivenPreviewLocate = () => {
+    pendingLocateRequestRef.current = null
+    stopPreviewCentering()
+    clearLocatedTarget()
   }
 
   const centerPreviewTarget = (anchor: HTMLElement) => {
@@ -845,6 +939,8 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
   }
 
   const clearSelectedTarget = useCallback(() => {
+    if (selectedTargetTimerRef.current !== null) window.clearTimeout(selectedTargetTimerRef.current)
+    selectedTargetTimerRef.current = null
     setSelectedTarget(null)
   }, [])
 
@@ -988,7 +1084,8 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
     exportCardRefs.current.length = cardPages.length
   }, [cardPages.length])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    cancelEditorDrivenPreviewLocate()
     clearSelectedTarget()
   }, [html, activePlatform, previewDevice, clearSelectedTarget])
 
@@ -1095,8 +1192,9 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
     if (locateRequest.blockIndex < 0 || locateRequest.blockIndex >= activePreviewBlockCount) return
 
     handledLocateRequestRef.current = locateRequest.requestId
+    cancelEditorDrivenPreviewLocate()
     pendingLocateRequestRef.current = locateRequest
-    setSelectedTarget(null)
+    clearSelectedTarget()
     if (activePlatform === 'xhs') {
       const targetPage = cardPages.findIndex(page => page.includes(`data-source-block="${locateRequest.blockIndex}"`))
       if (targetPage >= 0) setActiveCard(targetPage)
@@ -1104,8 +1202,9 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
   }, [activePlatform, activePreviewBlockCount, cardPages, locateRequest])
 
   useEffect(() => () => {
-    if (locatedTargetTimerRef.current !== null) window.clearTimeout(locatedTargetTimerRef.current)
-    locatedTargetRef.current?.classList.remove('preview-located-target')
+    if (selectedTargetTimerRef.current !== null) window.clearTimeout(selectedTargetTimerRef.current)
+    selectedTargetTimerRef.current = null
+    clearLocatedTarget()
     stopPreviewCentering()
     if (wechatCopyTimerRef.current !== null) window.clearTimeout(wechatCopyTimerRef.current)
     if (xhsImagePreview) URL.revokeObjectURL(xhsImagePreview.url)
@@ -1136,9 +1235,9 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
 
   useEffect(() => {
     if (selectedTarget?.kind === 'body' && selectedTarget.blockIndex >= activePreviewBlockCount) {
-      setSelectedTarget(null)
+      clearSelectedTarget()
     }
-  }, [activePreviewBlockCount, selectedTarget])
+  }, [activePreviewBlockCount, clearSelectedTarget, selectedTarget])
 
   useLayoutEffect(() => {
     if (viewportRef.current) viewportRef.current.scrollTop = scrollPositionsRef.current[activePlatform]
@@ -1148,6 +1247,7 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
     const stage = previewStageRef.current
     stage?.querySelectorAll('[data-preview-selected="true"]').forEach(element => element.removeAttribute('data-preview-selected'))
     const pendingRequest = pendingLocateRequestRef.current
+    if (pendingRequest && selectedTarget) return
     const effectiveTarget: PreviewEditTarget | null = pendingRequest
       ? {
           kind: 'body',
@@ -1168,21 +1268,22 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
         : null)
     if (!anchor) return
 
+    if (pendingRequest && effectiveTarget.kind === 'body' && pendingRequest.blockIndex === effectiveTarget.blockIndex) {
+      clearLocatedTarget()
+    }
     anchor.setAttribute('data-preview-selected', 'true')
 
     if (pendingRequest && effectiveTarget.kind === 'body' && pendingRequest.blockIndex === effectiveTarget.blockIndex) {
       pendingLocateRequestRef.current = null
-      locatedTargetRef.current?.classList.remove('preview-located-target')
       locatedTargetRef.current = anchor
       anchor.classList.add('preview-located-target')
       startPreviewCentering(stage, anchor)
-      if (locatedTargetTimerRef.current !== null) window.clearTimeout(locatedTargetTimerRef.current)
       locatedTargetTimerRef.current = window.setTimeout(() => {
         anchor.classList.remove('preview-located-target')
-        if (!selectedTarget) anchor.removeAttribute('data-preview-selected')
+        anchor.removeAttribute('data-preview-selected')
         if (locatedTargetRef.current === anchor) locatedTargetRef.current = null
         locatedTargetTimerRef.current = null
-      }, 2000)
+      }, PREVIEW_TARGET_FLASH_MS)
     }
   }, [activeCard, activePlatform, activePreviewHtml, locateRequest, selectedTarget, xhsSettings])
 
@@ -1204,7 +1305,13 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
   }
 
   const selectTarget = (target: PreviewEditTarget) => {
+    cancelEditorDrivenPreviewLocate()
+    clearSelectedTarget()
     setSelectedTarget(target)
+    selectedTargetTimerRef.current = window.setTimeout(() => {
+      selectedTargetTimerRef.current = null
+      setSelectedTarget(null)
+    }, PREVIEW_TARGET_FLASH_MS)
     onEditTarget?.(target)
   }
 
@@ -1227,7 +1334,8 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
     if (!key) return false
     const pageIndex = Number(image.closest<HTMLElement>('[data-xhs-page]')?.dataset.xhsPage)
     if (Number.isInteger(pageIndex)) setActiveCard(pageIndex)
-    setSelectedTarget(null)
+    cancelEditorDrivenPreviewLocate()
+    clearSelectedTarget()
     setSelectedXhsImageKey(key)
     const imageBounds = image.getBoundingClientRect()
     positionXhsImagePopover(
@@ -1825,14 +1933,58 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
                   onFormattingChange={onFormattingChange}
                   layoutContent={(
                     <section className="xhs-template-tools" aria-label="小红书视觉模板">
-                      <div className="xhs-tool-heading"><strong>视觉模板</strong><small>{XHS_TEMPLATE_OPTIONS.length} 套</small></div>
-                      <div className="xhs-template-options" role="radiogroup" aria-label="选择卡片模板">
-                        {XHS_TEMPLATE_OPTIONS.map(option => (
-                          <button type="button" role="radio" aria-checked={xhsSettings.template === option.value} className={`xhs-template-option template-${option.value}${xhsSettings.template === option.value ? ' selected' : ''}`} key={option.value} onClick={() => applyXhsTemplate(option.value)}>
-                            <span className="xhs-template-mock" data-template={option.value} aria-hidden="true"><i /><i /><i /><i /></span>
-                            <span className="xhs-template-copy"><strong>{option.label}</strong><small>{option.detail}</small></span>
-                          </button>
+                      <div className="xhs-tool-heading"><strong>视觉模板</strong><small>{XHS_TEMPLATE_OPTIONS.length} 套 · 三页预览</small></div>
+                      <div className="xhs-template-category-nav" role="tablist" aria-label="选择模板分类">
+                        {XHS_TEMPLATE_CATEGORIES.map(category => (
+                          <button
+                            id={`xhs-template-category-${category.id}`}
+                            type="button"
+                            role="tab"
+                            aria-selected={xhsTemplateCategory === category.id}
+                            aria-controls="xhs-template-category-panel"
+                            className={xhsTemplateCategory === category.id ? 'selected' : ''}
+                            key={category.id}
+                            onClick={() => setXhsTemplateCategory(category.id)}
+                          >{category.label}</button>
                         ))}
+                      </div>
+                      <p className="xhs-template-category-description" aria-live="polite">{activeXhsTemplateCategory.detail}</p>
+                      <div
+                        id="xhs-template-category-panel"
+                        role="tabpanel"
+                        aria-labelledby={`xhs-template-category-${activeXhsTemplateCategory.id}`}
+                      >
+                        <div className="xhs-template-gallery" role="radiogroup" aria-label={`选择${activeXhsTemplateCategory.label}模板`}>
+                          {activeXhsTemplateCategory.templates.map((option, optionIndex) => (
+                            <section
+                              className={`xhs-template-showcase${xhsSettings.template === option.value ? ' selected' : ''}`}
+                              aria-labelledby={`xhs-template-${option.value}`}
+                              key={option.value}
+                            >
+                              <header>
+                                <span><strong id={`xhs-template-${option.value}`}>{option.label}</strong><small>{option.detail}</small></span>
+                                <b>{String(optionIndex + 1).padStart(2, '0')}</b>
+                              </header>
+                              <div className="xhs-template-options">
+                                <button
+                                  type="button"
+                                  role="radio"
+                                  aria-checked={xhsSettings.template === option.value}
+                                  aria-label={`${option.label}：${option.detail}`}
+                                  title={`选择${option.label}`}
+                                  className={`xhs-template-option template-${option.value}${xhsSettings.template === option.value ? ' selected' : ''}`}
+                                  onClick={() => applyXhsTemplate(option.value)}
+                                >
+                                  <span className="xhs-template-triptych" aria-hidden="true">
+                                    {(['cover', 'article', 'image'] as const).map(variant => (
+                                      <span className="xhs-template-mock" data-template={option.value} data-variant={variant} key={variant}><i /><i /><i /><i /><i /></span>
+                                    ))}
+                                  </span>
+                                </button>
+                              </div>
+                            </section>
+                          ))}
+                        </div>
                       </div>
                     </section>
                   )}

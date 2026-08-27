@@ -800,26 +800,17 @@ describe('App publishing engine onboarding', () => {
     const previewBlock = container.querySelector<HTMLElement>('.wechat-content [data-source-block="0"]')!
     await act(async () => {
       previewBlock.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-      await new Promise(resolve => window.setTimeout(resolve, 0))
+      await new Promise(resolve => window.setTimeout(resolve, 100))
     })
     expect(document.activeElement).toBe(container.querySelector('.source-editor .cm-content'))
     expect(container.querySelector('.preview-edit-action')).toBeNull()
     expect(container.querySelector('.wechat-content [data-source-block="0"]')?.getAttribute('data-preview-selected')).toBe('true')
 
-    const sourceEditor = container.querySelector<HTMLElement>('.source-editor .cm-content')!
     await act(async () => {
-      sourceEditor.dispatchEvent(new KeyboardEvent('keydown', {
-        bubbles: true,
-        cancelable: true,
-        key: 'End',
-        ctrlKey: true,
-      }))
-      await vi.waitFor(
-        () => expect(locatedMissingImage?.getAttribute('data-preview-selected')).toBe('true'),
-        { timeout: 800 },
-      )
+      await new Promise(resolve => window.setTimeout(resolve, 1600))
     })
-    expect(locatedMissingImage?.classList.contains('preview-located-target')).toBe(true)
+    expect(container.querySelector('.wechat-content [data-preview-selected="true"]')).toBeNull()
+    expect(container.querySelector('.wechat-content .missing-image-card')?.classList.contains('preview-located-target')).toBe(false)
 
     const headingButton = container.querySelector<HTMLButtonElement>('button[aria-label="二级标题"]')!
     expect(headingButton).not.toBeNull()
@@ -932,7 +923,8 @@ describe('App publishing engine onboarding', () => {
     expect(container.querySelector('[aria-label="小红书视觉模板"]')).not.toBeNull()
     expect(container.querySelector('[aria-label="小红书输出信息"]')).not.toBeNull()
     expect(container.querySelector('[aria-label="选择文章版式"]')).toBeNull()
-    expect(container.querySelectorAll('.xhs-template-options button')).toHaveLength(5)
+    expect(container.querySelectorAll('[aria-label="选择模板分类"] [role="tab"]')).toHaveLength(5)
+    expect(container.querySelectorAll('.xhs-template-options button')).toHaveLength(4)
     expect(Array.from(container.querySelectorAll<HTMLButtonElement>('.xhs-tool-rail button')).some(button => button.textContent?.includes('卡片样式'))).toBe(false)
     expect(container.textContent).not.toContain('顶部色条')
     const layoutTrigger = container.querySelector<HTMLButtonElement>('#xhs-settings-layout-trigger')!
@@ -946,7 +938,7 @@ describe('App publishing engine onboarding', () => {
     expect(layoutTrigger.getAttribute('aria-expanded')).toBe('true')
     expect(fontTrigger.getAttribute('aria-expanded')).toBe('false')
     const cleanTemplate = Array.from(container.querySelectorAll<HTMLButtonElement>('.xhs-template-options button'))
-      .find(button => button.textContent?.includes('留白社论'))!
+      .find(button => button.getAttribute('aria-label')?.startsWith('简约基础：'))!
     await act(async () => cleanTemplate.dispatchEvent(new MouseEvent('click', { bubbles: true })))
 
     const visibleCard = container.querySelector<HTMLElement>('.xhs-stage .xhs-card-page')!

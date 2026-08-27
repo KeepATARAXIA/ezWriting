@@ -63,6 +63,10 @@ export function applyArticleFormatting(html: string, formatting: ArticleFormatti
     element.style.overflowWrap = 'anywhere'
   })
 
+  document.body.querySelectorAll<HTMLElement>('strong, b').forEach(element => {
+    element.style.fontWeight = '800'
+  })
+
   document.body.querySelectorAll<HTMLElement>('ul:not([data-type="taskList"]), ol').forEach(list => {
     list.style.margin = '0.9em 0 1.25em'
     list.style.paddingLeft = '1.55em'
@@ -247,6 +251,33 @@ export function applyArticleFormatting(html: string, formatting: ArticleFormatti
       const lastChild = content.lastElementChild as HTMLElement | null
       if (lastChild) lastChild.style.marginBottom = '0'
     }
+  })
+
+  document.body.querySelectorAll<HTMLElement>('[data-footnote-item]').forEach((item, index) => {
+    item.style.boxSizing = 'border-box'
+    item.style.maxWidth = '100%'
+    item.style.margin = index === 0 ? '1.8em 0 0' : '0.65em 0 0'
+    item.style.padding = index === 0 ? '0.9em 0 0' : '0'
+    item.style.borderTop = index === 0 ? '1px solid #dce1e6' : '0'
+    item.style.display = 'grid'
+    item.style.gridTemplateColumns = '1.6em minmax(0, 1fr)'
+    item.style.gap = '0.25em'
+    item.style.color = '#64748b'
+    item.style.fontFamily = bodyFont
+    item.style.fontSize = '0.88em'
+    item.style.lineHeight = ARTICLE_LINE_HEIGHTS[formatting.lineHeight]
+    item.style.overflowWrap = 'anywhere'
+
+    const number = item.querySelector<HTMLElement>(':scope > [data-footnote-number]')
+    if (number) {
+      number.style.color = accent
+      number.style.fontWeight = '800'
+    }
+    item.querySelectorAll<HTMLElement>('.ez-footnote-backref').forEach(backlink => {
+      backlink.style.marginLeft = '0.2em'
+      backlink.style.fontSize = '0.85em'
+      backlink.style.textDecoration = 'none'
+    })
   })
 
   return document.body.innerHTML

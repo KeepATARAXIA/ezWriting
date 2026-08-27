@@ -67,6 +67,9 @@ export const DEFAULT_WECHAT_THEME_SETTINGS: WechatThemeSettings = {
 const THEME_ID_SET = new Set<string>(WECHAT_THEME_IDS)
 const FONT_SET = new Set<WechatThemeFont>(['theme', 'sans', 'serif', 'rounded'])
 const HEX_COLOR = /^#[0-9a-f]{6}$/i
+const DEFAULT_PRE_STYLE = 'box-sizing:border-box;max-width:100%;margin:1.4em 8px;padding:0;border:1px solid #e1e5e9;border-radius:6px;background-color:#f5f7f9;overflow:hidden;white-space:normal;'
+const DEFAULT_PRE_BODY_STYLE = 'display:block;box-sizing:border-box;max-width:100%;margin:0;padding:0.9em 1em;background-color:transparent;overflow-x:hidden;white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;'
+const DEFAULT_PRE_CODE_STYLE = "font-family:Menlo,Consolas,'Courier New',monospace;font-size:0.84em;line-height:1.65;color:#26313a;border:0;border-radius:0;"
 
 export const WECHAT_THEMES = themes.filter(
   (theme): theme is MdWechatTheme & { id: WechatThemeId } => THEME_ID_SET.has(theme.id),
@@ -127,10 +130,32 @@ function applyStyle(element: HTMLElement, cssText?: string): void {
   element.style.cssText = cssText
 }
 
-function applyHeadingDecoration(element: HTMLElement, level: number, styles: Record<string, string>, index: number): void {
+function applyHeadingDecoration(
+  element: HTMLElement,
+  level: number,
+  styles: Record<string, string>,
+  index: number,
+): HTMLElement | null {
   const open = styles[`h${level}WrapOpen`] ?? ''
   const close = styles[`h${level}WrapClose`] ?? ''
-  if (open || close) element.innerHTML = `${open}${element.innerHTML}${close}`
+  let contentWrapper: HTMLElement | null = null
+  if (open || close) {
+    element.innerHTML = `${open}<!--ez-heading-content-start-->${element.innerHTML}<!--ez-heading-content-end-->${close}`
+    const walker = element.ownerDocument.createTreeWalker(element, 128)
+    let startMarker: Comment | null = null
+    let endMarker: Comment | null = null
+    let node = walker.nextNode()
+    while (node) {
+      if (node instanceof Comment && node.data === 'ez-heading-content-start') startMarker = node
+      if (node instanceof Comment && node.data === 'ez-heading-content-end') endMarker = node
+      node = walker.nextNode()
+    }
+    if (startMarker?.parentElement && startMarker.parentElement === endMarker?.parentElement && startMarker.parentElement !== element) {
+      contentWrapper = startMarker.parentElement
+    }
+    startMarker?.remove()
+    endMarker?.remove()
+  }
   if (level === 2 && styles.h2Index) {
     const marker = element.ownerDocument.createElement('span')
     marker.setAttribute('aria-hidden', 'true')
@@ -138,6 +163,128 @@ function applyHeadingDecoration(element: HTMLElement, level: number, styles: Rec
     marker.textContent = String(index + 1).padStart(2, '0')
     element.prepend(marker)
   }
+  return contentWrapper
+}
+
+function hasVisibleBackground(element: HTMLElement): boolean {
+  const backgroundColor = element.style.backgroundColor.replace(/\s/g, '').toLowerCase()
+  const hasBackgroundColor = Boolean(backgroundColor)
+    && backgroundColor !== 'transparent'
+    && backgroundColor !== 'rgba(0,0,0,0)'
+  const hasBackgroundImage = Boolean(element.style.backgroundImage && element.style.backgroundImage !== 'none')
+  return hasBackgroundColor || hasBackgroundImage
+}
+
+function hasCompleteBorder(element: HTMLElement): boolean {
+  return ['Top', 'Right', 'Bottom', 'Left'].every(side => {
+    const style = element.style[`border${side}Style` as keyof CSSStyleDeclaration]
+    return typeof style === 'string' && style !== '' && style !== 'none'
+  })
+}
+
+function isBoxedHeadingDecoration(element: HTMLElement): boolean {
+  const verticalPadding = Number.parseFloat(element.style.paddingTop || '0')
+    + Number.parseFloat(element.style.paddingBottom || '0')
+  return verticalPadding > 0 && (hasVisibleBackground(element) || hasCompleteBorder(element))
+}
+
+function applyHeadingLayoutSafety(element: HTMLElement, level: number, contentWrapper: HTMLElement | null): void {
+  element.style.boxSizing = 'border-box'
+  element.style.maxWidth = '100%'
+  element.style.minWidth = '0'
+  element.style.overflowWrap = 'anywhere'
+
+  const boxedContent = level === 2 && contentWrapper && isBoxedHeadingDecoration(contentWrapper)
+    ? contentWrapper
+    : null
+  if (boxedContent) {
+    boxedContent.style.display = 'block'
+    boxedContent.style.boxSizing = 'border-box'
+    boxedContent.style.width = '100%'
+    boxedContent.style.maxWidth = '100%'
+    boxedContent.style.overflowWrap = 'anywhere'
+  }
+
+  element.querySelectorAll<HTMLElement>('span').forEach(span => {
+    if (span === boxedContent || !hasVisibleBackground(span)) return
+    span.style.maxWidth = '100%'
+    span.style.overflowWrap = 'anywhere'
+    span.style.boxDecorationBreak = 'clone'
+    span.style.setProperty('-webkit-box-decoration-break', 'clone')
+  })
+}
+
+function preserveHeadingForeground(element: HTMLElement): void {
+  element.querySelectorAll<HTMLElement>('strong, b, em, i, s, del, a').forEach(inline => {
+    inline.style.color = 'inherit'
+    if (inline.matches('a')) {
+      inline.style.borderBottomColor = 'currentcolor'
+      inline.style.textDecorationColor = 'currentcolor'
+    }
+  })
+}
+
+function renderThemeSeparator(element: HTMLElement, html: string | undefined): void {
+  if (!html) {
+    element.dataset.wechatSeparator = 'true'
+    return
+  }
+
+  const template = element.ownerDocument.createElement('template')
+  template.innerHTML = html.trim()
+  const replacement = template.content.firstElementChild as HTMLElement | null
+  if (!replacement) {
+    element.dataset.wechatSeparator = 'true'
+    return
+  }
+
+  Array.from(element.attributes).forEach(attribute => {
+    if (attribute.name !== 'style') replacement.setAttribute(attribute.name, attribute.value)
+  })
+  replacement.dataset.wechatSeparator = 'true'
+  element.replaceWith(replacement)
+}
+
+function applyCodeBlockStyles(
+  pre: HTMLElement,
+  theme: MdWechatTheme,
+  styles: Record<string, string>,
+): void {
+  applyStyle(pre, styles.pre ?? DEFAULT_PRE_STYLE)
+  pre.style.boxSizing = 'border-box'
+  pre.style.maxWidth = '100%'
+  pre.style.padding = '0'
+  pre.style.overflow = 'hidden'
+  pre.style.whiteSpace = 'normal'
+
+  const code = pre.querySelector<HTMLElement>(':scope > code')
+  if (!code) return
+
+  if (theme.codeChrome === 'label' && styles.preHeader && !pre.querySelector(':scope > [data-wechat-code-header]')) {
+    const header = pre.ownerDocument.createElement('span')
+    header.dataset.wechatCodeHeader = 'true'
+    applyStyle(header, `display:block;${styles.preHeader}`)
+
+    const label = pre.ownerDocument.createElement('span')
+    label.dataset.wechatCodeLabel = 'true'
+    applyStyle(label, styles.preLabel)
+    label.textContent = theme.codeLabel ?? 'CODE'
+    header.append(label)
+    pre.prepend(header)
+  }
+
+  applyStyle(code, `${styles.preBody ?? styles.prePlain ?? DEFAULT_PRE_BODY_STYLE}${styles.preCode ?? DEFAULT_PRE_CODE_STYLE}`)
+  code.style.display = 'block'
+  code.style.boxSizing = 'border-box'
+  code.style.maxWidth = '100%'
+  code.style.margin = '0'
+  code.style.overflowX = 'hidden'
+  code.style.whiteSpace = 'pre-wrap'
+  code.style.wordBreak = 'break-word'
+  code.style.overflowWrap = 'anywhere'
+  if (!code.style.fontFamily) code.style.fontFamily = "Menlo, Consolas, 'Courier New', monospace"
+  if (!code.style.fontSize) code.style.fontSize = '0.84em'
+  if (!code.style.lineHeight) code.style.lineHeight = '1.65'
 }
 
 export function applyWechatTheme(
@@ -163,7 +310,8 @@ export function applyWechatTheme(
   for (let level = 1; level <= 6; level += 1) {
     container.querySelectorAll<HTMLElement>(`h${level}`).forEach((heading, index) => {
       applyStyle(heading, styles[`h${level}`])
-      applyHeadingDecoration(heading, level, styles, index)
+      const contentWrapper = applyHeadingDecoration(heading, level, styles, index)
+      applyHeadingLayoutSafety(heading, level, contentWrapper)
     })
   }
 
@@ -180,29 +328,63 @@ export function applyWechatTheme(
   })
   container.querySelectorAll<HTMLElement>('ul:not([data-type="taskList"])').forEach(element => applyStyle(element, styles.ul))
   container.querySelectorAll<HTMLElement>('ol').forEach(element => applyStyle(element, styles.ol))
-  container.querySelectorAll<HTMLElement>('li').forEach(element => applyStyle(element, styles.li))
+  container.querySelectorAll<HTMLElement>('li:not([data-type="taskItem"])').forEach(element => applyStyle(element, styles.li))
+  container.querySelectorAll<HTMLElement>('ul[data-type="taskList"]').forEach(list => {
+    applyStyle(list, `${styles.ul}padding-left:0;list-style:none;`)
+  })
+  container.querySelectorAll<HTMLElement>('li[data-type="taskItem"]').forEach(item => {
+    applyStyle(item, `${styles.li}display:grid;grid-template-columns:1.4em minmax(0,1fr);align-items:start;gap:0.25em;`)
+    const lastParagraph = item.querySelector<HTMLElement>(':scope > div > p:last-child')
+    if (lastParagraph) lastParagraph.style.marginBottom = '0'
+  })
   container.querySelectorAll<HTMLElement>('a').forEach(element => applyStyle(element, styles.a))
-  container.querySelectorAll<HTMLElement>('strong, b').forEach(element => applyStyle(element, styles.strong))
-  container.querySelectorAll<HTMLElement>('em, i').forEach(element => applyStyle(element, styles.em))
+  container.querySelectorAll<HTMLElement>('strong, b').forEach(element => {
+    applyStyle(element, styles.strong)
+    element.style.fontWeight = element.closest('h1, h2, h3, h4, h5, h6') ? 'inherit' : '800'
+  })
+  container.querySelectorAll<HTMLElement>('em, i').forEach(element => {
+    applyStyle(element, styles.em)
+    element.style.fontStyle = 'italic'
+  })
   container.querySelectorAll<HTMLElement>('s, del').forEach(element => applyStyle(element, styles.s))
   container.querySelectorAll<HTMLElement>('mark').forEach(element => applyStyle(element, styles.mark))
-  container.querySelectorAll<HTMLElement>('hr').forEach(element => applyStyle(element, styles.hr))
+  container.querySelectorAll<HTMLElement>('hr').forEach(element => {
+    applyStyle(element, styles.hr)
+    renderThemeSeparator(element, styles.hrHtml)
+  })
+  container.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6').forEach(preserveHeadingForeground)
 
   container.querySelectorAll<HTMLImageElement>('img').forEach(image => {
     applyStyle(image, styles.img)
+    image.style.maxWidth = '100%'
+    image.style.height = 'auto'
+    image.style.boxSizing = 'border-box'
   })
 
-  container.querySelectorAll<HTMLTableElement>('table').forEach(table => applyStyle(table, styles.table))
-  container.querySelectorAll<HTMLElement>('th').forEach(cell => applyStyle(cell, styles.th))
-  container.querySelectorAll<HTMLElement>('td').forEach(cell => applyStyle(cell, styles.td))
+  container.querySelectorAll<HTMLTableElement>('table').forEach(table => {
+    applyStyle(table, `${styles.tableWrap ?? ''}${styles.table ?? ''}`)
+    table.style.boxSizing = 'border-box'
+    table.style.width = '100%'
+    table.style.maxWidth = '100%'
+    table.style.minWidth = '0'
+    table.style.tableLayout = 'fixed'
+  })
+  container.querySelectorAll<HTMLElement>('th').forEach(cell => {
+    applyStyle(cell, styles.th)
+    cell.style.wordBreak = 'break-word'
+    cell.style.overflowWrap = 'anywhere'
+    cell.style.verticalAlign = 'top'
+  })
+  container.querySelectorAll<HTMLElement>('td').forEach(cell => {
+    applyStyle(cell, styles.td)
+    cell.style.wordBreak = 'break-word'
+    cell.style.overflowWrap = 'anywhere'
+    cell.style.verticalAlign = 'top'
+  })
   container.querySelectorAll<HTMLElement>('code').forEach(code => {
-    applyStyle(code, code.closest('pre') ? styles.preCode : styles.code)
+    if (!code.closest('pre')) applyStyle(code, styles.code)
   })
-  container.querySelectorAll<HTMLElement>('pre').forEach(pre => {
-    applyStyle(pre, styles.pre)
-    const code = pre.querySelector<HTMLElement>(':scope > code')
-    if (code) applyStyle(code, `${styles.preBody ?? ''}${styles.preCode ?? ''}`)
-  })
+  container.querySelectorAll<HTMLElement>('pre').forEach(pre => applyCodeBlockStyles(pre, theme, styles))
 
   if (sharedFormatting) {
     const lineHeight = ARTICLE_LINE_HEIGHTS[sharedFormatting.lineHeight]

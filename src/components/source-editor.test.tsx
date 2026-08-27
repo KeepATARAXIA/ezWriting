@@ -264,7 +264,7 @@ describe('SourceEditor', () => {
     expect(open).toHaveBeenCalledWith('https://openai.com/index/example', '_blank', 'noopener,noreferrer')
   })
 
-  it('shows one clear line highlight for preview-to-editor locating', async () => {
+  it('moves the editor selection without adding a preview-location highlight', async () => {
     await act(async () => root.render(
       <SourceEditor
         value={'第一段\n第二段\n第三段'}
@@ -275,8 +275,10 @@ describe('SourceEditor', () => {
     ))
     await act(async () => new Promise(resolve => window.setTimeout(resolve, 0)))
 
-    expect(container.querySelectorAll('.cm-located-source-line')).toHaveLength(1)
-    expect(container.querySelector('.cm-located-source-line')?.textContent).toBe('第二段')
+    const editor = container.querySelector<HTMLElement>('.cm-content')!
+    const view = EditorView.findFromDOM(editor)!
+    expect(view.state.doc.lineAt(view.state.selection.main.head).number).toBe(2)
+    expect(container.querySelector('.cm-located-source-line')).toBeNull()
 
     await act(async () => root.render(
       <SourceEditor
@@ -287,11 +289,11 @@ describe('SourceEditor', () => {
       />,
     ))
 
-    expect(container.querySelectorAll('.cm-located-source-line')).toHaveLength(1)
-    expect(container.querySelector('.cm-located-source-line')?.textContent).toBe('第三段')
+    expect(view.state.doc.lineAt(view.state.selection.main.head).number).toBe(3)
+    expect(container.querySelector('.cm-located-source-line')).toBeNull()
   })
 
-  it('reports the active Markdown block together with the exact source line', async () => {
+  it('does not echo a preview-driven focus request back as an editor location change', async () => {
     const onActiveBlockChange = vi.fn()
     await act(async () => root.render(
       <SourceEditor
@@ -304,13 +306,10 @@ describe('SourceEditor', () => {
     ))
 
     await act(async () => {
-      await vi.waitFor(
-        () => expect(onActiveBlockChange).toHaveBeenLastCalledWith({ blockIndex: 1, line: 4 }),
-        { timeout: 500 },
-      )
+      await new Promise(resolve => window.setTimeout(resolve, 100))
     })
+    expect(onActiveBlockChange).not.toHaveBeenCalled()
 
-    onActiveBlockChange.mockClear()
     await act(async () => {
       container.querySelector<HTMLElement>('.cm-content')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
       await vi.waitFor(
@@ -318,6 +317,43 @@ describe('SourceEditor', () => {
         { timeout: 500 },
       )
     })
+  })
+
+  it('cancels a queued editor location change when preview focus takes control', async () => {
+    const onActiveBlockChange = vi.fn()
+    const value = '第一段\n\n第二段\n\n第三段'
+    await act(async () => root.render(
+      <SourceEditor
+        value={value}
+        language="markdown"
+        onChange={vi.fn()}
+        onActiveBlockChange={onActiveBlockChange}
+      />,
+    ))
+    await act(async () => new Promise(resolve => window.setTimeout(resolve, 0)))
+
+    const editor = container.querySelector<HTMLElement>('.cm-content')!
+    const view = EditorView.findFromDOM(editor)!
+    await act(async () => {
+      view.dispatch({ selection: { anchor: view.state.doc.line(3).to } })
+    })
+    await act(async () => {
+      root.render(
+        <SourceEditor
+          value={value}
+          language="markdown"
+          focusRequest={{ line: 5, requestId: 1 }}
+          onChange={vi.fn()}
+          onActiveBlockChange={onActiveBlockChange}
+        />,
+      )
+    })
+    await act(async () => {
+      await new Promise(resolve => window.setTimeout(resolve, 100))
+    })
+
+    expect(view.state.doc.lineAt(view.state.selection.main.head).number).toBe(5)
+    expect(onActiveBlockChange).not.toHaveBeenCalled()
   })
 
   it('waits for Chinese IME composition to finish before syncing a Markdown heading', async () => {

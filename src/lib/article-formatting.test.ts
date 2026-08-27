@@ -18,6 +18,18 @@ describe('applyArticleFormatting', () => {
     expect(document.querySelector('a')?.style.color).toBe('rgb(22, 72, 255)')
   })
 
+  it('gives semantic strong text an explicit publishable weight', () => {
+    const html = applyArticleFormatting(
+      '<p style="font-weight:400">普通正文 <strong>0.15 美元</strong> 与 <b>0.50 美元</b></p>',
+      DEFAULT_ARTICLE_FORMATTING,
+    )
+    const document = new DOMParser().parseFromString(html, 'text/html')
+
+    expect(document.querySelector<HTMLElement>('p')?.style.fontWeight).toBe('400')
+    expect(document.querySelector<HTMLElement>('strong')?.style.fontWeight).toBe('800')
+    expect(document.querySelector<HTMLElement>('b')?.style.fontWeight).toBe('800')
+  })
+
   it('keeps image dimensions responsive for platform previews and drafts', () => {
     const html = applyArticleFormatting(
       '<img src="data:image/png;base64,AAAA" alt="配图">',
