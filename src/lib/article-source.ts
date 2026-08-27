@@ -13,8 +13,17 @@ interface SourceBlock {
   line: number
 }
 
-const MARKDOWN_IMAGE = /!\[([^\]]*)\]\(\s*(?:<([^>]+)>|([^\s)]+))(?:\s+["'][^"']*["'])?\s*\)/g
+const MARKDOWN_IMAGE = /!\[([^\]]*)\]\(\s*(?:<([^>]+)>|([^\s)]+))(?:\s+(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'))?\s*\)/g
 const SOURCE_SPACER_SENTINEL = 'DISPATCH_SOURCE_SPACER'
+
+function markdownImage(alt: string, source: string, caption = ''): string {
+  const formattedSource = /[\s)]/.test(source) ? `<${source}>` : source
+  const normalizedCaption = caption.trim()
+  const title = normalizedCaption
+    ? ` "${normalizedCaption.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`
+    : ''
+  return `![${alt.replaceAll(']', '\\]')}](${formattedSource}${title})`
+}
 
 function markdownInline(node: Node): string {
   if (node.nodeType === Node.TEXT_NODE) return (node.textContent || '').replace(/\s+/g, ' ')
@@ -35,7 +44,8 @@ function markdownInline(node: Node): string {
   if (tag === 'img') {
     const source = node.getAttribute('src') || ''
     const alt = node.getAttribute('alt') || '图片'
-    return source ? `![${alt}](${source})` : `![${alt}]()`
+    const caption = node.getAttribute('title') || ''
+    return source ? markdownImage(alt, source, caption) : `![${alt}]()`
   }
   return content
 }
@@ -101,6 +111,13 @@ function markdownBlock(element: HTMLElement): string {
   if (tag === 'table') return markdownTable(element as HTMLTableElement)
   if (tag === 'hr') return '---'
   if (tag === 'img') return markdownInline(element)
+  if (tag === 'figure') {
+    const image = element.querySelector<HTMLImageElement>(':scope > img')
+    if (image && element.querySelectorAll('img').length === 1) {
+      const caption = element.querySelector<HTMLElement>(':scope > figcaption')?.textContent?.trim() || ''
+      return markdownImage(image.alt || '图片', image.getAttribute('src') || '', caption)
+    }
+  }
   return markdownBlockChildren(element)
 }
 
@@ -296,6 +313,18 @@ export function sourceBlockIndexAtOffset(text: string, language: ArticleSourceLa
 }
 
 export function annotateLocalImagesAsMissing(html: string): { html: string; references: string[] } {
+  if (!html.includes('data-missing-asset')) {
+    const imageSource = /<img\b[^>]*\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi
+    let hasLocalImage = false
+    for (const match of html.matchAll(imageSource)) {
+      const source = match[1] || match[2] || match[3] || ''
+      if (source && !/^(https?:|data:|blob:)/i.test(source)) {
+        hasLocalImage = true
+        break
+      }
+    }
+    if (!hasLocalImage) return { html, references: [] }
+  }
   const document = new DOMParser().parseFromString(html, 'text/html')
   const references: string[] = []
   let missingIndex = 0
@@ -322,11 +351,12 @@ export function replaceArticleSourceImage(
   const source = resolveArticleSource(article)
 
   if (source.language === 'markdown') {
-    const nextText = source.text.replace(MARKDOWN_IMAGE, (match, alt: string, angleReference: string, plainReference: string) => {
+    const nextText = source.text.replace(MARKDOWN_IMAGE, (match, alt: string, angleReference: string, plainReference: string, doubleCaption: string, singleCaption: string) => {
       const currentReference = angleReference || plainReference || ''
       if (!sameReference(currentReference, reference)) return match
       if (!replacement) return ''
-      return `![${replacementAlt || alt}](${replacement})`
+      const caption = (doubleCaption ?? singleCaption ?? '').replace(/\\([\\"'])/g, '$1')
+      return markdownImage(replacementAlt || alt, replacement, caption)
     })
     return updateArticleFromSource(article, nextText)
   }

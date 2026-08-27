@@ -113,6 +113,8 @@ const FORBIDDEN_CONTENT_ATTRIBUTES = [
   'formaction',
 ]
 
+const MARKDOWN_EMBEDDED_IMAGE_SOURCE = /!\[[^\]\n]*\]\(\s*(?:<(data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=]+)>|(data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=]+))(?:\s+(?:"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'))?\s*\)/gi
+
 // Keep article typography and box formatting, but exclude page-level positioning, stacking, and transforms.
 const SAFE_INLINE_STYLE_PROPERTIES = new Set([
   '-webkit-box-decoration-break',
@@ -638,19 +640,65 @@ function convertCallouts(document: Document): void {
   })
 }
 
+function compactMarkdownEmbeddedImages(markdown: string): { markdown: string; images: Array<{ placeholder: string; source: string }> } {
+  let placeholderBase = 'https://embedded-image.invalid/'
+  while (markdown.includes(placeholderBase)) placeholderBase = `${placeholderBase}safe/`
+  const images: Array<{ placeholder: string; source: string }> = []
+  const compacted = markdown.replace(MARKDOWN_EMBEDDED_IMAGE_SOURCE, (syntax, angleSource: string, plainSource: string) => {
+    const source = angleSource || plainSource || ''
+    const placeholder = `${placeholderBase}${images.length}`
+    images.push({ placeholder, source })
+    return syntax.replace(source, placeholder)
+  })
+  return { markdown: compacted, images }
+}
+
+function restoreMarkdownEmbeddedImages(html: string, images: Array<{ placeholder: string; source: string }>): string {
+  const sources = new Map(images.map(image => [image.placeholder, image.source]))
+  return html.replace(
+    /https:\/\/embedded-image\.invalid\/(?:safe\/)*\d+/g,
+    placeholder => sources.get(placeholder) ?? placeholder,
+  )
+}
+
+function convertStandaloneImageCaptions(document: Document): void {
+  Array.from(document.body.querySelectorAll<HTMLParagraphElement>('p')).forEach(paragraph => {
+    const image = paragraph.querySelector<HTMLImageElement>(':scope > img[title]')
+    const caption = image?.getAttribute('title')?.trim()
+    if (!image || !caption) return
+    const containsOnlyImage = Array.from(paragraph.childNodes).every(node => (
+      node === image || (node.nodeType === Node.TEXT_NODE && !node.textContent?.trim())
+    ))
+    if (!containsOnlyImage) return
+
+    const figure = document.createElement('figure')
+    figure.className = 'article-image-figure'
+    figure.style.cssText = 'margin: 1.5em auto; text-align: center;'
+    const figcaption = document.createElement('figcaption')
+    figcaption.className = 'article-image-caption'
+    figcaption.style.cssText = 'margin-top: 0.55em; color: #65707d; font-size: 0.86em; line-height: 1.55; text-align: center;'
+    figcaption.textContent = caption
+    image.removeAttribute('title')
+    figure.append(image, figcaption)
+    paragraph.replaceWith(figure)
+  })
+}
+
 export function renderMarkdownToSafeHtml(markdown: string): string {
+  const embeddedImages = compactMarkdownEmbeddedImages(markdown)
   const syntaxNormalized = separateCalloutMarker(
-    normalizeObsidianInlineSyntax(normalizeObsidianImages(normalizeMarkdownStrongWhitespace(markdown))),
+    normalizeObsidianInlineSyntax(normalizeObsidianImages(normalizeMarkdownStrongWhitespace(embeddedImages.markdown))),
   )
   const extracted = extractMarkdownFootnotes(syntaxNormalized)
   const footnotes = injectMarkdownFootnoteReferences(extracted.body, extracted.definitions)
   const normalized = preserveMarkdownBlankLines(footnotes.markdown)
-  const parsed = String(marked.parse(normalized, { gfm: true, breaks: false }))
+  const parsed = String(marked.parse(normalized, { gfm: true, breaks: true }))
   const document = new DOMParser().parseFromString(parsed, 'text/html')
 
   appendMarkdownFootnotes(document, footnotes.references)
   convertTaskLists(document)
   convertCallouts(document)
+  convertStandaloneImageCaptions(document)
 
-  return sanitizeContentHtml(document.body.innerHTML)
+  return restoreMarkdownEmbeddedImages(sanitizeContentHtml(document.body.innerHTML), embeddedImages.images)
 }

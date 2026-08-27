@@ -103,7 +103,7 @@ function readFileAsDataUrl(file: File): Promise<string> {
   })
 }
 
-const MARKDOWN_IMAGE_SOURCE = /!\[([^\]\n]*)\]\(\s*(?:<([^>\n]+)>|([^\s)\n]+))(?:\s+["'][^"'\n]*["'])?\s*\)/g
+const MARKDOWN_IMAGE_SOURCE = /!\[([^\]\n]*)\]\(\s*(?:<([^>\n]+)>|([^\s)\n]+))(?:\s+(?:"((?:\\.|[^"\\\n])*)"|'((?:\\.|[^'\\\n])*)'))?\s*\)/g
 const MARKDOWN_LINK_SOURCE = /(?<!!)\[([^\]\n]+)\]\(\s*(?:<([^>\n]+)>|([^\s)\n]+))(?:\s+["'][^"'\n]*["'])?\s*\)/g
 const EMBEDDED_IMAGE_TOKEN = /dispatch-editor-image:\/\/[a-z0-9-]+/gi
 const EMBEDDED_IMAGE_PREFIX = 'dispatch-editor-image://image-'
@@ -213,6 +213,20 @@ function imageLabel(alt: string, source: string): string {
   }
 }
 
+function decodeMarkdownImageCaption(value: string): string {
+  return value.replace(/\\([\\"'])/g, '$1')
+}
+
+function markdownImageSyntax(alt: string, source: string, caption: string): string {
+  const safeAlt = alt.replaceAll(']', '\\]')
+  const formattedSource = /[\s)]/.test(source) ? `<${source}>` : source
+  const normalizedCaption = caption.trim()
+  const title = normalizedCaption
+    ? ` "${normalizedCaption.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`
+    : ''
+  return `![${safeAlt}](${formattedSource}${title})`
+}
+
 function canPreviewImage(source: string): boolean {
   return /^(?:data:image\/|blob:|https?:\/\/)/i.test(source)
 }
@@ -222,6 +236,7 @@ class MarkdownImageWidget extends WidgetType {
     readonly source: string,
     readonly previewSource: string,
     readonly alt: string,
+    readonly caption: string,
     readonly syntax: string,
     readonly block: boolean,
     readonly imageSources: Map<string, string>,
@@ -233,6 +248,7 @@ class MarkdownImageWidget extends WidgetType {
     return this.source === other.source
       && this.previewSource === other.previewSource
       && this.alt === other.alt
+      && this.caption === other.caption
       && this.syntax === other.syntax
       && this.block === other.block
       && this.imageSources === other.imageSources
@@ -283,6 +299,12 @@ class MarkdownImageWidget extends WidgetType {
     input.accept = 'image/*'
     input.hidden = true
 
+    const addCaptionButton = document.createElement('button')
+    addCaptionButton.type = 'button'
+    addCaptionButton.textContent = '添加说明'
+    addCaptionButton.className = 'source-image-caption-add'
+    addCaptionButton.setAttribute('aria-label', '添加图片说明')
+
     const currentRange = () => {
       let position: number
       try {
@@ -325,13 +347,58 @@ class MarkdownImageWidget extends WidgetType {
         const alt = file.name.replace(/\.[^.]+$/, '') || this.alt || '图片'
         const token = addEmbeddedImage(this.imageSources, source)
         view.dispatch({
-          changes: { from: range.from, to: range.to, insert: `![${alt.replaceAll(']', '\\]')}](${token})` },
+          changes: { from: range.from, to: range.to, insert: markdownImageSyntax(alt, token, this.caption) },
           selection: { anchor: range.from },
         })
         view.focus()
       })
     })
-    figure.addEventListener('click', () => {
+    const showCaptionInput = (focus = true) => {
+      if (footer.querySelector('.source-image-caption-input')) return
+      const captionInput = document.createElement('input')
+      captionInput.type = 'text'
+      captionInput.className = 'source-image-caption-input'
+      captionInput.placeholder = '图片说明（可选）'
+      captionInput.setAttribute('aria-label', '图片说明')
+      captionInput.value = this.caption
+      let cancelled = false
+      const commit = () => {
+        if (cancelled || view.state.readOnly) return
+        const range = currentRange()
+        if (!range) return
+        const nextCaption = captionInput.value.trim()
+        if (nextCaption === this.caption) return
+        view.dispatch({
+          changes: { from: range.from, to: range.to, insert: markdownImageSyntax(this.alt, this.source, nextCaption) },
+          selection: { anchor: range.from },
+        })
+      }
+      captionInput.addEventListener('click', event => event.stopPropagation())
+      captionInput.addEventListener('keydown', event => {
+        event.stopPropagation()
+        if (event.key === 'Enter') {
+          event.preventDefault()
+          commit()
+        } else if (event.key === 'Escape') {
+          event.preventDefault()
+          cancelled = true
+          if (this.caption) captionInput.value = this.caption
+          else captionInput.remove()
+          view.focus()
+        }
+      })
+      captionInput.addEventListener('blur', commit)
+      footer.append(captionInput)
+      addCaptionButton.remove()
+      if (focus) captionInput.focus()
+    }
+    addCaptionButton.addEventListener('click', event => {
+      event.preventDefault()
+      event.stopPropagation()
+      if (!view.state.readOnly) showCaptionInput()
+    })
+    figure.addEventListener('click', event => {
+      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLButtonElement) return
       view.dom.querySelectorAll('.source-image-widget.selected').forEach(widget => widget.classList.remove('selected'))
       figure.classList.add('selected')
       const range = currentRange()
@@ -341,6 +408,8 @@ class MarkdownImageWidget extends WidgetType {
 
     actions.append(replaceButton, deleteButton)
     footer.append(actions, input)
+    if (this.caption) showCaptionInput(false)
+    else footer.append(addCaptionButton)
     figure.append(media, footer)
     return figure
   }
@@ -361,8 +430,9 @@ function imagePreviewDecorations(state: EditorState): DecorationSet {
     const line = state.doc.lineAt(syntaxFrom)
     const block = state.doc.sliceString(line.from, line.to).trim() === match[0]
     const source = match[2] || match[3] || ''
+    const caption = decodeMarkdownImageCaption(match[4] ?? match[5] ?? '')
     ranges.push(Decoration.replace({
-      widget: new MarkdownImageWidget(source, imageSources.get(source) ?? source, match[1], match[0], block, imageSources),
+      widget: new MarkdownImageWidget(source, imageSources.get(source) ?? source, match[1], caption, match[0], block, imageSources),
     }).range(syntaxFrom, syntaxTo))
   }
   return Decoration.set(ranges, true)

@@ -100,6 +100,14 @@ interface XhsImagePopoverPosition {
   top: number
 }
 
+interface XhsImageSelectionBounds {
+  key: string
+  left: number
+  top: number
+  width: number
+  height: number
+}
+
 interface PlatformPreviewsProps {
   activePlatform: PreviewPlatform
   title: string
@@ -107,6 +115,7 @@ interface PlatformPreviewsProps {
   sourceText?: string
   sourceLanguage?: ArticleSourceLanguage
   formatting: ArticleFormatting
+  renderFormatting?: ArticleFormatting
   onFormattingChange?: (formatting: ArticleFormatting) => void
   xhsSettings?: XhsCardSettings
   onXhsSettingsChange?: (settings: XhsCardSettings) => void
@@ -229,6 +238,7 @@ interface XhsImageResizeSession {
   direction: -1 | 1
   layout: XhsImageLayout
   contentWidth: number
+  currentWidth: number
 }
 
 interface XhsPageRange {
@@ -427,36 +437,6 @@ function mapPreviewBlocks(
   return { html: document.body.innerHTML, blockCount: blockIndex }
 }
 
-function decorateInteractiveXhsImage(pageHtml: string, selectedKey: string | null): string {
-  if (!selectedKey) return pageHtml
-  const document = parseHtml(pageHtml)
-  const image = Array.from(document.body.querySelectorAll<HTMLImageElement>('img[data-xhs-image-key]'))
-    .find(candidate => candidate.dataset.xhsImageKey === selectedKey)
-  if (!image) return pageHtml
-
-  const frame = document.createElement('span')
-  frame.className = 'xhs-image-selection-frame'
-  frame.dataset.xhsImageKey = selectedKey
-  frame.style.width = image.style.width || '100%'
-  image.style.width = '100%'
-  image.dataset.xhsImageSelected = 'true'
-  image.replaceWith(frame)
-  frame.append(image)
-
-  ;(['nw', 'ne', 'sw', 'se'] as const).forEach(handle => {
-    const button = document.createElement('button')
-    button.type = 'button'
-    button.className = `xhs-image-resize-handle ${handle}`
-    button.dataset.xhsResizeHandle = handle
-    button.dataset.xhsImageKey = selectedKey
-    button.tabIndex = -1
-    button.setAttribute('aria-label', `从${handle.includes('n') ? '上' : '下'}${handle.includes('w') ? '左' : '右'}角调整图片大小`)
-    frame.append(button)
-  })
-
-  return document.body.innerHTML
-}
-
 function FontControls({
   formatting,
   onChange,
@@ -597,7 +577,8 @@ function FormattingAccordion({
   )
 }
 
-export function PlatformPreviews({ activePlatform, title, html, sourceText, sourceLanguage, formatting, onFormattingChange, xhsSettings: controlledXhsSettings, onXhsSettingsChange, previewAccount, previewDevice, isUpdating = false, onPreviewDeviceChange, locateRequest, onEditTarget, onMissingImageAction }: PlatformPreviewsProps) {
+export function PlatformPreviews({ activePlatform, title, html, sourceText, sourceLanguage, formatting, renderFormatting, onFormattingChange, xhsSettings: controlledXhsSettings, onXhsSettingsChange, previewAccount, previewDevice, isUpdating = false, onPreviewDeviceChange, locateRequest, onEditTarget, onMissingImageAction }: PlatformPreviewsProps) {
+  const previewFormatting = renderFormatting ?? formatting
   const [uncontrolledXhsSettings, setUncontrolledXhsSettings] = useState<XhsCardSettings>(DEFAULT_XHS_CARD_SETTINGS)
   const xhsSettings = controlledXhsSettings ?? uncontrolledXhsSettings
   const updateXhsSettings = onXhsSettingsChange ?? setUncontrolledXhsSettings
@@ -608,8 +589,8 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
   const [xhsPreviewMode, setXhsPreviewMode] = useState<XhsPreviewMode>('single')
   const [xhsPageJumpOpen, setXhsPageJumpOpen] = useState(false)
   const [selectedXhsImageKey, setSelectedXhsImageKey] = useState<string | null>(null)
+  const [xhsImageSelectionBounds, setXhsImageSelectionBounds] = useState<XhsImageSelectionBounds | null>(null)
   const [xhsImagePopover, setXhsImagePopover] = useState<XhsImagePopoverPosition | null>(null)
-  const [xhsImageResizeSession, setXhsImageResizeSession] = useState<XhsImageResizeSession | null>(null)
   const [wechatThemeCategory, setWechatThemeCategory] = useState<WechatThemeCategory>('简约')
   const [toolRailWidth, setToolRailWidth] = useState(readToolRailWidth)
   const [toolRailOpen, setToolRailOpen] = useState(readToolRailOpen)
@@ -642,11 +623,15 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
     [activePlatform, html, sourceLineMap],
   )
   const wechatSettings = useMemo(() => normalizeWechatThemeSettings(formatting.wechat), [formatting.wechat])
+  const previewWechatSettings = useMemo(
+    () => normalizeWechatThemeSettings(previewFormatting.wechat),
+    [previewFormatting.wechat],
+  )
   const mappedWechatPreview = useMemo(
     () => activePlatform === 'wechat'
-      ? mapPreviewBlocks(applyWechatTheme(renderMissingImagePlaceholders(html), wechatSettings, formatting), sourceLineMap, 'wechat')
+      ? mapPreviewBlocks(applyWechatTheme(renderMissingImagePlaceholders(html), previewWechatSettings, previewFormatting), sourceLineMap, 'wechat')
       : { html: '', blockCount: 0 },
-    [activePlatform, formatting, html, sourceLineMap, wechatSettings],
+    [activePlatform, html, previewFormatting, previewWechatSettings, sourceLineMap],
   )
   const activeWechatTheme = getWechatTheme(wechatSettings.themeId)
   const activeWechatSlots = getWechatThemeColorSlots(wechatSettings.themeId)
@@ -661,9 +646,9 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
   )
   const xhsPaginationOptions = useMemo(() => ({
     title,
-    textScale: XHS_FONT_SIZE_SCALE[formatting.fontSize] * XHS_LINE_HEIGHT_SCALE[formatting.lineHeight],
+    textScale: XHS_FONT_SIZE_SCALE[previewFormatting.fontSize] * XHS_LINE_HEIGHT_SCALE[previewFormatting.lineHeight],
     showFooter: xhsSettings.showFooter,
-  }), [formatting.fontSize, formatting.lineHeight, title, xhsSettings.showFooter])
+  }), [previewFormatting.fontSize, previewFormatting.lineHeight, title, xhsSettings.showFooter])
   const estimatedCardPages = useMemo(
     () => activePlatform === 'xhs'
       ? paginateForXhsCards(preparedXhsLayout.html, xhsPaginationOptions)
@@ -673,18 +658,18 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
   const paginationKey = useMemo(() => [
     preparedXhsLayout.html,
     title,
-    formatting.font,
-    formatting.fontSize,
-    formatting.lineHeight,
-    formatting.accent,
+    previewFormatting.font,
+    previewFormatting.fontSize,
+    previewFormatting.lineHeight,
+    previewFormatting.accent,
     xhsSettings.template,
     String(xhsSettings.showFooter),
     xhsSettings.footerText,
   ].join('\u0001'), [
-    formatting.accent,
-    formatting.font,
-    formatting.fontSize,
-    formatting.lineHeight,
+    previewFormatting.accent,
+    previewFormatting.font,
+    previewFormatting.fontSize,
+    previewFormatting.lineHeight,
     preparedXhsLayout.html,
     title,
     xhsSettings.footerText,
@@ -707,7 +692,10 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
   const workbenchRef = useRef<HTMLElement>(null)
   const previewStageRef = useRef<HTMLDivElement>(null)
   const xhsLayoutRef = useRef<HTMLDivElement>(null)
+  const xhsImageSelectionOverlayRef = useRef<HTMLDivElement>(null)
+  const selectedXhsImageElementRef = useRef<HTMLImageElement | null>(null)
   const xhsImagePopoverRef = useRef<HTMLElement>(null)
+  const xhsImageWidthOutputRef = useRef<HTMLOutputElement>(null)
   const xhsPageNavigatorRef = useRef<HTMLDivElement>(null)
   const xhsPageTriggerRef = useRef<HTMLButtonElement>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
@@ -730,6 +718,10 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
   const updateXhsSettingsRef = useRef(updateXhsSettings)
   const xhsResizeFrameRef = useRef<number | null>(null)
   const pendingXhsImageWidthRef = useRef<number | null>(null)
+  const xhsImageResizeSessionRef = useRef<XhsImageResizeSession | null>(null)
+  const pendingXhsSliderWidthRef = useRef<number | null>(null)
+  const xhsSliderCommitTimerRef = useRef<number | null>(null)
+  const commitPendingXhsSliderWidthRef = useRef<() => void>(() => undefined)
   xhsSettingsRef.current = xhsSettings
   updateXhsSettingsRef.current = updateXhsSettings
 
@@ -801,20 +793,60 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
   }
 
   const xhsMeasurementVariables = useMemo(() => ({
-    '--article-accent': ARTICLE_ACCENT_COLORS[formatting.accent],
-    '--article-font-family': ARTICLE_FONT_FAMILIES[formatting.font],
-    '--article-font-size': ARTICLE_FONT_SIZES[formatting.fontSize],
-    '--article-line-height': ARTICLE_LINE_HEIGHTS[formatting.lineHeight],
-    '--xhs-body-font-size': XHS_FONT_SIZES[formatting.fontSize],
-    '--xhs-body-line-height': XHS_LINE_HEIGHTS[formatting.lineHeight],
-  }), [formatting.accent, formatting.font, formatting.fontSize, formatting.lineHeight])
+    '--article-accent': ARTICLE_ACCENT_COLORS[previewFormatting.accent],
+    '--article-font-family': ARTICLE_FONT_FAMILIES[previewFormatting.font],
+    '--article-font-size': ARTICLE_FONT_SIZES[previewFormatting.fontSize],
+    '--article-line-height': ARTICLE_LINE_HEIGHTS[previewFormatting.lineHeight],
+    '--xhs-body-font-size': XHS_FONT_SIZES[previewFormatting.fontSize],
+    '--xhs-body-line-height': XHS_LINE_HEIGHTS[previewFormatting.lineHeight],
+  }), [previewFormatting.accent, previewFormatting.font, previewFormatting.fontSize, previewFormatting.lineHeight])
 
   const selectedXhsImage = preparedXhsLayout.images.find(image => image.key === selectedXhsImageKey) ?? null
 
+  const renderedXhsImage = useCallback((key: string): HTMLImageElement | null => (
+    Array.from(xhsLayoutRef.current?.querySelectorAll<HTMLImageElement>('img[data-xhs-image-key]') ?? [])
+      .find(image => image.dataset.xhsImageKey === key) ?? null
+  ), [])
+
+  const positionXhsImageSelection = useCallback((key: string, image: HTMLImageElement, updateState = true) => {
+    const layoutBounds = xhsLayoutRef.current?.getBoundingClientRect()
+    if (!layoutBounds) return
+    const imageBounds = image.getBoundingClientRect()
+    const bounds = {
+      key,
+      left: imageBounds.left - layoutBounds.left,
+      top: imageBounds.top - layoutBounds.top,
+      width: imageBounds.width,
+      height: imageBounds.height,
+    }
+    selectedXhsImageElementRef.current = image
+    const overlay = xhsImageSelectionOverlayRef.current
+    if (overlay) {
+      overlay.style.left = `${bounds.left}px`
+      overlay.style.top = `${bounds.top}px`
+      overlay.style.width = `${bounds.width}px`
+      overlay.style.height = `${bounds.height}px`
+    }
+    if (updateState) {
+      setXhsImageSelectionBounds(current => current
+        && current.key === bounds.key
+        && current.left === bounds.left
+        && current.top === bounds.top
+        && current.width === bounds.width
+        && current.height === bounds.height
+        ? current
+        : bounds)
+    }
+  }, [])
+
   const closeXhsImagePopover = useCallback(() => {
+    commitPendingXhsSliderWidthRef.current()
     setSelectedXhsImageKey(null)
+    setXhsImageSelectionBounds(null)
     setXhsImagePopover(null)
-    setXhsImageResizeSession(null)
+    selectedXhsImageElementRef.current = null
+    xhsImageResizeSessionRef.current = null
+    pendingXhsImageWidthRef.current = null
   }, [])
 
   const positionXhsImagePopover = (key: string, image: HTMLImageElement, clientX: number, clientY: number) => {
@@ -878,7 +910,34 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
     updateXhsSettingsRef.current(nextSettings)
   }
 
+  const clampXhsImageWidth = (layout: XhsImageLayout, widthPercent: number) => {
+    const minimum = layout === 'full' ? XHS_IMAGE_FULL_MIN_WIDTH : XHS_IMAGE_SPLIT_MIN_WIDTH
+    const maximum = layout === 'full' ? 100 : XHS_IMAGE_SPLIT_MAX_WIDTH
+    return Math.min(maximum, Math.max(minimum, widthPercent))
+  }
+
+  const previewXhsImageWidth = (key: string, layout: XhsImageLayout, widthPercent: number) => {
+    const width = clampXhsImageWidth(layout, widthPercent)
+    const image = renderedXhsImage(key) ?? selectedXhsImageElementRef.current
+    if (!image) return
+    if (layout === 'full') image.style.width = `${width}%`
+    else image.closest<HTMLElement>('[data-xhs-media-layout]')?.style.setProperty('--xhs-image-column', `${width}%`)
+    if (xhsImageWidthOutputRef.current) xhsImageWidthOutputRef.current.textContent = `${Math.round(width)}%`
+    positionXhsImageSelection(key, image, false)
+  }
+
+  const commitPendingXhsSliderWidth = () => {
+    if (xhsSliderCommitTimerRef.current !== null) window.clearTimeout(xhsSliderCommitTimerRef.current)
+    xhsSliderCommitTimerRef.current = null
+    const width = pendingXhsSliderWidthRef.current
+    pendingXhsSliderWidthRef.current = null
+    if (width === null || !selectedXhsImage) return
+    updateXhsImageOverride(selectedXhsImage.key, selectedXhsImage.layout, width)
+  }
+  commitPendingXhsSliderWidthRef.current = commitPendingXhsSliderWidth
+
   const resetXhsImageOverride = (key: string) => {
+    pendingXhsSliderWidthRef.current = null
     const imageOverrides = { ...xhsSettingsRef.current.imageOverrides }
     delete imageOverrides[key]
     const nextSettings = { ...xhsSettingsRef.current, imageOverrides }
@@ -925,7 +984,7 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
     setWechatCopyState('copying')
     if (wechatCopyTimerRef.current !== null) window.clearTimeout(wechatCopyTimerRef.current)
     try {
-      const copyDocument = parseHtml(applyWechatTheme(html, wechatSettings, formatting))
+      const copyDocument = parseHtml(applyWechatTheme(html, previewWechatSettings, previewFormatting))
       applyPlatformCompatibilityToDocument(copyDocument, 'wechat')
       await copyRichHtml(copyDocument.body.innerHTML)
       setWechatCopyState('success')
@@ -1091,8 +1150,10 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
 
   useEffect(() => {
     setSelectedXhsImageKey(null)
+    setXhsImageSelectionBounds(null)
     setXhsImagePopover(null)
-    setXhsImageResizeSession(null)
+    selectedXhsImageElementRef.current = null
+    xhsImageResizeSessionRef.current = null
     setXhsPageJumpOpen(false)
     setExportError(null)
   }, [activePlatform])
@@ -1123,6 +1184,36 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
     }
   }, [closeXhsImagePopover, preparedXhsLayout.images, selectedXhsImageKey])
 
+  useLayoutEffect(() => {
+    if (activePlatform !== 'xhs' || !selectedXhsImageKey) {
+      setXhsImageSelectionBounds(null)
+      selectedXhsImageElementRef.current = null
+      return
+    }
+    const sync = (updateState = true) => {
+      const image = renderedXhsImage(selectedXhsImageKey)
+      if (image) positionXhsImageSelection(selectedXhsImageKey, image, updateState)
+    }
+    sync()
+    const frame = window.requestAnimationFrame(() => sync())
+    const handleResize = () => sync(xhsImageResizeSessionRef.current === null)
+    const viewport = viewportRef.current
+    window.addEventListener('resize', handleResize)
+    viewport?.addEventListener('scroll', handleResize, { passive: true })
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(handleResize)
+    if (observer) {
+      const image = renderedXhsImage(selectedXhsImageKey)
+      if (image) observer.observe(image)
+      if (xhsLayoutRef.current) observer.observe(xhsLayoutRef.current)
+    }
+    return () => {
+      window.cancelAnimationFrame(frame)
+      window.removeEventListener('resize', handleResize)
+      viewport?.removeEventListener('scroll', handleResize)
+      observer?.disconnect()
+    }
+  }, [activeCard, activePlatform, cardPages, positionXhsImageSelection, renderedXhsImage, selectedXhsImageKey, toolRailWidth, xhsPreviewMode])
+
   useEffect(() => {
     if (!xhsImagePopover) return
     const handlePointerDown = (event: PointerEvent) => {
@@ -1145,36 +1236,33 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
   }, [closeXhsImagePopover, xhsImagePopover])
 
   useEffect(() => {
-    if (!xhsImageResizeSession) return
-
-    const commitWidth = (widthPercent: number) => {
-      updateXhsImageOverride(
-        xhsImageResizeSession.key,
-        xhsImageResizeSession.layout,
-        widthPercent,
-      )
-    }
     const move = (event: PointerEvent) => {
-      if (event.pointerId !== xhsImageResizeSession.pointerId) return
-      const delta = ((event.clientX - xhsImageResizeSession.startX) / xhsImageResizeSession.contentWidth)
+      const session = xhsImageResizeSessionRef.current
+      if (!session || event.pointerId !== session.pointerId) return
+      const delta = ((event.clientX - session.startX) / session.contentWidth)
         * 100
-        * xhsImageResizeSession.direction
-      const minimum = xhsImageResizeSession.layout === 'full' ? XHS_IMAGE_FULL_MIN_WIDTH : XHS_IMAGE_SPLIT_MIN_WIDTH
-      const maximum = xhsImageResizeSession.layout === 'full' ? 100 : XHS_IMAGE_SPLIT_MAX_WIDTH
-      pendingXhsImageWidthRef.current = Math.min(maximum, Math.max(minimum, xhsImageResizeSession.startWidth + delta))
+        * session.direction
+      pendingXhsImageWidthRef.current = clampXhsImageWidth(session.layout, session.startWidth + delta)
+      session.currentWidth = pendingXhsImageWidthRef.current
       if (xhsResizeFrameRef.current !== null) return
       xhsResizeFrameRef.current = window.requestAnimationFrame(() => {
         xhsResizeFrameRef.current = null
-        if (pendingXhsImageWidthRef.current !== null) commitWidth(pendingXhsImageWidthRef.current)
+        if (pendingXhsImageWidthRef.current !== null) {
+          previewXhsImageWidth(session.key, session.layout, pendingXhsImageWidthRef.current)
+        }
       })
     }
     const finish = (event: PointerEvent) => {
-      if (event.pointerId !== xhsImageResizeSession.pointerId) return
+      const session = xhsImageResizeSessionRef.current
+      if (!session || event.pointerId !== session.pointerId) return
       if (xhsResizeFrameRef.current !== null) window.cancelAnimationFrame(xhsResizeFrameRef.current)
       xhsResizeFrameRef.current = null
-      if (pendingXhsImageWidthRef.current !== null) commitWidth(pendingXhsImageWidthRef.current)
+      const width = pendingXhsImageWidthRef.current ?? session.currentWidth
+      previewXhsImageWidth(session.key, session.layout, width)
+      updateXhsImageOverride(session.key, session.layout, width)
       pendingXhsImageWidthRef.current = null
-      setXhsImageResizeSession(null)
+      xhsImageResizeSessionRef.current = null
+      document.body.classList.remove('is-resizing-xhs-image')
     }
 
     window.addEventListener('pointermove', move)
@@ -1184,8 +1272,9 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', finish)
       window.removeEventListener('pointercancel', finish)
+      document.body.classList.remove('is-resizing-xhs-image')
     }
-  }, [xhsImageResizeSession])
+  }, [positionXhsImageSelection, renderedXhsImage])
 
   useLayoutEffect(() => {
     if (!locateRequest || locateRequest.requestId === handledLocateRequestRef.current) return
@@ -1207,6 +1296,8 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
     clearLocatedTarget()
     stopPreviewCentering()
     if (wechatCopyTimerRef.current !== null) window.clearTimeout(wechatCopyTimerRef.current)
+    if (xhsResizeFrameRef.current !== null) window.cancelAnimationFrame(xhsResizeFrameRef.current)
+    if (xhsSliderCommitTimerRef.current !== null) window.clearTimeout(xhsSliderCommitTimerRef.current)
     if (xhsImagePreview) URL.revokeObjectURL(xhsImagePreview.url)
   }, [xhsImagePreview])
 
@@ -1337,6 +1428,7 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
     cancelEditorDrivenPreviewLocate()
     clearSelectedTarget()
     setSelectedXhsImageKey(key)
+    positionXhsImageSelection(key, image)
     const imageBounds = image.getBoundingClientRect()
     positionXhsImagePopover(
       key,
@@ -1357,15 +1449,23 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
     event.preventDefault()
     event.stopPropagation()
     pendingXhsImageWidthRef.current = null
-    setXhsImageResizeSession({
+    pendingXhsSliderWidthRef.current = null
+    const renderedImage = renderedXhsImage(image.key) ?? selectedXhsImageElementRef.current
+    const sizingContainer = image.layout === 'full'
+      ? renderedImage?.closest<HTMLElement>('.xhs-card-content')
+      : renderedImage?.closest<HTMLElement>('[data-xhs-media-layout]')
+    xhsImageResizeSessionRef.current = {
       pointerId: event.pointerId,
       key: image.key,
       startX: event.clientX,
       startWidth: image.widthPercent,
       direction: handle.dataset.xhsResizeHandle?.includes('w') ? -1 : 1,
       layout: image.layout,
-      contentWidth: Math.max(1, event.currentTarget.getBoundingClientRect().width),
-    })
+      contentWidth: Math.max(1, sizingContainer?.getBoundingClientRect().width ?? event.currentTarget.getBoundingClientRect().width),
+      currentWidth: image.widthPercent,
+    }
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+    document.body.classList.add('is-resizing-xhs-image')
   }
 
   const handleBodyClick = (event: ReactMouseEvent<HTMLElement>) => {
@@ -1420,15 +1520,26 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
 
   const changeSelectedXhsImageLayout = (layout: XhsImageLayout) => {
     if (!selectedXhsImage) return
+    commitPendingXhsSliderWidth()
     const widthPercent = layout === selectedXhsImage.layout
       ? selectedXhsImage.widthPercent
       : layout === 'full' ? 100 : 45
     updateXhsImageOverride(selectedXhsImage.key, layout, widthPercent)
   }
 
-  const changeSelectedXhsImageWidth = (widthPercent: number) => {
+  const previewSelectedXhsImageWidth = (widthPercent: number) => {
     if (!selectedXhsImage) return
-    updateXhsImageOverride(selectedXhsImage.key, selectedXhsImage.layout, widthPercent)
+    const width = clampXhsImageWidth(selectedXhsImage.layout, widthPercent)
+    pendingXhsSliderWidthRef.current = width
+    previewXhsImageWidth(selectedXhsImage.key, selectedXhsImage.layout, width)
+  }
+
+  const scheduleSelectedXhsImageWidthCommit = () => {
+    if (xhsSliderCommitTimerRef.current !== null) window.clearTimeout(xhsSliderCommitTimerRef.current)
+    xhsSliderCommitTimerRef.current = window.setTimeout(() => {
+      xhsSliderCommitTimerRef.current = null
+      commitPendingXhsSliderWidth()
+    }, 140)
   }
 
   const prepareExportSheet = async () => {
@@ -1583,9 +1694,6 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
   ) : null
 
   const renderXhsCard = (pageHtml: string, index: number, options: { interactive?: boolean; exportRef?: boolean } = {}) => {
-    const interactiveHtml = options.interactive
-      ? decorateInteractiveXhsImage(pageHtml, selectedXhsImageKey)
-      : pageHtml
     const card = <section
       key={options.exportRef ? index : undefined}
       className={`xhs-card-page template-${xhsSettings.template}${index === 0 ? ' is-cover' : ''}`}
@@ -1605,8 +1713,7 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
         className="xhs-card-content"
         onClick={options.interactive ? handleBodyClick : undefined}
         onKeyDown={options.interactive ? handleBodyKeyDown : undefined}
-        onPointerDown={options.interactive ? startXhsImageResize : undefined}
-        dangerouslySetInnerHTML={{ __html: interactiveHtml }}
+        dangerouslySetInnerHTML={{ __html: pageHtml }}
       />
       {xhsSettings.showFooter && <footer><span>{xhsSettings.footerText || ' '}</span><span>{index + 1} / {cardPages.length}</span></footer>}
     </section>
@@ -1677,7 +1784,7 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
   return (
     <section
       ref={workbenchRef}
-      className={`preview-workbench platform-${activePlatform} theme-${formatting.theme}`}
+      className={`preview-workbench platform-${activePlatform} theme-${previewFormatting.theme}`}
       aria-label="平台内容预览"
       style={previewVariables}
     >
@@ -1859,6 +1966,33 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
                 )}
               </div>
 
+              {selectedXhsImage && xhsImageSelectionBounds?.key === selectedXhsImage.key && (
+                <div
+                  ref={xhsImageSelectionOverlayRef}
+                  className="xhs-image-selection-overlay"
+                  data-xhs-image-key={selectedXhsImage.key}
+                  aria-label={`已选中图片：${selectedXhsImage.alt}`}
+                  style={{
+                    left: xhsImageSelectionBounds.left,
+                    top: xhsImageSelectionBounds.top,
+                    width: xhsImageSelectionBounds.width,
+                    height: xhsImageSelectionBounds.height,
+                  }}
+                  onPointerDown={startXhsImageResize}
+                >
+                  {(['nw', 'ne', 'sw', 'se'] as const).map(handle => (
+                    <button
+                      type="button"
+                      className={`xhs-image-resize-handle ${handle}`}
+                      data-xhs-resize-handle={handle}
+                      data-xhs-image-key={selectedXhsImage.key}
+                      aria-label={`从${handle.includes('n') ? '上' : '下'}${handle.includes('w') ? '左' : '右'}角调整图片大小`}
+                      key={handle}
+                    />
+                  ))}
+                </div>
+              )}
+
               {selectedXhsImage && xhsImagePopover?.key === selectedXhsImage.key && (
                 <section
                   ref={xhsImagePopoverRef}
@@ -1887,14 +2021,19 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
                       ))}
                     </div>
                     <label className="xhs-image-width-control">
-                      <span><strong>图片宽度</strong><output>{Math.round(selectedXhsImage.widthPercent)}%</output></span>
+                      <span><strong>图片宽度</strong><output ref={xhsImageWidthOutputRef}>{Math.round(selectedXhsImage.widthPercent)}%</output></span>
                       <input
+                        key={`${selectedXhsImage.key}-${selectedXhsImage.layout}-${selectedXhsImage.widthPercent}`}
                         type="range"
                         min={selectedXhsImage.layout === 'full' ? XHS_IMAGE_FULL_MIN_WIDTH : XHS_IMAGE_SPLIT_MIN_WIDTH}
                         max={selectedXhsImage.layout === 'full' ? 100 : XHS_IMAGE_SPLIT_MAX_WIDTH}
-                        value={selectedXhsImage.widthPercent}
+                        defaultValue={selectedXhsImage.widthPercent}
                         aria-label="调整选中图片宽度"
-                        onChange={event => changeSelectedXhsImageWidth(Number(event.target.value))}
+                        onInput={event => previewSelectedXhsImageWidth(Number(event.currentTarget.value))}
+                        onPointerUp={commitPendingXhsSliderWidth}
+                        onPointerCancel={commitPendingXhsSliderWidth}
+                        onBlur={commitPendingXhsSliderWidth}
+                        onKeyUp={scheduleSelectedXhsImageWidthCommit}
                       />
                     </label>
                     <button type="button" className="xhs-image-reset" onClick={() => resetXhsImageOverride(selectedXhsImage.key)}>恢复默认</button>

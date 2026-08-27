@@ -36,9 +36,11 @@ function topLevelBlock(image: HTMLImageElement, body: HTMLElement): HTMLElement 
 }
 
 function isImageOnlyBlock(block: HTMLElement, image: HTMLImageElement): boolean {
+  const contentWithoutMedia = block.cloneNode(true) as HTMLElement
+  contentWithoutMedia.querySelectorAll('img, figcaption').forEach(element => element.remove())
   return block.querySelectorAll('img').length === 1
     && block.contains(image)
-    && !(block.textContent || '').trim()
+    && !(contentWithoutMedia.textContent || '').trim()
 }
 
 function canPairWithImage(block: Element | null): block is HTMLElement {

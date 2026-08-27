@@ -35,6 +35,18 @@ describe('prepareXhsImageLayout', () => {
     expect(rightGroup?.lastElementChild?.classList.contains('xhs-media-image')).toBe(true)
   })
 
+  it('treats a captioned figure as an image-only block and keeps its caption attached', () => {
+    const html = '<figure class="article-image-figure"><img src="image.png" alt="流程图"><figcaption>图 1：发布流程</figcaption></figure><p>配套说明文字</p>'
+    const initial = prepareXhsImageLayout(html, {})
+    const key = initial.images[0].key
+    const prepared = prepareXhsImageLayout(html, { [key]: { layout: 'image-left', widthPercent: 46 } })
+    const document = new DOMParser().parseFromString(prepared.html, 'text/html')
+
+    expect(prepared.images[0].canPair).toBe(true)
+    expect(document.querySelector('.xhs-media-image figcaption')?.textContent).toBe('图 1：发布流程')
+    expect(document.querySelector('.xhs-media-text')?.textContent).toBe('配套说明文字')
+  })
+
   it('keeps an image full-width when no suitable neighboring text block exists', () => {
     const html = '<p><img src="solo.png" alt="单图"></p><table><tbody><tr><td>数据</td></tr></tbody></table>'
     const initial = prepareXhsImageLayout(html, {})

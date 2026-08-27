@@ -925,14 +925,15 @@ button:disabled { cursor: not-allowed; }
 .xhs-media-image, .xhs-media-text { min-width: 0; }
 .xhs-media-image > *, .xhs-media-text > * { margin-top: 0 !important; margin-bottom: 0 !important; }
 .xhs-media-image img { width: 100% !important; max-height: 281px; }
-.xhs-image-selection-frame { max-width: 100%; position: relative; display: inline-block; vertical-align: top; line-height: 0; outline: 2px solid var(--blue); outline-offset: 2px; }
-.xhs-image-selection-frame > img { width: 100% !important; }
+.xhs-image-selection-overlay { position: absolute; z-index: 27; outline: 2px solid var(--blue); outline-offset: 2px; pointer-events: none; }
 .xhs-image-resize-handle { width: 18px; height: 18px; padding: 0; border: 3px solid white; border-radius: 50%; background: var(--blue); position: absolute; z-index: 6; box-shadow: 0 1px 5px rgba(13, 40, 120, 0.28); touch-action: none; }
+.xhs-image-selection-overlay .xhs-image-resize-handle { pointer-events: auto; }
 .xhs-image-resize-handle.nw { top: -10px; left: -10px; cursor: nwse-resize; }
 .xhs-image-resize-handle.ne { top: -10px; right: -10px; cursor: nesw-resize; }
 .xhs-image-resize-handle.sw { bottom: -10px; left: -10px; cursor: nesw-resize; }
 .xhs-image-resize-handle.se { right: -10px; bottom: -10px; cursor: nwse-resize; }
 .xhs-image-resize-handle:focus-visible { outline: 3px solid rgba(22, 72, 255, 0.32); outline-offset: 2px; }
+.is-resizing-xhs-image, .is-resizing-xhs-image * { user-select: none !important; }
 .xhs-card-content pre { max-width: 100%; margin: 1em 0 1.5em !important; overflow: visible !important; white-space: pre-wrap !important; overflow-wrap: anywhere; font-size: 9px !important; line-height: 1.55 !important; }
 .xhs-card-content table { width: 100% !important; max-width: 100%; margin: 1em 0 1.5em !important; border-collapse: collapse !important; table-layout: fixed !important; overflow: visible !important; font-size: 9px !important; }
 .xhs-card-content th, .xhs-card-content td { min-width: 0; padding: 7px 8px !important; vertical-align: top; overflow-wrap: anywhere; word-break: break-word; line-height: 1.45 !important; }
@@ -1880,13 +1881,13 @@ button:disabled { cursor: not-allowed; }
 .source-editor-host .cm-lineNumbers .cm-gutterElement { box-sizing: border-box; display: flex; align-items: center; justify-content: flex-end; }
 .source-editor-host .cm-foldGutter { display: none !important; }
 .source-image-widget { box-sizing: border-box; min-width: 0; border: 1px solid #e0e5e9; border-radius: 8px; background: #fafbfc; color: #65717b; overflow: hidden; overflow-anchor: none; contain: layout paint; outline: none; cursor: default; transition: border-color 140ms ease, box-shadow 140ms ease, background-color 140ms ease; }
-.source-image-widget.block { display: inline-flex; width: calc(100% - 16px); max-width: 720px; margin-inline: 8px; vertical-align: top; flex-direction: column; }
+.source-image-widget.block { display: inline-flex; width: fit-content; max-width: calc(100% - 16px); margin-inline: 8px; vertical-align: top; flex-direction: column; }
 .source-image-widget.inline { display: inline-flex; width: min(220px, 42vw); margin-inline: 4px; vertical-align: middle; flex-direction: column; }
 .source-image-widget:hover, .source-image-widget.selected, .source-image-widget:focus-visible { border-color: #a9b9ef; background: #fff; box-shadow: 0 0 0 2px rgba(22, 72, 255, 0.08); }
 .source-image-media { min-height: 108px; display: flex; align-items: center; justify-content: center; padding: 8px; background: #f5f7f8; }
-.source-image-widget.block .source-image-media { height: clamp(150px, 24vh, 260px); }
+.source-image-widget.block .source-image-media { width: fit-content; max-width: 520px; min-height: 0; }
 .source-image-widget.inline .source-image-media { height: 96px; }
-.source-image-media img { display: block; max-width: 100%; max-height: 280px; object-fit: contain; border-radius: 5px; }
+.source-image-media img { display: block; width: auto; max-width: 100%; height: auto; max-height: 280px; object-fit: contain; border-radius: 5px; }
 .source-image-widget.inline .source-image-media img { max-height: 120px; }
 .source-image-widget.missing .source-image-media { border: 1px dashed #d6dce1; margin: 8px 8px 0; background: #fff; color: #a2abb3; font-size: 12px; }
 .source-image-widget figcaption { min-height: 34px; padding: 5px 8px 5px 10px; display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 11px; line-height: 1.4; }
@@ -1896,6 +1897,10 @@ button:disabled { cursor: not-allowed; }
 .source-image-actions button { min-height: 24px; padding: 0 7px; border: 0; border-radius: 4px; background: transparent; color: #68747e; font: inherit; font-weight: 750; cursor: pointer; }
 .source-image-actions button:hover { background: #edf1ff; color: var(--blue); }
 .source-image-actions button.delete:hover { background: #fff0f0; color: #cf3f3f; }
+.source-image-caption-add { min-height: 24px; padding: 0 7px; border: 0; border-radius: 4px; background: transparent; color: #68747e; font: inherit; font-weight: 750; cursor: pointer; }
+.source-image-caption-add:hover { background: #edf1ff; color: var(--blue); }
+.source-image-caption-input { width: min(240px, 48vw); min-width: 120px; height: 28px; padding: 0 8px; border: 1px solid #d6dde3; border-radius: 5px; background: white; color: #34404b; font-size: 11px; }
+.source-image-caption-input::placeholder { color: #99a2aa; }
 .x-article-content > [data-source-block] { content-visibility: auto; contain-intrinsic-size: auto 140px; }
 .preview-platform-stage.preview-locating .x-article-content > [data-source-block] { content-visibility: visible; }
 
@@ -1909,6 +1914,7 @@ button:disabled { cursor: not-allowed; }
 .wechat-copy-button:disabled { cursor: wait; opacity: 0.72; }
 
 .wechat-layout, .x-layout, .xhs-layout { min-width: 0; min-height: 0; height: 100%; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+.xhs-layout { position: relative; }
 .wechat-layout.tool-rail-open, .x-layout.tool-rail-open, .xhs-layout.tool-rail-open { grid-template-columns: minmax(0, 1fr) 10px minmax(240px, var(--preview-tool-rail-width)); }
 .wechat-layout > .wechat-viewport, .x-layout > .x-viewport, .xhs-layout > .xhs-viewport { min-width: 0; min-height: 0; grid-column: 1; grid-row: 1; }
 .preview-tool-resizer { min-width: 10px; min-height: 0; grid-column: 2; grid-row: 1; background: #f5f7f8; cursor: col-resize; touch-action: none; display: grid; place-items: center; position: relative; z-index: 4; }

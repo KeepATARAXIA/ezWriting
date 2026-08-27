@@ -372,6 +372,7 @@ function reconcileMissingAssetState(article: ArticleDraft, nextHtml: string, pre
 
 function reconcileSourceUpdate(previous: ArticleDraft, next: ArticleDraft): ArticleDraft {
   const annotated = annotateLocalImagesAsMissing(next.html)
+  if (annotated.references.length === 0 && !previous.html.includes('data-missing-asset')) return next
   return reconcileMissingAssetState(next, annotated.html, previous.html)
 }
 
@@ -1610,7 +1611,15 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   const articleHtml = article?.html ?? ''
   const deferredArticleHtml = useDeferredValue(articleHtml)
   const deferredFormatting = useDeferredValue(formatting)
-  const isPreviewUpdating = deferredArticleHtml !== articleHtml || deferredFormatting !== formatting
+  const articleSource = useMemo(
+    () => article ? resolveArticleSource(article) : null,
+    [article?.html, article?.markdown, article?.sourceLanguage, article?.sourceText],
+  )
+  const articleSourceText = articleSource?.text ?? ''
+  const deferredArticleSourceText = useDeferredValue(articleSourceText)
+  const isPreviewUpdating = deferredArticleHtml !== articleHtml
+    || deferredFormatting !== formatting
+    || deferredArticleSourceText !== articleSourceText
   useEffect(() => {
     if (!article || !activeEditorLocation || isPreviewUpdating) return
     previewLocateRequestIdRef.current += 1
@@ -1624,22 +1633,19 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     () => articleFormattingForTarget(formatting, activePlatform),
     [activePlatform, formatting],
   )
+  const renderedPreviewFormatting = useMemo(
+    () => articleFormattingForTarget(deferredFormatting, activePlatform),
+    [activePlatform, deferredFormatting],
+  )
   const previewHtml = useMemo(
     () => deferredArticleHtml
-      ? applyArticleFormatting(
-          sanitizeEditedHtml(deferredArticleHtml),
-          articleFormattingForTarget(deferredFormatting, activePlatform),
-        )
+      ? applyArticleFormatting(deferredArticleHtml, renderedPreviewFormatting)
       : '',
-    [activePlatform, deferredArticleHtml, deferredFormatting],
-  )
-  const articleSource = useMemo(
-    () => article ? resolveArticleSource(article) : null,
-    [article?.html, article?.markdown, article?.sourceLanguage, article?.sourceText],
+    [deferredArticleHtml, renderedPreviewFormatting],
   )
   const articleContent = useMemo(
-    () => article ? analyzeArticleContent(article.html) : { characterCount: 0, bodyImageCount: 0, resources: [] },
-    [article?.html],
+    () => deferredArticleHtml ? analyzeArticleContent(deferredArticleHtml) : { characterCount: 0, bodyImageCount: 0, resources: [] },
+    [deferredArticleHtml],
   )
   const previewAccount = useMemo(
     () => accounts.find(account => accountMatchesPreview(account, activePlatform)),
@@ -2261,9 +2267,10 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                             activePlatform={activePlatform}
                             title={article.title}
                             html={previewHtml}
-                            sourceText={articleSource?.text}
+                            sourceText={deferredArticleSourceText}
                             sourceLanguage={articleSource?.language}
                             formatting={previewFormatting}
+                            renderFormatting={renderedPreviewFormatting}
                             onFormattingChange={nextFormatting => updateArticleFormatting(
                               activePlatform === 'x'
                                 ? nextFormatting

@@ -316,6 +316,30 @@ describe('PlatformPreviews editor-to-preview locating', () => {
     expect(applyWechat).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps formatting controls current while rendering a deferred formatting snapshot', async () => {
+    const applyWechat = vi.spyOn(wechatTheme, 'applyWechatTheme')
+    const currentFormatting = { ...DEFAULT_ARTICLE_FORMATTING, fontSize: 'large' as const }
+    const deferredFormatting = { ...DEFAULT_ARTICLE_FORMATTING, fontSize: 'small' as const }
+
+    await act(async () => root.render(
+      <PlatformPreviews
+        activePlatform="wechat"
+        title="Deferred formatting"
+        html="<p>Body</p>"
+        formatting={currentFormatting}
+        renderFormatting={deferredFormatting}
+        previewDevice="desktop"
+        onPreviewDeviceChange={vi.fn()}
+      />,
+    ))
+
+    expect(applyWechat).toHaveBeenLastCalledWith(expect.any(String), expect.any(Object), deferredFormatting)
+    await act(async () => container.querySelector<HTMLButtonElement>('#wechat-settings-font-trigger')?.click())
+    const large = Array.from(container.querySelectorAll<HTMLButtonElement>('#wechat-settings-font-panel [role="radio"]'))
+      .find(button => button.textContent === '大')
+    expect(large?.getAttribute('aria-checked')).toBe('true')
+  })
+
   it('shows when the deferred preview is catching up with the editor', async () => {
     await act(async () => root.render(
       <PlatformPreviews
@@ -795,10 +819,19 @@ describe('PlatformPreviews editor-to-preview locating', () => {
     vi.spyOn(image, 'getBoundingClientRect').mockReturnValue({
       left: 200, top: 150, right: 600, bottom: 400, width: 400, height: 250, x: 200, y: 150, toJSON: () => ({}),
     })
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this.matches('img[data-xhs-image-key]')) return new DOMRect(200, 150, 400, 250)
+      return new DOMRect()
+    })
     await act(async () => image.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 320, clientY: 240 })))
 
     expect(onEditTarget).not.toHaveBeenCalled()
     expect(container.querySelectorAll('.xhs-image-resize-handle')).toHaveLength(4)
+    const selectionOverlay = container.querySelector<HTMLElement>('.xhs-image-selection-overlay')!
+    expect(selectionOverlay.style.left).toBe('200px')
+    expect(selectionOverlay.style.top).toBe('150px')
+    expect(selectionOverlay.style.width).toBe('400px')
+    expect(selectionOverlay.style.height).toBe('250px')
     expect(container.querySelector('.xhs-image-tools')).toBeNull()
     const popover = container.querySelector<HTMLElement>('.xhs-image-popover')!
     expect(popover).not.toBeNull()
@@ -839,6 +872,78 @@ describe('PlatformPreviews editor-to-preview locating', () => {
 
     await act(async () => container.querySelector<HTMLElement>('.xhs-card-content [data-source-block="1"]')?.click())
     expect(onEditTarget).toHaveBeenCalledWith({ kind: 'body', blockIndex: 1 })
+  })
+
+  it('previews Xiaohongshu image resizing in the DOM and commits settings only once on release', async () => {
+    const onXhsSettingsChange = vi.fn()
+    const settings: XhsCardSettings = {
+      template: 'clean',
+      showPageNumber: true,
+      showFooter: true,
+      footerText: 'EZWRITING',
+      imageOverrides: {},
+    }
+    await act(async () => root.render(
+      <PlatformPreviews
+        activePlatform="xhs"
+        title="拖动性能"
+        html={'<p><img src="data:image/png;base64,AAAA" alt="流程图"></p><p>配套文字</p>'}
+        formatting={DEFAULT_ARTICLE_FORMATTING}
+        xhsSettings={settings}
+        onXhsSettingsChange={onXhsSettingsChange}
+        previewDevice="desktop"
+        onPreviewDeviceChange={vi.fn()}
+      />,
+    ))
+
+    const content = container.querySelector<HTMLElement>('.xhs-card-content')!
+    const image = content.querySelector<HTMLImageElement>('img[data-xhs-image-key]')!
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this.classList.contains('xhs-layout')) return new DOMRect(0, 0, 900, 760)
+      if (this.classList.contains('xhs-card-content')) return new DOMRect(100, 100, 400, 500)
+      if (this.matches('img[data-xhs-image-key]')) return new DOMRect(150, 180, 300, 180)
+      return new DOMRect()
+    })
+
+    await act(async () => image.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 320, clientY: 240 })))
+    const handle = container.querySelector<HTMLButtonElement>('.xhs-image-selection-overlay .xhs-image-resize-handle.nw')!
+
+    await act(async () => {
+      handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 7, clientX: 200 }))
+      window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerId: 7, clientX: 240 }))
+      await new Promise(resolve => window.setTimeout(resolve, 25))
+    })
+
+    expect(onXhsSettingsChange).not.toHaveBeenCalled()
+    expect(container.querySelector<HTMLImageElement>('.xhs-card-content img[data-xhs-image-key]')?.style.width).toBe('90%')
+    expect(container.querySelector('.xhs-image-width-control output')?.textContent).toBe('90%')
+
+    await act(async () => window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 7, clientX: 240 })))
+    expect(onXhsSettingsChange).toHaveBeenCalledTimes(1)
+    expect(onXhsSettingsChange).toHaveBeenCalledWith(expect.objectContaining({
+      imageOverrides: expect.objectContaining({
+        [image.dataset.xhsImageKey!]: { layout: 'full', widthPercent: 90 },
+      }),
+    }))
+
+    onXhsSettingsChange.mockClear()
+    const slider = container.querySelector<HTMLInputElement>('input[aria-label="调整选中图片宽度"]')!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(slider, '82')
+      slider.dispatchEvent(new Event('input', { bubbles: true }))
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(slider, '78')
+      slider.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(onXhsSettingsChange).not.toHaveBeenCalled()
+    expect(container.querySelector('.xhs-image-width-control output')?.textContent).toBe('78%')
+
+    await act(async () => slider.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 8 })))
+    expect(onXhsSettingsChange).toHaveBeenCalledTimes(1)
+    expect(onXhsSettingsChange).toHaveBeenLastCalledWith(expect.objectContaining({
+      imageOverrides: expect.objectContaining({
+        [image.dataset.xhsImageKey!]: { layout: 'full', widthPercent: 78 },
+      }),
+    }))
   })
 
   it('opens each Xiaohongshu card as an image with zoom controls', async () => {

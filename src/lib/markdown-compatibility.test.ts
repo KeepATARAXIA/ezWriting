@@ -119,6 +119,51 @@ describe('sanitizeContentHtml', () => {
 })
 
 describe('renderMarkdownToSafeHtml', () => {
+  it('renders a single Markdown newline as a visible line break', () => {
+    const html = renderMarkdownToSafeHtml('第一行\n第二行')
+    const document = new DOMParser().parseFromString(html, 'text/html')
+
+    expect(document.querySelector('p')?.innerHTML).toBe('第一行<br>第二行')
+  })
+
+  it('uses an explicit Markdown image title as an optional visible caption', () => {
+    const captioned = new DOMParser().parseFromString(
+      renderMarkdownToSafeHtml('![流程图](https://example.test/flow.png "图 1：发布流程")'),
+      'text/html',
+    )
+    const plain = new DOMParser().parseFromString(
+      renderMarkdownToSafeHtml('![流程图](https://example.test/flow.png)'),
+      'text/html',
+    )
+
+    expect(captioned.querySelector('figure.article-image-figure > img')?.getAttribute('alt')).toBe('流程图')
+    expect(captioned.querySelector('figcaption.article-image-caption')?.textContent).toBe('图 1：发布流程')
+    expect(captioned.querySelector('img')?.hasAttribute('title')).toBe(false)
+    expect(plain.querySelector('figcaption')).toBeNull()
+  })
+
+  it('preserves large embedded image data without leaking internal placeholders', () => {
+    const dataUri = `data:image/png;base64,${'QUJD'.repeat(20_000)}`
+    const html = renderMarkdownToSafeHtml(`![本地图片](${dataUri})`)
+
+    expect(html).toContain(dataUri)
+    expect(html).not.toContain('embedded-image.invalid')
+  })
+
+  it('renders an image-rich 4,000-character article without losing embedded images', () => {
+    const body = '这是用于验证长文编辑链路的正文。'.repeat(280)
+    const images = Array.from({ length: 12 }, (_, index) => (
+      `![图片${index + 1}](data:image/png;base64,${'QUJD'.repeat(2_000)})`
+    ))
+    const html = renderMarkdownToSafeHtml(`${body}\n${images.join('\n')}`)
+    const document = new DOMParser().parseFromString(html, 'text/html')
+
+    expect(body.length).toBeGreaterThan(4_000)
+    expect(document.querySelectorAll('img')).toHaveLength(12)
+    expect(document.body.textContent).toContain(body)
+    expect(html).not.toContain('embedded-image.invalid')
+  })
+
   it('repairs whitespace placed after an opening strong marker', () => {
     const markdown = [
       '支持** 100 万 Token 上下文**，也支持正常的 **标准粗体**。',

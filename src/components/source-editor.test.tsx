@@ -80,6 +80,42 @@ describe('SourceEditor', () => {
     expect(container.querySelector('.cm-content')?.textContent).not.toContain('PHN2Zy')
   })
 
+  it('adds, edits, and removes an optional image caption without showing the filename by default', async () => {
+    const onChange = vi.fn()
+    await act(async () => root.render(
+      <SourceEditor value={'![流程图](https://example.test/flow.png)'} language="markdown" onChange={onChange} />,
+    ))
+    await act(async () => new Promise(resolve => window.setTimeout(resolve, 0)))
+
+    const widget = container.querySelector<HTMLElement>('.source-image-widget')!
+    expect(widget.querySelector('.source-image-caption-input')).toBeNull()
+    expect(widget.querySelector('figcaption')?.textContent).not.toContain('flow.png')
+
+    await act(async () => widget.querySelector<HTMLButtonElement>('button[aria-label="添加图片说明"]')?.click())
+    const caption = widget.querySelector<HTMLInputElement>('.source-image-caption-input')!
+    expect(caption).not.toBeNull()
+    await act(async () => {
+      caption.value = '图 1：发布流程'
+      caption.dispatchEvent(new Event('input', { bubbles: true }))
+      caption.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Enter' }))
+      await vi.waitFor(
+        () => expect(onChange).toHaveBeenLastCalledWith('![流程图](https://example.test/flow.png "图 1：发布流程")'),
+        { timeout: 500 },
+      )
+    })
+
+    const savedCaption = container.querySelector<HTMLInputElement>('.source-image-caption-input')!
+    await act(async () => {
+      savedCaption.value = ''
+      savedCaption.dispatchEvent(new Event('input', { bubbles: true }))
+      savedCaption.dispatchEvent(new FocusEvent('blur', { bubbles: true }))
+      await vi.waitFor(
+        () => expect(onChange).toHaveBeenLastCalledWith('![流程图](https://example.test/flow.png)'),
+        { timeout: 500 },
+      )
+    })
+  })
+
   it('shows a quiet missing-image card and deletes the underlying image syntax', async () => {
     const onChange = vi.fn()
     await act(async () => root.render(
@@ -122,6 +158,27 @@ describe('SourceEditor', () => {
     expect(onChange).toHaveBeenLastCalledWith('![新流程图](data:image/png;base64,bmV3)')
     expect(container.querySelector('.source-image-widget img')?.getAttribute('src')).toBe('data:image/png;base64,bmV3')
     expect(container.querySelector('.cm-content')?.textContent).not.toContain('data:image/png')
+  })
+
+  it('keeps an explicit image caption when replacing the image file', async () => {
+    const onChange = vi.fn()
+    await act(async () => root.render(
+      <SourceEditor value={'![旧图](assets/old.png "旧图说明")'} language="markdown" onChange={onChange} />,
+    ))
+    await act(async () => new Promise(resolve => window.setTimeout(resolve, 0)))
+
+    const input = container.querySelector<HTMLInputElement>('.source-image-widget input[type="file"]')!
+    Object.defineProperty(input, 'files', {
+      configurable: true,
+      value: [new File(['new'], '新流程图.png', { type: 'image/png' })],
+    })
+    await act(async () => {
+      input.dispatchEvent(new Event('change', { bubbles: true }))
+      await vi.waitFor(
+        () => expect(onChange).toHaveBeenLastCalledWith('![新流程图](data:image/png;base64,bmV3 "旧图说明")'),
+        { timeout: 500 },
+      )
+    })
   })
 
   it('shows the selection menu and supports formatting, undo, and redo shortcuts', async () => {
