@@ -31,6 +31,77 @@ async function openLocalDataActions(page: Page): Promise<void> {
   await expect(page.locator('.history-data-actions')).toBeVisible()
 }
 
+test('switches between Markdown source and presentation editing without losing syntax', async ({ page }) => {
+  const linkedImage = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="160" height="90"><rect width="160" height="90" fill="#dce5ff"/></svg>').toString('base64')
+  const linkedImageDestination = 'https://seed.bytedance.com/en/blog/linked-image'
+  const markdown = [
+    '# Markdown 显示切换',
+    '',
+    '## 正文小标题',
+    '',
+    '**重点内容**和[参考链接](https://example.test/guide)',
+    '',
+    '<mark>HTML 标签高亮内容</mark>',
+    '',
+    'https://ai.google.dev/gemini-api/docs/omni。',
+    '',
+    `[![Seedance 参考图](data:image/svg+xml;base64,${linkedImage})](${linkedImageDestination})`,
+    '',
+    '点击这一段，让其他行显示排版效果。',
+  ].join('\n')
+
+  await page.goto('/')
+  await page.locator('input[type="file"][accept*=".md"]').first().setInputFiles({
+    name: 'markdown-presentation.md',
+    mimeType: 'text/markdown',
+    buffer: Buffer.from(markdown),
+  })
+  await expect(page.getByLabel('文章标题')).toHaveValue('Markdown 显示切换')
+  await expect(page.getByRole('button', { name: '隐藏 Markdown 语法' })).toBeVisible()
+
+  await page.getByRole('button', { name: '隐藏 Markdown 语法' }).click()
+  await page.locator('.cm-line').filter({ hasText: '点击这一段' }).click()
+  await expect(page.locator('.source-editor')).toHaveClass(/markdown-presentation/)
+  await expect(page.locator('.cm-md-heading-text')).toContainText('正文小标题')
+  await expect(page.locator('.cm-md-strong')).toContainText('重点内容')
+  await expect(page.locator('.cm-md-highlight')).toContainText('HTML 标签高亮内容')
+  await expect(page.locator('.source-editor .cm-content')).not.toContainText('<mark>')
+  await expect(page.locator('.source-editor .cm-content')).not.toContainText('https://example.test/guide')
+
+  await page.evaluate(() => {
+    const target = window as Window & { __openedLinks?: string[] }
+    target.__openedLinks = []
+    window.open = ((url?: string | URL) => {
+      target.__openedLinks?.push(String(url))
+      return null
+    }) as typeof window.open
+  })
+  await page.locator('.cm-editor-direct-link').filter({ hasText: 'https://ai.google.dev/gemini-api/docs/omni' }).click({ modifiers: ['Control'] })
+  await expect.poll(() => page.evaluate(
+    () => (window as Window & { __openedLinks?: string[] }).__openedLinks,
+  )).toEqual(['https://ai.google.dev/gemini-api/docs/omni'])
+
+  const linkedImageCard = page.getByLabel('图片：Seedance 参考图')
+  await linkedImageCard.click()
+  const linkedImageLink = linkedImageCard.getByRole('link', { name: '链接 · seed.bytedance.com' })
+  await expect(linkedImageLink).toBeVisible()
+  await expect(linkedImageLink).toHaveAttribute('href', linkedImageDestination)
+  await linkedImageCard.locator('img').click({ modifiers: ['Control'] })
+  await expect.poll(() => page.evaluate(
+    () => (window as Window & { __openedLinks?: string[] }).__openedLinks,
+  )).toEqual([
+    'https://ai.google.dev/gemini-api/docs/omni',
+    linkedImageDestination,
+  ])
+
+  await page.locator('.cm-line').filter({ hasText: '重点内容' }).click()
+  await expect(page.locator('.source-editor .cm-activeLine')).toContainText('**重点内容**')
+  await page.getByRole('button', { name: '显示 Markdown 语法' }).click()
+  await expect(page.locator('.source-editor .cm-content')).toContainText('## 正文小标题')
+  await expect(page.locator('.source-editor .cm-content')).toContainText('<mark>HTML 标签高亮内容</mark>')
+  await expect(page.locator('.source-editor .cm-content')).toContainText('https://example.test/guide')
+})
+
 test('keeps the selected source line centered after large images settle and on repeated clicks', async ({ page }) => {
   const largeSvg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="900" height="900" viewBox="0 0 900 900"><rect width="900" height="900" fill="#dce5ff"/></svg>').toString('base64')
   const trailingParagraphs = Array.from({ length: 8 }, (_, index) => `后续段落 ${index + 1}，用于保留足够的预览滚动空间。`).join('\n\n')

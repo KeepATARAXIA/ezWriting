@@ -1,5 +1,7 @@
 import DOMPurify from 'dompurify'
 import { marked } from 'marked'
+import { isLocalVideoReference, localVideoBlob } from './local-video-registry'
+import { isSupportedVideoDataUri, localVideoFileName, supportedVideoDataMimeType } from './video-assets'
 
 export const MARKDOWN_CALLOUT_TYPES = [
   'note',
@@ -68,6 +70,7 @@ const SAFE_CONTENT_DATA_ATTRIBUTES = [
   'data-checked',
   'data-ez-format',
   'data-ez-task-marker',
+  'data-ez-video-name',
   'data-footnote-content',
   'data-footnote-item',
   'data-footnote-number',
@@ -92,7 +95,6 @@ const FORBIDDEN_CONTENT_TAGS = [
   'link',
   'meta',
   'audio',
-  'video',
   'source',
   'track',
   'input',
@@ -114,6 +116,31 @@ const FORBIDDEN_CONTENT_ATTRIBUTES = [
 ]
 
 const MARKDOWN_EMBEDDED_IMAGE_SOURCE = /!\[[^\]\n]*\]\(\s*(?:<(data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=]+)>|(data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=]+))(?:\s+(?:"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'))?\s*\)/gi
+const HTML_EMBEDDED_VIDEO_SOURCE = /(<video\b[^>]*?\bsrc\s*=\s*)(["'])([^"']+)\2/gi
+
+interface EmbeddedVideoSource {
+  placeholder: string
+  source: string
+}
+
+function compactHtmlEmbeddedVideos(html: string): { html: string; videos: EmbeddedVideoSource[] } {
+  const videos: EmbeddedVideoSource[] = []
+  const compacted = html.replace(HTML_EMBEDDED_VIDEO_SOURCE, (syntax, prefix: string, quote: string, source: string) => {
+    const localBlob = isLocalVideoReference(source) ? localVideoBlob(source) : null
+    const localMimeType = localBlob?.type.toLocaleLowerCase()
+    const mimeType = supportedVideoDataMimeType(source)
+      ?? (localMimeType === 'video/mp4' || localMimeType === 'video/webm' ? localMimeType : null)
+    if (!mimeType) return syntax
+    const placeholder = `data:${mimeType};base64,${btoa(`ezwriting-video-${videos.length}`)}`
+    videos.push({ placeholder, source })
+    return `${prefix}${quote}${placeholder}${quote}`
+  })
+  return { html: compacted, videos }
+}
+
+function restoreHtmlEmbeddedVideos(html: string, videos: EmbeddedVideoSource[]): string {
+  return videos.reduce((restored, video) => restored.replaceAll(video.placeholder, video.source), html)
+}
 
 // Keep article typography and box formatting, but exclude page-level positioning, stacking, and transforms.
 const SAFE_INLINE_STYLE_PROPERTIES = new Set([
@@ -241,6 +268,26 @@ function filterInlineStyles(html: string): string {
   return document.body.innerHTML
 }
 
+function filterLocalVideos(html: string): string {
+  const document = new DOMParser().parseFromString(html, 'text/html')
+  document.body.querySelectorAll<HTMLVideoElement>('video').forEach(video => {
+    const source = video.getAttribute('src') || ''
+    if (!isSupportedVideoDataUri(source)) {
+      video.remove()
+      return
+    }
+    video.controls = true
+    video.autoplay = false
+    video.removeAttribute('autoplay')
+    video.removeAttribute('poster')
+    video.setAttribute('preload', 'metadata')
+    const name = localVideoFileName(video.dataset.ezVideoName || '本地视频')
+    video.dataset.ezVideoName = name
+    if (!video.getAttribute('aria-label')) video.setAttribute('aria-label', `视频：${name}`)
+  })
+  return document.body.innerHTML
+}
+
 export function normalizeMarkdownCalloutType(value: string): MarkdownCalloutType {
   const normalized = value.trim().toLocaleLowerCase()
   if ((MARKDOWN_CALLOUT_TYPES as readonly string[]).includes(normalized)) {
@@ -250,14 +297,16 @@ export function normalizeMarkdownCalloutType(value: string): MarkdownCalloutType
 }
 
 function sanitizeContentHtmlWithAttributes(html: string, additionalAttributes: string[]): string {
-  const sanitized = DOMPurify.sanitize(html, {
+  const embeddedVideos = compactHtmlEmbeddedVideos(html)
+  const sanitized = DOMPurify.sanitize(embeddedVideos.html, {
     USE_PROFILES: { html: true },
     FORBID_TAGS: FORBIDDEN_CONTENT_TAGS,
     FORBID_ATTR: FORBIDDEN_CONTENT_ATTRIBUTES,
     ALLOW_DATA_ATTR: false,
     ADD_ATTR: [...SAFE_CONTENT_DATA_ATTRIBUTES, ...additionalAttributes],
   })
-  return filterInlineStyles(sanitized)
+  const filtered = filterLocalVideos(filterInlineStyles(sanitized))
+  return restoreHtmlEmbeddedVideos(filtered, embeddedVideos.videos)
 }
 
 export function sanitizeContentHtml(html: string): string {
@@ -685,7 +734,8 @@ function convertStandaloneImageCaptions(document: Document): void {
 }
 
 export function renderMarkdownToSafeHtml(markdown: string): string {
-  const embeddedImages = compactMarkdownEmbeddedImages(markdown)
+  const embeddedVideos = compactHtmlEmbeddedVideos(markdown)
+  const embeddedImages = compactMarkdownEmbeddedImages(embeddedVideos.html)
   const syntaxNormalized = separateCalloutMarker(
     normalizeObsidianInlineSyntax(normalizeObsidianImages(normalizeMarkdownStrongWhitespace(embeddedImages.markdown))),
   )
@@ -700,5 +750,8 @@ export function renderMarkdownToSafeHtml(markdown: string): string {
   convertCallouts(document)
   convertStandaloneImageCaptions(document)
 
-  return restoreMarkdownEmbeddedImages(sanitizeContentHtml(document.body.innerHTML), embeddedImages.images)
+  return restoreHtmlEmbeddedVideos(
+    restoreMarkdownEmbeddedImages(sanitizeContentHtml(document.body.innerHTML), embeddedImages.images),
+    embeddedVideos.videos,
+  )
 }

@@ -1,4 +1,3 @@
-import JSZip from 'jszip'
 import {
   useCallback,
   useEffect,
@@ -61,6 +60,7 @@ import { captureXhsCard, downloadBlob, safeDownloadName } from '../lib/xhs-expor
 import { paginateForXhsCards } from '../lib/xhs-pagination'
 import { createXhsCardPageMeasurer, waitForXhsPaginationAssets } from '../lib/xhs-pagination-measurement'
 import { renderMissingImagePlaceholders } from '../lib/missing-assets'
+import { materializeLocalVideoHtml } from '../lib/local-video-registry'
 import {
   applyWechatTheme,
   getWechatTheme,
@@ -220,6 +220,9 @@ const XHS_LINE_HEIGHTS = { compact: '1.58', comfortable: '1.72', airy: '1.9' } a
 const XHS_PREVIEW_MIN_ZOOM = 25
 const XHS_PREVIEW_MAX_ZOOM = 300
 const XHS_PREVIEW_ZOOM_STEP = 25
+const XHS_SYNC_PAGINATION_HTML_LIMIT = 8_000
+const XHS_MEASURED_PAGINATION_PAGE_LIMIT = 24
+const XHS_PENDING_PAGE = '<p data-xhs-pagination-pending="true">正在生成卡片预览…</p>'
 const XHS_IMAGE_FULL_MIN_WIDTH = 35
 const XHS_IMAGE_SPLIT_MIN_WIDTH = 30
 const XHS_IMAGE_SPLIT_MAX_WIDTH = 70
@@ -227,6 +230,15 @@ const XHS_IMAGE_POPOVER_WIDTH = 300
 const XHS_IMAGE_POPOVER_HEIGHT = 205
 const XHS_IMAGE_POPOVER_GAP = 12
 const XHS_PAGE_RANGE_SIZE = 10
+
+function scheduleIdleWork(callback: () => void, timeout = 300): () => void {
+  if (typeof window.requestIdleCallback === 'function') {
+    const handle = window.requestIdleCallback(callback, { timeout })
+    return () => window.cancelIdleCallback(handle)
+  }
+  const handle = window.setTimeout(callback, 0)
+  return () => window.clearTimeout(handle)
+}
 const PREVIEW_LOCATE_SETTLE_MS = 1000
 const PREVIEW_TARGET_FLASH_MS = 1500
 
@@ -414,7 +426,7 @@ function mapPreviewBlocks(
   target: PlatformContentTarget = 'generic',
 ): { html: string; blockCount: number } {
   const document = parseHtml(html)
-  applyPlatformCompatibilityToDocument(document, target)
+  applyPlatformCompatibilityToDocument(document, target, { replaceVideos: false })
   const themedContainer = document.body.querySelector<HTMLElement>(':scope > [data-wechat-theme]')
   const blocks = Array.from(themedContainer?.children ?? document.body.children) as HTMLElement[]
   let blockIndex = 0
@@ -514,7 +526,7 @@ const FORMATTING_SECTION_META: Array<{
 function FormattingAccordion({
   idPrefix,
   label,
-  openSection,
+  openSections,
   onSectionToggle,
   formatting,
   onFormattingChange,
@@ -523,7 +535,7 @@ function FormattingAccordion({
 }: {
   idPrefix: string
   label: string
-  openSection: FormattingSection | null
+  openSections: readonly FormattingSection[]
   onSectionToggle: (section: FormattingSection) => void
   formatting: ArticleFormatting
   onFormattingChange?: (formatting: ArticleFormatting) => void
@@ -545,7 +557,7 @@ function FormattingAccordion({
   return (
     <div className="settings-accordion" aria-label={label}>
       {FORMATTING_SECTION_META.map(section => {
-        const expanded = openSection === section.value
+        const expanded = openSections.includes(section.value)
         const triggerId = `${idPrefix}-${section.value}-trigger`
         const panelId = `${idPrefix}-${section.value}-panel`
         return (
@@ -594,10 +606,10 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
   const [wechatThemeCategory, setWechatThemeCategory] = useState<WechatThemeCategory>('简约')
   const [toolRailWidth, setToolRailWidth] = useState(readToolRailWidth)
   const [toolRailOpen, setToolRailOpen] = useState(readToolRailOpen)
-  const [openFormattingSection, setOpenFormattingSection] = useState<Record<PreviewPlatform, FormattingSection | null>>({
-    wechat: 'layout',
-    xhs: 'layout',
-    x: 'layout',
+  const [openFormattingSections, setOpenFormattingSections] = useState<Record<PreviewPlatform, FormattingSection[]>>({
+    wechat: ['layout'],
+    xhs: ['layout'],
+    x: ['layout'],
   })
   const [wechatCopyState, setWechatCopyState] = useState<WechatCopyState>('idle')
   const [exporting, setExporting] = useState<number | 'all' | null>(null)
@@ -606,6 +618,7 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
   const [exportSheetActive, setExportSheetActive] = useState(false)
   const [xhsImagePreview, setXhsImagePreview] = useState<{ index: number; url: string } | null>(null)
   const [xhsImageZoom, setXhsImageZoom] = useState(100)
+  const [estimatedPagination, setEstimatedPagination] = useState<{ key: string; pages: string[] } | null>(null)
   const [measuredPagination, setMeasuredPagination] = useState<{ key: string; pages: string[] } | null>(null)
 
   useEffect(() => {
@@ -616,11 +629,12 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
     () => sourceText ? sourceLinesByBlock(sourceText, sourceLanguage ?? 'markdown') : [],
     [sourceLanguage, sourceText],
   )
+  const playableHtml = useMemo(() => materializeLocalVideoHtml(html), [html])
   const mappedPreview = useMemo(
     () => activePlatform === 'wechat'
       ? { html: '', blockCount: 0 }
-      : mapPreviewBlocks(renderMissingImagePlaceholders(html), sourceLineMap, activePlatform),
-    [activePlatform, html, sourceLineMap],
+      : mapPreviewBlocks(renderMissingImagePlaceholders(playableHtml), sourceLineMap, activePlatform),
+    [activePlatform, playableHtml, sourceLineMap],
   )
   const wechatSettings = useMemo(() => normalizeWechatThemeSettings(formatting.wechat), [formatting.wechat])
   const previewWechatSettings = useMemo(
@@ -629,9 +643,9 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
   )
   const mappedWechatPreview = useMemo(
     () => activePlatform === 'wechat'
-      ? mapPreviewBlocks(applyWechatTheme(renderMissingImagePlaceholders(html), previewWechatSettings, previewFormatting), sourceLineMap, 'wechat')
+      ? mapPreviewBlocks(applyWechatTheme(renderMissingImagePlaceholders(playableHtml), previewWechatSettings, previewFormatting), sourceLineMap, 'wechat')
       : { html: '', blockCount: 0 },
-    [activePlatform, html, previewFormatting, previewWechatSettings, sourceLineMap],
+    [activePlatform, playableHtml, previewFormatting, previewWechatSettings, sourceLineMap],
   )
   const activeWechatTheme = getWechatTheme(wechatSettings.themeId)
   const activeWechatSlots = getWechatThemeColorSlots(wechatSettings.themeId)
@@ -649,12 +663,6 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
     textScale: XHS_FONT_SIZE_SCALE[previewFormatting.fontSize] * XHS_LINE_HEIGHT_SCALE[previewFormatting.lineHeight],
     showFooter: xhsSettings.showFooter,
   }), [previewFormatting.fontSize, previewFormatting.lineHeight, title, xhsSettings.showFooter])
-  const estimatedCardPages = useMemo(
-    () => activePlatform === 'xhs'
-      ? paginateForXhsCards(preparedXhsLayout.html, xhsPaginationOptions)
-      : [],
-    [activePlatform, preparedXhsLayout.html, xhsPaginationOptions],
-  )
   const paginationKey = useMemo(() => [
     preparedXhsLayout.html,
     title,
@@ -676,9 +684,21 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
     xhsSettings.showFooter,
     xhsSettings.template,
   ])
+  const shouldDeferEstimatedPagination = activePlatform === 'xhs'
+    && preparedXhsLayout.html.length > XHS_SYNC_PAGINATION_HTML_LIMIT
+  const synchronousEstimatedPages = useMemo(
+    () => activePlatform === 'xhs' && !shouldDeferEstimatedPagination
+      ? paginateForXhsCards(preparedXhsLayout.html, xhsPaginationOptions)
+      : [],
+    [activePlatform, preparedXhsLayout.html, shouldDeferEstimatedPagination, xhsPaginationOptions],
+  )
+  const estimatedCardPages = shouldDeferEstimatedPagination
+    ? estimatedPagination?.key === paginationKey ? estimatedPagination.pages : []
+    : synchronousEstimatedPages
+  const paginationPending = activePlatform === 'xhs' && estimatedCardPages.length === 0
   const cardPages = activePlatform === 'xhs' && measuredPagination?.key === paginationKey
     ? measuredPagination.pages
-    : estimatedCardPages
+    : estimatedCardPages.length ? estimatedCardPages : [XHS_PENDING_PAGE]
   const characterCount = useMemo(
     () => activePlatform === 'x' ? plainTextLength(mappedPreview.html) : 0,
     [activePlatform, mappedPreview.html],
@@ -1017,10 +1037,15 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
   }
 
   const toggleFormattingSection = (platform: PreviewPlatform, section: FormattingSection) => {
-    setOpenFormattingSection(current => ({
-      ...current,
-      [platform]: current[platform] === section ? null : section,
-    }))
+    setOpenFormattingSections(current => {
+      const platformSections = current[platform]
+      return {
+        ...current,
+        [platform]: platformSections.includes(section)
+          ? platformSections.filter(value => value !== section)
+          : [...platformSections, section],
+      }
+    })
   }
 
   const resizeToolRail = (clientX: number) => {
@@ -1090,10 +1115,29 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
   }, [onPreviewDeviceChange])
 
   useEffect(() => {
-    if (activePlatform !== 'xhs') return
+    if (!shouldDeferEstimatedPagination) return
+    let cancelled = false
+    const cancelScheduledWork = scheduleIdleWork(() => {
+      const pages = paginateForXhsCards(preparedXhsLayout.html, xhsPaginationOptions)
+      if (cancelled) return
+      setEstimatedPagination(current => current?.key === paginationKey && samePages(current.pages, pages)
+        ? current
+        : { key: paginationKey, pages })
+    })
+
+    return () => {
+      cancelled = true
+      cancelScheduledWork()
+    }
+  }, [paginationKey, preparedXhsLayout.html, shouldDeferEstimatedPagination, xhsPaginationOptions])
+
+  useEffect(() => {
+    if (activePlatform !== 'xhs'
+      || paginationPending
+      || estimatedCardPages.length > XHS_MEASURED_PAGINATION_PAGE_LIMIT) return
 
     let cancelled = false
-    let assetFrame: number | null = null
+    let cancelScheduledWork: (() => void) | null = null
 
     const measure = () => {
       if (cancelled) return
@@ -1119,15 +1163,17 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
 
     void waitForXhsPaginationAssets(preparedXhsLayout.html).then(() => {
       if (cancelled) return
-      assetFrame = window.requestAnimationFrame(measure)
+      cancelScheduledWork = scheduleIdleWork(measure, 500)
     })
 
     return () => {
       cancelled = true
-      if (assetFrame !== null) window.cancelAnimationFrame(assetFrame)
+      cancelScheduledWork?.()
     }
   }, [
     activePlatform,
+    estimatedCardPages.length,
+    paginationPending,
     paginationKey,
     preparedXhsLayout.html,
     title,
@@ -1577,6 +1623,7 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
       if (exportCardRefs.current.length !== cardPages.length || exportCardRefs.current.some(card => !card)) {
         throw new Error('卡片导出视图准备失败，请重试。')
       }
+      const { default: JSZip } = await import('jszip')
       const archive = new JSZip()
       const baseName = safeDownloadName(title)
       for (let index = 0; index < exportCardRefs.current.length; index += 1) {
@@ -1789,7 +1836,7 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
       style={previewVariables}
     >
       <header className="preview-contextbar">
-        <span className={`preview-sync-status ${isUpdating ? 'updating' : ''}`} aria-live="polite"><i />{isUpdating ? '正在同步最新编辑…' : activePlatform === 'wechat' ? '正文实时映射' : activePlatform === 'xhs' ? `${cardPages.length} 张卡片 · 自动分页` : `Premium Article · ${characterCount} 字`}</span>
+        <span className={`preview-sync-status ${isUpdating || paginationPending ? 'updating' : ''}`} aria-live="polite"><i />{isUpdating ? '正在同步最新编辑…' : activePlatform === 'wechat' ? '正文实时映射' : activePlatform === 'xhs' ? paginationPending ? '正在生成卡片预览…' : `${cardPages.length} 张卡片 · 自动分页` : `Premium Article · ${characterCount} 字`}</span>
         <div className="preview-context-actions">
           {activePlatform === 'wechat' && (
             <button
@@ -1879,7 +1926,7 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
                 <FormattingAccordion
                   idPrefix="wechat-settings"
                   label="公众号设置模块"
-                  openSection={openFormattingSection.wechat}
+                  openSections={openFormattingSections.wechat}
                   onSectionToggle={section => toggleFormattingSection('wechat', section)}
                   formatting={formatting}
                   onFormattingChange={onFormattingChange}
@@ -2066,7 +2113,7 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
                 <FormattingAccordion
                   idPrefix="xhs-settings"
                   label="小红书设置模块"
-                  openSection={openFormattingSection.xhs}
+                  openSections={openFormattingSections.xhs}
                   onSectionToggle={section => toggleFormattingSection('xhs', section)}
                   formatting={formatting}
                   onFormattingChange={onFormattingChange}
@@ -2191,7 +2238,7 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
                 <FormattingAccordion
                   idPrefix="x-settings"
                   label="X 长文设置模块"
-                  openSection={openFormattingSection.x}
+                  openSections={openFormattingSections.x}
                   onSectionToggle={section => toggleFormattingSection('x', section)}
                   formatting={formatting}
                   onFormattingChange={onFormattingChange}

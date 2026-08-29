@@ -152,7 +152,7 @@ describe('LocalDraftRepository', () => {
     expect(await repository.getDraft('missing')).toBeNull()
   })
 
-  it('stores embedded images once as Blob assets and transparently restores data URLs', async () => {
+  it('stores embedded images once as binary assets and transparently restores data URLs', async () => {
     const { databaseName, repository } = createRepository()
     const dataUri = 'data:image/png;base64,iVBORw0KGgo='
     const draft = persisted('with-image', {
@@ -175,7 +175,7 @@ describe('LocalDraftRepository', () => {
     const database = await openDatabase(databaseName)
     const transaction = database.transaction(['drafts', 'assets'], 'readonly')
     const rawDraft = await requestResult(transaction.objectStore('drafts').get('with-image') as IDBRequest<PersistedDraft>)
-    const assets = await requestResult(transaction.objectStore('assets').getAll() as IDBRequest<Array<{ id: string; blob: Blob; bytes: ArrayBuffer; mimeType: string }>>)
+    const assets = await requestResult(transaction.objectStore('assets').getAll() as IDBRequest<Array<{ id: string; blob?: Blob; bytes: ArrayBuffer; mimeType: string }>>)
     database.close()
 
     expect(rawDraft.article.html).not.toContain('data:image/')
@@ -185,8 +185,8 @@ describe('LocalDraftRepository', () => {
     expect(rawDraft.article.sourceText).toContain(DRAFT_ASSET_PROTOCOL)
     expect(assets).toHaveLength(1)
     expect(assets[0]).toMatchObject({ mimeType: 'image/png' })
-    expect(assets[0]).toHaveProperty('blob')
     expect(assets[0].bytes.byteLength).toBeGreaterThan(0)
+    expect(assets[0]).not.toHaveProperty('blob')
   })
 
   it('uses stable asset identifiers and removes assets no longer referenced by a draft', async () => {

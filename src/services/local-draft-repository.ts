@@ -8,7 +8,13 @@ import type {
   DraftRepository,
   DraftSaveOptions,
 } from './draft-repository'
+import {
+  isLocalVideoReference,
+  localVideoBlob,
+  registerLocalVideo,
+} from '../lib/local-video-registry'
 import { normalizeWechatThemeSettings } from '../lib/wechat-theme'
+import { isSupportedVideoDataUri } from '../lib/video-assets'
 
 export const LOCAL_DRAFT_DATABASE_NAME = 'dispatch-workbench-local'
 export const LOCAL_DRAFT_DATABASE_VERSION = 2
@@ -23,8 +29,8 @@ interface StoredAsset {
   key: string
   id: string
   draftId: string
-  blob: Blob
-  bytes: ArrayBuffer
+  blob?: Blob
+  bytes?: ArrayBuffer
   mimeType: string
   byteSize: number
   updatedAt: string
@@ -58,8 +64,11 @@ export class DraftConflictError extends Error {
 
 interface ExtractedArticle {
   article: ArticleDraft
+  hydratedArticle: ArticleDraft
   assets: Map<string, Omit<StoredAsset, 'key' | 'draftId' | 'updatedAt'>>
 }
+
+const HTML_EMBEDDED_MEDIA_SOURCE = /(<(?:img|video)\b[^>]*?\bsrc\s*=\s*)(["'])([^"']+)\2/gi
 
 function requestResult<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -111,17 +120,23 @@ function assetIdFromReference(value: string | undefined): string | null {
   return id && /^[a-z0-9-]+$/i.test(id) ? id : null
 }
 
-function isImageDataUri(value: string | undefined): value is string {
-  return Boolean(value && /^data:image\//i.test(value))
+function isPersistableAssetSource(value: string | undefined): value is string {
+  return Boolean(value && (
+    /^data:image\//i.test(value)
+    || isSupportedVideoDataUri(value)
+    || (isLocalVideoReference(value) && localVideoBlob(value))
+  ))
 }
 
 function bytesFromDataUri(dataUri: string): { bytes: Uint8Array; mimeType: string } {
   const commaIndex = dataUri.indexOf(',')
-  if (commaIndex < 0) throw new Error('图片 Data URI 格式无效。')
+  if (commaIndex < 0) throw new Error('媒体 Data URI 格式无效。')
 
   const metadata = dataUri.slice(5, commaIndex).split(';')
   const mimeType = metadata[0]?.toLowerCase()
-  if (!mimeType?.startsWith('image/')) throw new Error('仅支持持久化图片 Data URI。')
+  if (!mimeType || (!mimeType.startsWith('image/') && !isSupportedVideoDataUri(dataUri))) {
+    throw new Error('仅支持持久化图片、MP4 或 WebM Data URI。')
+  }
 
   const payload = dataUri.slice(commaIndex + 1)
   if (metadata.some(part => part.toLowerCase() === 'base64')) {
@@ -134,6 +149,12 @@ function bytesFromDataUri(dataUri: string): { bytes: Uint8Array; mimeType: strin
   return { bytes: new TextEncoder().encode(decodeURIComponent(payload)), mimeType }
 }
 
+function exactArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  return bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength && bytes.buffer instanceof ArrayBuffer
+    ? bytes.buffer
+    : new Uint8Array(bytes).buffer
+}
+
 function fallbackHash(bytes: Uint8Array): string {
   let first = 0x811c9dc5
   let second = 0x9e3779b9
@@ -144,29 +165,67 @@ function fallbackHash(bytes: Uint8Array): string {
   return `${(first >>> 0).toString(16).padStart(8, '0')}${(second >>> 0).toString(16).padStart(8, '0')}${bytes.byteLength.toString(16)}`
 }
 
-async function contentHash(bytes: Uint8Array, mimeType: string): Promise<string> {
-  const mimeBytes = new TextEncoder().encode(`${mimeType}\0`)
-  const input = new Uint8Array(mimeBytes.byteLength + bytes.byteLength)
-  input.set(mimeBytes)
-  input.set(bytes, mimeBytes.byteLength)
-
-  if (!globalThis.crypto?.subtle) return fallbackHash(input)
-  const digest = await globalThis.crypto.subtle.digest('SHA-256', input)
+async function contentHash(buffer: ArrayBuffer): Promise<string> {
+  if (!globalThis.crypto?.subtle) return fallbackHash(new Uint8Array(buffer))
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', buffer)
   return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('')
 }
 
-async function storedAssetFromDataUri(dataUri: string): Promise<Omit<StoredAsset, 'key' | 'draftId' | 'updatedAt'>> {
-  const { bytes, mimeType } = bytesFromDataUri(dataUri)
-  const id = `sha256-${await contentHash(bytes, mimeType)}`
-  const buffer = new ArrayBuffer(bytes.byteLength)
-  new Uint8Array(buffer).set(bytes)
+async function storedAssetFromSource(source: string): Promise<Omit<StoredAsset, 'key' | 'draftId' | 'updatedAt'>> {
+  let bytes: Uint8Array
+  let mimeType: string
+  if (isLocalVideoReference(source)) {
+    const blob = localVideoBlob(source)
+    if (!blob || (blob.type !== 'video/mp4' && blob.type !== 'video/webm')) {
+      throw new Error('本地视频数据已失效，请重新选择视频。')
+    }
+    bytes = new Uint8Array(await blob.arrayBuffer())
+    mimeType = blob.type
+  } else {
+    const decoded = bytesFromDataUri(source)
+    bytes = decoded.bytes
+    mimeType = decoded.mimeType
+  }
+  const mimeKey = mimeType.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '')
+  const buffer = exactArrayBuffer(bytes)
+  const id = `sha256-${mimeKey}-${await contentHash(buffer)}`
   return {
     id,
-    blob: new Blob([buffer], { type: mimeType }),
     bytes: buffer,
     mimeType,
     byteSize: bytes.byteLength,
   }
+}
+
+function replaceMappedValues(value: string, replacements: Map<string, string>): string {
+  let next = value
+  for (const [source, replacement] of replacements) next = next.replaceAll(source, replacement)
+  return next
+}
+
+async function replaceEmbeddedHtmlAssets(
+  html: string,
+  register: (dataUri: string) => Promise<string>,
+): Promise<string> {
+  const sources: string[] = []
+  let placeholderBase = 'dispatch-pending-asset://'
+  while (html.includes(placeholderBase)) placeholderBase = `${placeholderBase}safe/`
+
+  const compacted = html.replace(
+    HTML_EMBEDDED_MEDIA_SOURCE,
+    (syntax, prefix: string, quote: string, source: string) => {
+      if (!isPersistableAssetSource(source)) return syntax
+      const index = sources.push(source) - 1
+      return `${prefix}${quote}${placeholderBase}${index}${quote}`
+    },
+  )
+  if (!sources.length) return html
+
+  const references = await Promise.all(sources.map(register))
+  return references.reduce(
+    (result, reference, index) => result.replaceAll(`${placeholderBase}${index}`, reference),
+    compacted,
+  )
 }
 
 async function extractArticleAssets(article: ArticleDraft): Promise<ExtractedArticle> {
@@ -174,33 +233,37 @@ async function extractArticleAssets(article: ArticleDraft): Promise<ExtractedArt
   const assets = new Map<string, Omit<StoredAsset, 'key' | 'draftId' | 'updatedAt'>>()
   const replacements = new Map<string, string>()
 
-  const register = async (dataUri: string): Promise<string> => {
-    const existing = replacements.get(dataUri)
+  const register = async (source: string): Promise<string> => {
+    const existing = replacements.get(source)
     if (existing) return existing
-    const asset = await storedAssetFromDataUri(dataUri)
+    const asset = await storedAssetFromSource(source)
     const reference = assetReference(asset.id)
     assets.set(asset.id, asset)
-    replacements.set(dataUri, reference)
+    replacements.set(source, reference)
     return reference
   }
 
-  let html = articleWithoutCover.html
-  if (/data:image\//i.test(html)) {
-    const document = new DOMParser().parseFromString(html, 'text/html')
-    for (const image of document.body.querySelectorAll<HTMLImageElement>('img[src]')) {
-      const source = image.getAttribute('src') ?? ''
-      if (isImageDataUri(source)) image.setAttribute('src', await register(source))
-    }
-    html = document.body.innerHTML
-  }
+  const html = /data:(?:image|video)\//i.test(articleWithoutCover.html)
+    || articleWithoutCover.html.includes('dispatch-local-video://')
+    ? await replaceEmbeddedHtmlAssets(articleWithoutCover.html, register)
+    : articleWithoutCover.html
 
   let markdown = articleWithoutCover.markdown
-  if (markdown) {
-    for (const [dataUri, reference] of replacements) markdown = markdown.replaceAll(dataUri, reference)
-  }
   let sourceText = articleWithoutCover.sourceText
-  if (sourceText) {
-    for (const [dataUri, reference] of replacements) sourceText = sourceText.replaceAll(dataUri, reference)
+  if (markdown && sourceText && markdown === sourceText) {
+    const replaced = replaceMappedValues(markdown, replacements)
+    markdown = replaced
+    sourceText = replaced
+  } else {
+    if (markdown) markdown = replaceMappedValues(markdown, replacements)
+    if (sourceText) sourceText = replaceMappedValues(sourceText, replacements)
+  }
+
+  const hydratedArticle: ArticleDraft = {
+    ...articleWithoutCover,
+    tags: [...articleWithoutCover.tags],
+    warnings: [...articleWithoutCover.warnings],
+    missingAssets: articleWithoutCover.missingAssets ? [...articleWithoutCover.missingAssets] : undefined,
   }
 
   return {
@@ -213,6 +276,7 @@ async function extractArticleAssets(article: ArticleDraft): Promise<ExtractedArt
       warnings: [...articleWithoutCover.warnings],
       missingAssets: articleWithoutCover.missingAssets ? [...articleWithoutCover.missingAssets] : undefined,
     },
+    hydratedArticle,
     assets,
   }
 }
@@ -220,8 +284,8 @@ async function extractArticleAssets(article: ArticleDraft): Promise<ExtractedArt
 function referencedAssetIds(article: ArticleDraft): Set<string> {
   const ids = new Set<string>()
   const document = new DOMParser().parseFromString(article.html, 'text/html')
-  document.body.querySelectorAll<HTMLImageElement>('img[src]').forEach(image => {
-    const id = assetIdFromReference(image.getAttribute('src') ?? undefined)
+  document.body.querySelectorAll<HTMLImageElement | HTMLVideoElement>('img[src], video[src]').forEach(media => {
+    const id = assetIdFromReference(media.getAttribute('src') ?? undefined)
     if (id) ids.add(id)
   })
 
@@ -240,56 +304,73 @@ function readAssetBytes(asset: StoredAsset): Promise<Uint8Array> {
   if (asset.bytes && typeof asset.bytes.byteLength === 'number') {
     return Promise.resolve(new Uint8Array(asset.bytes))
   }
-  if (typeof asset.blob.arrayBuffer === 'function') {
-    return asset.blob.arrayBuffer().then(buffer => new Uint8Array(buffer))
+  const blob = asset.blob
+  if (!blob) return Promise.reject(new Error('本地媒体数据缺失。'))
+  if (typeof blob.arrayBuffer === 'function') {
+    return blob.arrayBuffer().then(buffer => new Uint8Array(buffer))
   }
 
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
     reader.addEventListener('load', () => {
       if (reader.result instanceof ArrayBuffer) resolve(new Uint8Array(reader.result))
-      else reject(new Error('本地图片读取失败。'))
+      else reject(new Error('本地媒体读取失败。'))
     }, { once: true })
-    reader.addEventListener('error', () => reject(reader.error ?? new Error('本地图片读取失败。')), { once: true })
-    reader.readAsArrayBuffer(asset.blob)
+    reader.addEventListener('error', () => reject(reader.error ?? new Error('本地媒体读取失败。')), { once: true })
+    reader.readAsArrayBuffer(blob)
   })
 }
 
 async function blobToDataUri(asset: StoredAsset): Promise<string> {
   const bytes = await readAssetBytes(asset)
-  let binary = ''
-  const chunkSize = 0x8000
-  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize))
-  }
-  return `data:${asset.mimeType};base64,${btoa(binary)}`
+  const blob = new Blob([exactArrayBuffer(bytes)], { type: asset.mimeType })
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.addEventListener('load', () => {
+      if (typeof reader.result === 'string') resolve(reader.result)
+      else reject(new Error('本地媒体读取失败。'))
+    }, { once: true })
+    reader.addEventListener('error', () => reject(reader.error ?? new Error('本地媒体读取失败。')), { once: true })
+    reader.readAsDataURL(blob)
+  })
 }
 
 async function hydrateArticle(article: ArticleDraft, assets: StoredAsset[]): Promise<ArticleDraft> {
   const { cover: _legacyCover, ...articleWithoutCover } = article as ArticleDraft & { cover?: unknown }
   const replacements = new Map<string, string>()
   await Promise.all(assets.map(async asset => {
-    replacements.set(assetReference(asset.id), await blobToDataUri(asset))
+    const reference = assetReference(asset.id)
+    if (asset.mimeType === 'video/mp4' || asset.mimeType === 'video/webm') {
+      const bytes = await readAssetBytes(asset)
+      replacements.set(reference, registerLocalVideo(
+        new Blob([exactArrayBuffer(bytes)], { type: asset.mimeType }),
+        asset.id,
+      ))
+      return
+    }
+    replacements.set(reference, await blobToDataUri(asset))
   }))
 
   let html = articleWithoutCover.html
   if (html.includes(DRAFT_ASSET_PROTOCOL)) {
     const document = new DOMParser().parseFromString(html, 'text/html')
-    document.body.querySelectorAll<HTMLImageElement>('img[src]').forEach(image => {
-      const source = image.getAttribute('src') ?? ''
+    document.body.querySelectorAll<HTMLImageElement | HTMLVideoElement>('img[src], video[src]').forEach(media => {
+      const source = media.getAttribute('src') ?? ''
       const dataUri = replacements.get(source)
-      if (dataUri) image.setAttribute('src', dataUri)
+      if (dataUri) media.setAttribute('src', dataUri)
     })
     html = document.body.innerHTML
   }
 
   let markdown = articleWithoutCover.markdown
-  if (markdown) {
-    for (const [reference, dataUri] of replacements) markdown = markdown.replaceAll(reference, dataUri)
-  }
   let sourceText = articleWithoutCover.sourceText
-  if (sourceText) {
-    for (const [reference, dataUri] of replacements) sourceText = sourceText.replaceAll(reference, dataUri)
+  if (markdown && sourceText && markdown === sourceText) {
+    const replaced = replaceMappedValues(markdown, replacements)
+    markdown = replaced
+    sourceText = replaced
+  } else {
+    if (markdown) markdown = replaceMappedValues(markdown, replacements)
+    if (sourceText) sourceText = replaceMappedValues(sourceText, replacements)
   }
 
   return {
@@ -420,9 +501,10 @@ export class LocalDraftRepository implements DraftRepository {
     }
 
     await done
-    const saved = await this.getDraft(draft.id)
-    if (!saved) throw new Error('本地稿件保存后无法读取。')
-    return saved
+    return {
+      ...storedDraft,
+      article: extracted.hydratedArticle,
+    }
   }
 
   async importDraftsAtomically(

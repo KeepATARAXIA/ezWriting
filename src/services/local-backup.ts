@@ -8,15 +8,18 @@ import {
   type XhsCardSettings,
 } from '../domain/saved-draft'
 import { annotateLocalImagesAsMissing } from '../lib/article-source'
+import { expandLocalVideoReferences, retainLocalVideoReferences } from '../lib/local-video-registry'
 import { sanitizeContentHtml } from '../lib/markdown-compatibility'
 import { normalizeWechatThemeSettings } from '../lib/wechat-theme'
 import type { DraftRepository } from './draft-repository'
+import { LAST_ACTIVE_DRAFT_SETTING } from './local-storage'
+
+export { LAST_ACTIVE_DRAFT_SETTING, requestPersistentLocalStorage } from './local-storage'
 
 export const LOCAL_BACKUP_FORMAT = 'ezwriting-local-backup'
 export const LOCAL_BACKUP_VERSION = 1
 export const LOCAL_BACKUP_FILE_EXTENSION = '.ezwriting-backup.json'
 export const MAX_LOCAL_BACKUP_BYTES = 128 * 1024 * 1024
-export const LAST_ACTIVE_DRAFT_SETTING = 'last-active-draft-id'
 
 export interface LocalBackupPayload {
   format: typeof LOCAL_BACKUP_FORMAT
@@ -137,14 +140,39 @@ export async function createLocalBackup(
   now = new Date(),
   draftOverride?: PersistedDraft,
 ): Promise<LocalBackupPayload> {
-  const summaries = await repository.listDrafts({ includeDeleted: true })
+  const [summaries, storedActiveDraftId] = await Promise.all([
+    repository.listDrafts({ includeDeleted: true }),
+    repository.getSetting<string>(LAST_ACTIVE_DRAFT_SETTING),
+  ])
   let drafts = (await Promise.all(summaries.map(summary => repository.getDraft(summary.id))))
     .filter((draft): draft is PersistedDraft => Boolean(draft))
   if (draftOverride) {
     drafts = [...drafts.filter(draft => draft.id !== draftOverride.id), draftOverride]
   }
-  const storedActiveDraftId = await repository.getSetting<string>(LAST_ACTIVE_DRAFT_SETTING)
   const activeDraftId = draftOverride?.id ?? storedActiveDraftId
+  const retainedVideoValues = drafts
+    .filter(draft => draft.id === activeDraftId)
+    .flatMap(draft => [draft.article.html, draft.article.markdown || '', draft.article.sourceText || ''])
+  drafts = await Promise.all(drafts.map(async draft => {
+    const html = await expandLocalVideoReferences(draft.article.html)
+    const markdown = typeof draft.article.markdown === 'string'
+      ? await expandLocalVideoReferences(draft.article.markdown)
+      : undefined
+    const sourceText = typeof draft.article.sourceText === 'string'
+      ? draft.article.sourceText === draft.article.markdown && markdown !== undefined
+        ? markdown
+        : await expandLocalVideoReferences(draft.article.sourceText)
+      : undefined
+    return {
+      ...draft,
+      article: {
+        ...draft.article,
+        html,
+        markdown,
+        sourceText,
+      },
+    }
+  })).finally(() => retainLocalVideoReferences(retainedVideoValues))
   return {
     format: LOCAL_BACKUP_FORMAT,
     version: LOCAL_BACKUP_VERSION,
@@ -191,10 +219,4 @@ export async function importLocalBackup(repository: DraftRepository, payload: Lo
       : [{ type: 'delete', key: LAST_ACTIVE_DRAFT_SETTING }],
   })
   return { draftCount: payload.drafts.length, activeDraftId: payload.activeDraftId }
-}
-
-export async function requestPersistentLocalStorage(storage = navigator.storage): Promise<boolean | null> {
-  if (!storage?.persisted || !storage.persist) return null
-  if (await storage.persisted()) return true
-  return storage.persist()
 }

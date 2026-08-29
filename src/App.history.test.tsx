@@ -73,7 +73,7 @@ describe('App local draft history', () => {
 
     const titleInput = container.querySelector<HTMLInputElement>('[aria-label="文章标题"]')!
     await act(async () => {
-      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set?.call(titleInput, '本地历史测试稿')
+      Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set?.call(titleInput, '本地历史测试稿')
       titleInput.dispatchEvent(new Event('input', { bubbles: true }))
       await new Promise(resolve => window.setTimeout(resolve, 760))
     })
@@ -164,7 +164,7 @@ describe('App local draft history', () => {
     const draftId = (await repository.listDrafts())[0].id
     const titleInput = container.querySelector<HTMLInputElement>('[aria-label="文章标题"]')!
     await act(async () => {
-      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set?.call(titleInput, '删除前最后一版')
+      Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set?.call(titleInput, '删除前最后一版')
       titleInput.dispatchEvent(new Event('input', { bubbles: true }))
     })
 
@@ -217,7 +217,7 @@ describe('App local draft history', () => {
     })
     const titleInput = container.querySelector<HTMLInputElement>('[aria-label="文章标题"]')!
     await act(async () => {
-      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set?.call(titleInput, '配额失败时的当前编辑')
+      Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set?.call(titleInput, '配额失败时的当前编辑')
       titleInput.dispatchEvent(new Event('input', { bubbles: true }))
     })
 
@@ -260,7 +260,7 @@ describe('App local draft history', () => {
 
     const titleInput = container.querySelector<HTMLInputElement>('[aria-label="文章标题"]')!
     await act(async () => {
-      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set?.call(titleInput, '不应在导入后反写的旧编辑')
+      Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set?.call(titleInput, '不应在导入后反写的旧编辑')
       titleInput.dispatchEvent(new Event('input', { bubbles: true }))
     })
     const backupInput = container.querySelector<HTMLInputElement>('input[accept*=".ezwriting-backup"]')!
@@ -282,7 +282,7 @@ describe('App local draft history', () => {
     })
     const firstTitle = container.querySelector<HTMLInputElement>('[aria-label="文章标题"]')!
     await act(async () => {
-      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set?.call(firstTitle, '共享初始稿')
+      Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set?.call(firstTitle, '共享初始稿')
       firstTitle.dispatchEvent(new Event('input', { bubbles: true }))
       await new Promise(resolve => window.setTimeout(resolve, 760))
     })
@@ -300,14 +300,14 @@ describe('App local draft history', () => {
       })
 
       await act(async () => {
-        Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set?.call(firstTitle, '标签页 A 的新版本')
+        Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set?.call(firstTitle, '标签页 A 的新版本')
         firstTitle.dispatchEvent(new Event('input', { bubbles: true }))
         await new Promise(resolve => window.setTimeout(resolve, 760))
       })
 
       const secondTitle = secondContainer.querySelector<HTMLInputElement>('[aria-label="文章标题"]')!
       await act(async () => {
-        Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set?.call(secondTitle, '标签页 B 的旧快照修改')
+        Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set?.call(secondTitle, '标签页 B 的旧快照修改')
         secondTitle.dispatchEvent(new Event('input', { bubbles: true }))
         await new Promise(resolve => window.setTimeout(resolve, 760))
       })

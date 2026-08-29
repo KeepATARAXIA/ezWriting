@@ -3,6 +3,7 @@ import {
   type XhsImageLayout,
   type XhsImageOverride,
 } from '../domain/saved-draft'
+import { applyPlatformCompatibilityToDocument } from './platform-compatibility'
 
 export interface XhsPreparedImage {
   key: string
@@ -98,7 +99,9 @@ export function prepareXhsImageLayout(
   html: string,
   imageOverrides: Record<string, XhsImageOverride>,
 ): XhsPreparedLayout {
+  if (!/<(?:img|video|mark)\b/i.test(html)) return { html, images: [] }
   const document = new DOMParser().parseFromString(html, 'text/html')
+  applyPlatformCompatibilityToDocument(document, 'xhs')
   splitMixedImageParagraphs(document)
   const occurrences = new Map<string, number>()
   const images: XhsPreparedImage[] = []

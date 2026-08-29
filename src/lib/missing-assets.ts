@@ -11,6 +11,7 @@ function targetForImage(image: HTMLImageElement): MissingImageTarget | null {
 }
 
 export function extractMissingImageTargets(html: string): MissingImageTarget[] {
+  if (!html.includes('data-missing-id') || !html.includes('data-missing-asset')) return []
   const document = parseHtml(html)
   return Array.from(document.body.querySelectorAll<HTMLImageElement>('img[data-missing-id][data-missing-asset]'))
     .map(targetForImage)
@@ -43,6 +44,7 @@ export function deleteMissingImage(html: string, target: MissingImageTarget): st
 }
 
 export function renderMissingImagePlaceholders(html: string): string {
+  if (!html.includes('data-missing-id') || !html.includes('data-missing-asset')) return html
   const document = parseHtml(html)
   document.body.querySelectorAll<HTMLImageElement>('img[data-missing-id][data-missing-asset]').forEach(image => {
     const target = targetForImage(image)

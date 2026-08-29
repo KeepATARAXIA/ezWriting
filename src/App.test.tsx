@@ -129,7 +129,7 @@ describe('App publishing engine onboarding', () => {
 
     const titleInput = container.querySelector<HTMLInputElement>('[aria-label="文章标题"]')!
     await act(async () => {
-      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set?.call(titleInput, '当前稿件')
+      Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set?.call(titleInput, '当前稿件')
       titleInput.dispatchEvent(new Event('input', { bubbles: true }))
     })
     await act(async () => container.querySelector<HTMLButtonElement>('.new-document-button')?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
@@ -151,10 +151,12 @@ describe('App publishing engine onboarding', () => {
     expect(container.querySelector<HTMLInputElement>('[aria-label="文章标题"]')?.value).toBe('小红书图文草稿')
     expect(container.querySelector('.editor-grid')?.getAttribute('data-preview-platform')).toBe('xhs')
     expect(container.querySelector<HTMLButtonElement>('button[aria-label="小红书"]')?.getAttribute('aria-selected')).toBe('true')
-    const characterCount = Array.from(container.querySelectorAll<HTMLElement>('.article-stats > span'))
-      .find(item => item.textContent?.startsWith('字数'))
-      ?.querySelector('strong')?.textContent
-    expect(Number(characterCount)).toBeGreaterThan(40)
+    await vi.waitFor(() => {
+      const characterCount = Array.from(container.querySelectorAll<HTMLElement>('.source-document-stats > span'))
+        .find(item => item.textContent?.startsWith('字数'))
+        ?.querySelector('strong')?.textContent
+      expect(Number(characterCount)).toBeGreaterThan(40)
+    }, { timeout: 1000 })
   })
 
   it('uses independent platform pane widths, persists the v3 mapping, and restores only the current platform', async () => {
@@ -279,7 +281,7 @@ describe('App publishing engine onboarding', () => {
 
     const titleInput = container.querySelector<HTMLInputElement>('[aria-label="文章标题"]')!
     await act(async () => {
-      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set?.call(titleInput, '保留当前标题')
+      Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set?.call(titleInput, '保留当前标题')
       titleInput.dispatchEvent(new Event('input', { bubbles: true }))
     })
 
@@ -690,8 +692,8 @@ describe('App publishing engine onboarding', () => {
     expect(container.querySelector('[aria-label="文章标题"]')).not.toBeNull()
     expect(container.textContent).not.toContain('封面图片')
     expect(container.textContent).toContain('正文内容')
-    expect(container.querySelector('.article-stats')?.textContent).toContain('字数')
-    expect(container.querySelector('.article-stats')?.textContent).toContain('图片 1')
+    expect(container.querySelector('.source-document-stats')?.textContent).toContain('字数')
+    expect(container.querySelector('.source-document-stats')?.textContent).toContain('图片 1')
     expect(Array.from(container.querySelectorAll<HTMLButtonElement>('.platform-switcher button')).map(button => button.getAttribute('aria-label'))).toEqual(['微信公众号', '小红书', 'X 长文'])
     expect(container.querySelectorAll('.platform-switcher .platform-logo')).toHaveLength(3)
     expect(container.querySelector('.workbench-topbar .workbench-navigation > .platform-switcher')).not.toBeNull()
@@ -747,7 +749,7 @@ describe('App publishing engine onboarding', () => {
 
     const titleInput = container.querySelector<HTMLInputElement>('[aria-label="文章标题"]')!
     await act(async () => {
-      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set?.call(titleInput, '补图后保留标题')
+      Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set?.call(titleInput, '补图后保留标题')
       titleInput.dispatchEvent(new Event('input', { bubbles: true }))
     })
 
@@ -931,12 +933,16 @@ describe('App publishing engine onboarding', () => {
     const fontTrigger = container.querySelector<HTMLButtonElement>('#xhs-settings-font-trigger')!
     expect(layoutTrigger.getAttribute('aria-expanded')).toBe('true')
     await act(async () => fontTrigger.click())
-    expect(layoutTrigger.getAttribute('aria-expanded')).toBe('false')
+    expect(layoutTrigger.getAttribute('aria-expanded')).toBe('true')
     expect(fontTrigger.getAttribute('aria-expanded')).toBe('true')
+    expect(container.querySelectorAll('#xhs-tool-panel .settings-accordion-panel:not([hidden])')).toHaveLength(2)
     expect(container.querySelector('#xhs-settings-font-panel [aria-label="选择文章字号"]')).not.toBeNull()
     await act(async () => layoutTrigger.click())
+    expect(layoutTrigger.getAttribute('aria-expanded')).toBe('false')
+    expect(fontTrigger.getAttribute('aria-expanded')).toBe('true')
+    await act(async () => layoutTrigger.click())
     expect(layoutTrigger.getAttribute('aria-expanded')).toBe('true')
-    expect(fontTrigger.getAttribute('aria-expanded')).toBe('false')
+    expect(fontTrigger.getAttribute('aria-expanded')).toBe('true')
     const cleanTemplate = Array.from(container.querySelectorAll<HTMLButtonElement>('.xhs-template-options button'))
       .find(button => button.getAttribute('aria-label')?.startsWith('简约基础：'))!
     await act(async () => cleanTemplate.dispatchEvent(new MouseEvent('click', { bubbles: true })))

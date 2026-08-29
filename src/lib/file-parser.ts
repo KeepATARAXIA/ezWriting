@@ -1,5 +1,4 @@
-import JSZip from 'jszip'
-import { parse as parseYaml } from 'yaml'
+import type JSZip from 'jszip'
 import type { ArticleDraft, ArticleSourceLanguage, SourceKind } from '../domain/article'
 import {
   normalizeMarkdownStrongWhitespace,
@@ -346,11 +345,12 @@ function titleFromFile(name: string): string {
   return name.replace(/\.(markdown|md|html?|zip)$/i, '').replaceAll(/[-_]+/g, ' ').trim() || '未命名文章'
 }
 
-function splitFrontMatter(markdown: string): { metadata: FrontMatter; body: string; warning?: string } {
+async function splitFrontMatter(markdown: string): Promise<{ metadata: FrontMatter; body: string; warning?: string }> {
   const match = markdown.match(/^---\s*\r?\n([\s\S]*?)\r?\n---\s*\r?\n?/)
   if (!match) return { metadata: {}, body: markdown }
 
   try {
+    const { parse: parseYaml } = await import('yaml')
     const parsed = parseYaml(match[1])
     const metadata = parsed && typeof parsed === 'object' ? parsed as FrontMatter : {}
     return { metadata, body: markdown.slice(match[0].length) }
@@ -537,8 +537,8 @@ async function replaceHtmlAssets(
   return { html: document.documentElement.outerHTML, missingAssets }
 }
 
-function parseMarkdown(markdown: string, fallbackTitle: string, warnings: string[]): ParsedSource {
-  const { metadata, body: rawBody, warning } = splitFrontMatter(markdown)
+async function parseMarkdown(markdown: string, fallbackTitle: string, warnings: string[]): Promise<ParsedSource> {
+  const { metadata, body: rawBody, warning } = await splitFrontMatter(markdown)
   if (warning) warnings.push(warning)
 
   const normalizedBody = normalizeMarkdownStrongWhitespace(rawBody)
@@ -588,6 +588,7 @@ function parseHtml(html: string, fallbackTitle: string, warnings: string[]): Par
 async function parseZip(file: File, timer: ImportTimer): Promise<ParsedSource> {
   const archiveBytes = await timer.measure('archive', () => file.arrayBuffer())
   timer.measureSync('validate', () => validateZipCentralDirectory(new Uint8Array(archiveBytes)))
+  const { default: JSZip } = await import('jszip')
   const zip = await timer.measure('archive', () => JSZip.loadAsync(archiveBytes))
   const entries = Object.values(zip.files).filter(entry => !entry.dir)
   if (entries.some(entry => isUnsafeArchivePath(entry.unsafeOriginalName || entry.name))) {
@@ -627,8 +628,8 @@ async function parseZip(file: File, timer: ImportTimer): Promise<ParsedSource> {
   const fallback = titleFromFile(file.name)
   if (/\.(md|markdown)$/i.test(articleEntry.name)) {
     const replaced = await timer.measure('assets', () => replaceMarkdownAssets(articleText, normalizePath(articleEntry.name), assets, warnings))
-    const parsed = timer.measureSync('render', () => {
-      const next = parseMarkdown(replaced.markdown, fallback, warnings)
+    const parsed = await timer.measure('render', async () => {
+      const next = await parseMarkdown(replaced.markdown, fallback, warnings)
       next.missingAssets = replaced.missingAssets
       next.html = markMissingImages(next.html, replaced.missingAssets)
       return next
@@ -700,8 +701,8 @@ export async function parseContentFile(
       const warnings: string[] = []
       const text = await timer.measure('read', () => file.text())
       const replaced = await timer.measure('assets', () => replaceMarkdownAssets(text, sourcePath, assets, warnings))
-      source = timer.measureSync('render', () => {
-        const next = parseMarkdown(replaced.markdown, titleFromFile(file.name), warnings)
+      source = await timer.measure('render', async () => {
+        const next = await parseMarkdown(replaced.markdown, titleFromFile(file.name), warnings)
         next.missingAssets = replaced.missingAssets
         next.html = markMissingImages(next.html, replaced.missingAssets)
         return next

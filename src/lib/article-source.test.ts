@@ -91,6 +91,20 @@ describe('article source', () => {
     expect(sourceLineForBlock(source, 'markdown', 1)).toBe(3)
   })
 
+  it('maps source lines without sending an embedded large video payload through the Markdown lexer', () => {
+    const payload = 'A'.repeat(14 * 1024 * 1024)
+    const source = [
+      '# 视频稿件',
+      '',
+      `<video controls src="data:video/webm;base64,${payload}" data-ez-video-name="演示.webm"></video>`,
+      '',
+      '视频后的正文',
+    ].join('\n')
+
+    expect(sourceLinesByBlock(source, 'markdown')).toEqual([[1], [3], [5]])
+    expect(sourceLineForBlock(source, 'markdown', 2)).toBe(5)
+  })
+
   it('marks unresolved local image references and repairs the Markdown source', () => {
     const missing = annotateLocalImagesAsMissing('<p>正文</p><img src="assets/flow.png" alt="流程图">')
     expect(missing.references).toEqual(['assets/flow.png'])

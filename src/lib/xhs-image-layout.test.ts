@@ -3,6 +3,12 @@ import { prepareXhsImageLayout } from './xhs-image-layout'
 import { paginateForXhsCards } from './xhs-pagination'
 
 describe('prepareXhsImageLayout', () => {
+  it('keeps media-free longform HTML on the no-layout fast path', () => {
+    const html = '<h2>标题</h2><p>正文</p>'.repeat(200)
+
+    expect(prepareXhsImageLayout(html, {})).toEqual({ html, images: [] })
+  })
+
   it('assigns stable unique keys to images without changing the default full-width flow', () => {
     const html = '<p><img src="data:image/png;base64,AAAA" alt="示例图"></p><p><img src="data:image/png;base64,AAAA" alt="重复图"></p>'
 

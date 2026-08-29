@@ -14,6 +14,7 @@ interface SourceBlock {
 }
 
 const MARKDOWN_IMAGE = /!\[([^\]]*)\]\(\s*(?:<([^>]+)>|([^\s)]+))(?:\s+(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'))?\s*\)/g
+const HTML_EMBEDDED_MEDIA_SOURCE = /(<(?:img|video)\b[^>]*?\bsrc\s*=\s*)(["'])(data:(image|video)\/[^"']+)\2/gi
 const SOURCE_SPACER_SENTINEL = 'DISPATCH_SOURCE_SPACER'
 
 function markdownImage(alt: string, source: string, caption = ''): string {
@@ -264,8 +265,23 @@ export function updateArticleFromSource(article: ArticleDraft, text: string): Ar
   }
 }
 
+function compactEmbeddedMediaDataForAnalysis(text: string): string {
+  const compactedMarkdownImages = text.replace(MARKDOWN_IMAGE, (syntax, _alt: string, angleSource: string, plainSource: string) => {
+    const source = angleSource || plainSource || ''
+    return /^data:image\//i.test(source) ? syntax.replace(source, 'data:image/embedded') : syntax
+  })
+
+  return compactedMarkdownImages.replace(
+    HTML_EMBEDDED_MEDIA_SOURCE,
+    (_syntax, prefix: string, quote: string, _source: string, kind: string) => (
+      `${prefix}${quote}data:${kind.toLocaleLowerCase()}/embedded${quote}`
+    ),
+  )
+}
+
 export function sourceLineForBlock(text: string, language: ArticleSourceLanguage, blockIndex: number): number {
-  return sourceBlocks(text, language)[blockIndex]?.line ?? 1
+  const analysisText = language === 'markdown' ? compactEmbeddedMediaDataForAnalysis(text) : text
+  return sourceBlocks(analysisText, language)[blockIndex]?.line ?? 1
 }
 
 function sourceLineNumbers(text: string, block: SourceBlock): number[] {
@@ -285,15 +301,8 @@ function sourceLineNumbers(text: string, block: SourceBlock): number[] {
   return lines.length ? lines : [block.line]
 }
 
-function compactImageDataForAnalysis(text: string): string {
-  return text.replace(MARKDOWN_IMAGE, (syntax, _alt: string, angleSource: string, plainSource: string) => {
-    const source = angleSource || plainSource || ''
-    return /^data:image\//i.test(source) ? syntax.replace(source, 'data:image/embedded') : syntax
-  })
-}
-
 export function sourceLinesByBlock(text: string, language: ArticleSourceLanguage): number[][] {
-  const analysisText = language === 'markdown' ? compactImageDataForAnalysis(text) : text
+  const analysisText = language === 'markdown' ? compactEmbeddedMediaDataForAnalysis(text) : text
   return sourceBlocks(analysisText, language).map(block => sourceLineNumbers(analysisText, block))
 }
 

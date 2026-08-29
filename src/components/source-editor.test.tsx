@@ -33,17 +33,134 @@ describe('SourceEditor', () => {
   it('renders a line-numbered Markdown source surface and inserts warning syntax', async () => {
     const onChange = vi.fn()
     await act(async () => root.render(
-      <SourceEditor value={'第一行\n\n第二行'} language="markdown" onChange={onChange} />,
+      <SourceEditor
+        value={'第一行\n\n第二行'}
+        language="markdown"
+        status={{ characterCount: 6, imageCount: 0, sourceLabel: 'MARKDOWN' }}
+        onChange={onChange}
+      />,
     ))
     await act(async () => new Promise(resolve => window.setTimeout(resolve, 0)))
 
     expect(container.querySelector('[aria-label="Markdown 文本编辑器"]')).not.toBeNull()
     expect(container.querySelector('.cm-gutters')).not.toBeNull()
+    expect(container.querySelector('.source-editor-statusbar')?.textContent).toContain('字数 6')
+    expect(container.querySelector('.source-editor-statusbar')?.textContent).toContain('历史 ≥100')
+    expect(container.querySelector('.source-toolbar button[aria-label*="Markdown 语法"]')).toBeNull()
+    expect(container.querySelector('.source-editor-statusbar button[aria-label="隐藏 Markdown 语法"]')).not.toBeNull()
     await act(async () => {
       container.querySelector<HTMLButtonElement>('button[aria-label="警告块"]')?.click()
       await vi.waitFor(() => expect(onChange).toHaveBeenCalled(), { timeout: 500 })
     })
     expect(onChange).toHaveBeenLastCalledWith(expect.stringContaining('> [!warning] 警告标题'))
+  })
+
+  it('toggles a Markdown presentation view without changing the saved source', async () => {
+    const source = '# 正文标题\n\n**重点内容**、*补充说明*和[参考链接](https://example.test/guide)'
+    const onChange = vi.fn()
+    await act(async () => root.render(
+      <SourceEditor value={source} language="markdown" onChange={onChange} />,
+    ))
+    await act(async () => new Promise(resolve => window.setTimeout(resolve, 0)))
+
+    const editor = container.querySelector<HTMLElement>('.cm-content')!
+    const view = EditorView.findFromDOM(editor)!
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="隐藏 Markdown 语法"]')?.click()
+      view.dispatch({ selection: { anchor: view.state.doc.line(2).from } })
+    })
+
+    expect(container.querySelector('.source-editor')?.classList.contains('markdown-presentation')).toBe(true)
+    expect(container.querySelector('button[aria-label="显示 Markdown 语法"]')?.getAttribute('aria-pressed')).toBe('true')
+    expect(editor.textContent).toContain('正文标题')
+    expect(editor.textContent).toContain('重点内容、补充说明和参考链接')
+    expect(editor.textContent).not.toContain('# 正文标题')
+    expect(editor.textContent).not.toContain('**重点内容**')
+    expect(editor.textContent).not.toContain('https://example.test/guide')
+    expect(container.querySelector('.cm-md-heading-text')).not.toBeNull()
+    expect(container.querySelector('.cm-md-strong')).not.toBeNull()
+    expect(view.state.doc.toString()).toBe(source)
+    expect(onChange).not.toHaveBeenCalled()
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="显示 Markdown 语法"]')?.click()
+    })
+    expect(editor.textContent).toContain('# 正文标题')
+    expect(editor.textContent).toContain('**重点内容**')
+    expect(editor.textContent).toContain('https://example.test/guide')
+    expect(view.state.doc.toString()).toBe(source)
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('keeps the active Markdown line editable while syntax is hidden', async () => {
+    const source = '# 标题\n\n**正在编辑的内容**'
+    await act(async () => root.render(
+      <SourceEditor value={source} language="markdown" onChange={vi.fn()} />,
+    ))
+    await act(async () => new Promise(resolve => window.setTimeout(resolve, 0)))
+
+    const editor = container.querySelector<HTMLElement>('.cm-content')!
+    const view = EditorView.findFromDOM(editor)!
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="隐藏 Markdown 语法"]')?.click()
+      view.dispatch({ selection: { anchor: view.state.doc.line(3).to } })
+    })
+
+    expect(editor.textContent).not.toContain('# 标题')
+    expect(editor.textContent).toContain('**正在编辑的内容**')
+  })
+
+  it('hides paired HTML mark tags while preserving the highlighted Markdown source', async () => {
+    const source = '<mark>Omni 11 适合快速试错，Seedance 2.5 适合完整叙事。</mark>\n\n后续正文'
+    const onChange = vi.fn()
+    await act(async () => root.render(
+      <SourceEditor value={source} language="markdown" onChange={onChange} />,
+    ))
+    await act(async () => new Promise(resolve => window.setTimeout(resolve, 0)))
+
+    const editor = container.querySelector<HTMLElement>('.cm-content')!
+    const view = EditorView.findFromDOM(editor)!
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="隐藏 Markdown 语法"]')?.click()
+      view.dispatch({ selection: { anchor: view.state.doc.line(3).to } })
+    })
+
+    expect(editor.textContent).toContain('Omni 11 适合快速试错，Seedance 2.5 适合完整叙事。')
+    expect(editor.textContent).not.toContain('<mark>')
+    expect(editor.textContent).not.toContain('</mark>')
+    expect(container.querySelector('.cm-md-highlight')?.textContent).toBe('Omni 11 适合快速试错，Seedance 2.5 适合完整叙事。')
+    expect(view.state.doc.toString()).toBe(source)
+    expect(onChange).not.toHaveBeenCalled()
+
+    await act(async () => view.dispatch({ selection: { anchor: view.state.doc.line(1).to } }))
+    expect(editor.textContent).toContain('<mark>')
+    expect(editor.textContent).toContain('</mark>')
+  })
+
+  it('keeps an unclosed HTML mark tag visible in presentation mode', async () => {
+    const source = '<mark>未闭合的高亮\n\n后续正文'
+    await act(async () => root.render(
+      <SourceEditor value={source} language="markdown" onChange={vi.fn()} />,
+    ))
+    await act(async () => new Promise(resolve => window.setTimeout(resolve, 0)))
+
+    const editor = container.querySelector<HTMLElement>('.cm-content')!
+    const view = EditorView.findFromDOM(editor)!
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="隐藏 Markdown 语法"]')?.click()
+      view.dispatch({ selection: { anchor: view.state.doc.line(3).to } })
+    })
+
+    expect(editor.textContent).toContain('<mark>未闭合的高亮')
+  })
+
+  it('does not offer the Markdown syntax toggle for HTML sources', async () => {
+    await act(async () => root.render(
+      <SourceEditor value="<p>正文</p>" language="html" onChange={vi.fn()} />,
+    ))
+    await act(async () => new Promise(resolve => window.setTimeout(resolve, 0)))
+
+    expect(container.querySelector('button[aria-label*="Markdown 语法"]')).toBeNull()
   })
 
   it('prevents editor and toolbar mutations while read-only', async () => {
@@ -75,7 +192,7 @@ describe('SourceEditor', () => {
     expect(widget?.querySelector('img')?.getAttribute('src')).toBe(dataUri)
     expect(widget?.querySelector('figcaption')?.textContent).not.toContain('流程图')
     expect(widget?.getAttribute('aria-label')).toBe('图片：流程图')
-    expect(widget?.querySelector('button')?.getAttribute('aria-label')).toBe('替换图片 流程图')
+    expect(widget?.querySelector('button[aria-label="替换图片 流程图"]')).not.toBeNull()
     expect(container.querySelector('.cm-content')?.textContent).not.toContain('![流程图]')
     expect(container.querySelector('.cm-content')?.textContent).not.toContain('PHN2Zy')
   })
@@ -179,6 +296,34 @@ describe('SourceEditor', () => {
         { timeout: 500 },
       )
     })
+  })
+
+  it('restores an embedded image after delete, controlled refresh, and undo', async () => {
+    const onChange = vi.fn()
+    const dataUri = 'data:image/png;base64,aW1hZ2U='
+    const original = `正文\n\n![本地流程图](${dataUri})\n\n结尾`
+    const deleted = '正文\n\n\n\n结尾'
+    await act(async () => root.render(
+      <SourceEditor value={original} language="markdown" onChange={onChange} />,
+    ))
+    await act(async () => new Promise(resolve => window.setTimeout(resolve, 0)))
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('.source-image-widget button.delete')?.click()
+      await vi.waitFor(() => expect(onChange).toHaveBeenLastCalledWith(deleted), { timeout: 600 })
+    })
+    await act(async () => root.render(
+      <SourceEditor value={deleted} language="markdown" onChange={onChange} />,
+    ))
+    await act(async () => new Promise(resolve => window.setTimeout(resolve, 0)))
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="撤销"]')?.click()
+      await vi.waitFor(() => expect(onChange).toHaveBeenLastCalledWith(original), { timeout: 600 })
+    })
+
+    expect(container.querySelector<HTMLImageElement>('.source-image-widget img')?.getAttribute('src')).toBe(dataUri)
+    expect(onChange.mock.lastCall?.[0]).not.toContain('dispatch-editor-image://')
   })
 
   it('shows the selection menu and supports formatting, undo, and redo shortcuts', async () => {
@@ -319,6 +464,52 @@ describe('SourceEditor', () => {
       ctrlKey: true,
     })))
     expect(open).toHaveBeenCalledWith('https://openai.com/index/example', '_blank', 'noopener,noreferrer')
+  })
+
+  it('opens a bare HTTPS URL without including adjacent Chinese punctuation', async () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+    await act(async () => root.render(
+      <SourceEditor value="https://ai.google.dev/gemini-api/docs/omni。" language="markdown" onChange={vi.fn()} />,
+    ))
+    await act(async () => new Promise(resolve => window.setTimeout(resolve, 0)))
+
+    const link = container.querySelector<HTMLElement>('.cm-editor-direct-link')!
+    expect(link.textContent).toBe('https://ai.google.dev/gemini-api/docs/omni')
+    expect(link.getAttribute('title')).toBe('Ctrl / Command + 点击打开链接')
+
+    await act(async () => link.dispatchEvent(new MouseEvent('click', {
+      bubbles: true,
+      cancelable: true,
+      ctrlKey: true,
+    })))
+    expect(open).toHaveBeenCalledWith('https://ai.google.dev/gemini-api/docs/omni', '_blank', 'noopener,noreferrer')
+  })
+
+  it('opens the outer destination of a linked image instead of its image source', async () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+    const dataUri = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMjAiIGhlaWdodD0iNjAiPjxyZWN0IHdpZHRoPSIxMjAiIGhlaWdodD0iNjAiIGZpbGw9IiMxNjQ4ZmYiLz48L3N2Zz4='
+    const destination = 'https://seed.bytedance.com/en/blog/linked-image'
+    await act(async () => root.render(
+      <SourceEditor value={`[![Seedance 参考图](${dataUri})](${destination})`} language="markdown" onChange={vi.fn()} />,
+    ))
+    await act(async () => new Promise(resolve => window.setTimeout(resolve, 0)))
+
+    const image = container.querySelector<HTMLElement>('.source-image-widget img')!
+    const linkedCard = container.querySelector<HTMLElement>('.source-image-widget')!
+    const explicitLink = linkedCard.querySelector<HTMLAnchorElement>('.source-image-link')!
+    expect(explicitLink.href).toBe(destination)
+    expect(explicitLink.textContent).toContain('seed.bytedance.com')
+    expect(container.querySelector('.cm-content')?.textContent).not.toContain(destination)
+    expect(container.querySelector('.cm-content')?.textContent).not.toContain('](')
+    await act(async () => image.dispatchEvent(new MouseEvent('click', {
+      bubbles: true,
+      cancelable: true,
+      ctrlKey: true,
+    })))
+
+    expect(open).toHaveBeenCalledTimes(1)
+    expect(open).toHaveBeenCalledWith(destination, '_blank', 'noopener,noreferrer')
+    expect(open).not.toHaveBeenCalledWith(dataUri, expect.anything(), expect.anything())
   })
 
   it('moves the editor selection without adding a preview-location highlight', async () => {

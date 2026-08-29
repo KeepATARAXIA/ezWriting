@@ -2,7 +2,18 @@ import { normalizeMarkdownStrongWhitespace } from './markdown-compatibility'
 
 export type PlatformContentTarget = 'wechat' | 'xhs' | 'x' | 'generic'
 
+export interface PlatformCompatibilityOptions {
+  replaceVideos?: boolean
+}
+
 const DEFAULT_HIGHLIGHT_COLOR = '#fff1a8'
+
+const VIDEO_PLATFORM_INSTRUCTIONS: Record<PlatformContentTarget, string> = {
+  wechat: '复制后请在公众号后台使用视频组件原生上传。',
+  xhs: '导出的卡片只保留视频提示，发布时请在小红书原生上传。',
+  x: '复制正文后请在 X 发布界面原生上传视频。',
+  generic: '请在目标平台发布界面原生上传视频。',
+}
 
 function replaceMark(mark: HTMLElement, target: PlatformContentTarget): void {
   const replacement = mark.ownerDocument.createElement('span')
@@ -39,11 +50,33 @@ function replaceMark(mark: HTMLElement, target: PlatformContentTarget): void {
   mark.replaceWith(replacement)
 }
 
+function replaceVideo(video: HTMLVideoElement, target: PlatformContentTarget): void {
+  const placeholder = video.ownerDocument.createElement('section')
+  const name = video.dataset.ezVideoName?.trim() || '本地视频'
+  placeholder.className = 'ez-video-platform-placeholder'
+  placeholder.dataset.ezVideoPlaceholder = 'true'
+  placeholder.setAttribute('aria-label', `视频素材：${name}`)
+  placeholder.style.cssText = 'box-sizing:border-box;width:100%;margin:1.2em 0;padding:16px 18px;border:1px solid #d8e0e8;border-left:4px solid #1648ff;border-radius:9px;background:#f7f9fc;color:#34404b;line-height:1.6;'
+
+  const title = video.ownerDocument.createElement('strong')
+  title.style.cssText = 'display:block;margin-bottom:3px;font-size:0.95em;'
+  title.textContent = `视频素材：${name}`
+  const instruction = video.ownerDocument.createElement('span')
+  instruction.style.cssText = 'display:block;color:#687580;font-size:0.82em;'
+  instruction.textContent = VIDEO_PLATFORM_INSTRUCTIONS[target]
+  placeholder.append(title, instruction)
+  video.replaceWith(placeholder)
+}
+
 export function applyPlatformCompatibilityToDocument(
   document: Document,
   target: PlatformContentTarget,
+  options: PlatformCompatibilityOptions = {},
 ): void {
   document.body.querySelectorAll<HTMLElement>('mark').forEach(mark => replaceMark(mark, target))
+  if (options.replaceVideos ?? true) {
+    document.body.querySelectorAll<HTMLVideoElement>('video').forEach(video => replaceVideo(video, target))
+  }
 
   document.body.querySelectorAll<HTMLImageElement>('img').forEach(image => {
     image.loading = 'lazy'

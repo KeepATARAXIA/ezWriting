@@ -4,6 +4,11 @@ import type { ArticleDraft } from '../domain/article'
 import { DEFAULT_ARTICLE_FORMATTING } from '../domain/formatting'
 import { createPersistedDraft, type PersistedDraft } from '../domain/saved-draft'
 import {
+  clearLocalVideoRegistry,
+  localVideoBlob,
+  registerLocalVideo,
+} from '../lib/local-video-registry'
+import {
   LAST_ACTIVE_DRAFT_SETTING,
   LOCAL_BACKUP_FORMAT,
   LOCAL_BACKUP_VERSION,
@@ -56,6 +61,7 @@ function backupPayload(drafts: PersistedDraft[], activeDraftId: string | null): 
 }
 
 afterEach(async () => {
+  clearLocalVideoRegistry()
   await Promise.all(repositories.splice(0).map(instance => instance.close()))
   await Promise.all(databaseNames.splice(0).map(name => resetLocalDraftDatabase(name)))
 })
@@ -107,6 +113,33 @@ describe('local backup', () => {
     expect(await target.getSetting(LAST_ACTIVE_DRAFT_SETTING)).toBe(original.id)
     expect(restored).not.toHaveProperty('syncState')
     expect(restored).not.toHaveProperty('cloudVersion')
+  })
+
+  it('expands compact local videos only in backup files and restores them without Base64 editor copies', async () => {
+    const source = repository()
+    const reference = registerLocalVideo(new Blob(['clip'], { type: 'video/mp4' }))
+    const videoArticle = {
+      ...article(),
+      html: `<p>正文</p><video controls src="${reference}" data-ez-video-name="演示.mp4"></video>`,
+      markdown: `正文\n\n<video controls src="${reference}" data-ez-video-name="演示.mp4"></video>`,
+      sourceText: `正文\n\n<video controls src="${reference}" data-ez-video-name="演示.mp4"></video>`,
+    }
+    const original = createPersistedDraft(videoArticle, DEFAULT_ARTICLE_FORMATTING)
+    await source.saveDraft(original, { preserveUpdatedAt: true })
+
+    const payload = await createLocalBackup(source)
+    const serialized = JSON.stringify(payload)
+    expect(serialized).toContain('data:video/mp4;base64,Y2xpcA==')
+    expect(serialized).not.toContain('dispatch-local-video://')
+
+    const parsed = await parseLocalBackup(new File([serialized], 'video.ezwriting-backup.json', { type: 'application/json' }))
+    const target = repository()
+    await importLocalBackup(target, parsed)
+    const restored = await target.getDraft(original.id)
+    const restoredReference = restored?.article.sourceText?.match(/dispatch-local-video:\/\/[a-z0-9-]+/i)?.[0]
+    expect(restoredReference).toBeTruthy()
+    expect(restored?.article.sourceText).not.toContain('data:video/')
+    expect(localVideoBlob(restoredReference || '')?.size).toBe(4)
   })
 
   it('can overlay the current unsaved draft so backup remains an emergency exit', async () => {

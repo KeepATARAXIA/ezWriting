@@ -39,6 +39,7 @@ import type { ArticleDraft, MissingImageAction, MissingImageTarget, PlatformAcco
 import { DEFAULT_ARTICLE_FORMATTING, type ArticleFormatting } from './domain/formatting'
 import { DispatchControls, type BridgeState, type WorkState } from './components/dispatch-controls'
 import { HistorySidebar, type HistoryUndoDraft } from './components/history-sidebar'
+import { WorkbenchErrorBoundary } from './components/workbench-error-boundary'
 import type { SourceEditorActiveLocation, SourceEditorFocusRequest } from './components/source-editor'
 import type { PreviewDevice, PreviewEditTarget, PreviewLocateRequest, PreviewPlatform } from './components/platform-previews'
 import {
@@ -80,19 +81,12 @@ import {
   validateImageResourceFiles,
 } from './lib/file-parser'
 import { extractMissingImageTargets } from './lib/missing-assets'
+import { retainLocalVideoReferences } from './lib/local-video-registry'
 import { normalizeMarkdownStrongWhitespace } from './lib/markdown-compatibility'
 import { getBrowserExtensionGuide } from './lib/browser-extension-install'
 import { getPlatformAccounts, publishDraft, waitForBridge } from './lib/wechatsync-bridge'
 import { useDraftAutosave } from './hooks/use-draft-autosave'
-import {
-  LAST_ACTIVE_DRAFT_SETTING,
-  createLocalBackup,
-  importLocalBackup,
-  localBackupFileName,
-  parseLocalBackup,
-  requestPersistentLocalStorage,
-  serializeLocalBackup,
-} from './services/local-backup'
+import { LAST_ACTIVE_DRAFT_SETTING, requestPersistentLocalStorage } from './services/local-storage'
 import {
   createReliabilityReport,
   recordImportDiagnostic,
@@ -564,7 +558,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   const editorPanePercentsRef = useRef(editorPanePercents)
   const paneResizeActiveRef = useRef(false)
   const paneResizePlatformRef = useRef<PreviewPlatform | null>(null)
-  const titleInputRef = useRef<HTMLInputElement>(null)
+  const titleInputRef = useRef<HTMLTextAreaElement>(null)
   const resourcesPanelRef = useRef<HTMLElement>(null)
   const focusRequestIdRef = useRef(0)
   const previewLocateRequestIdRef = useRef(0)
@@ -585,6 +579,14 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   const applyPersistedDraftRef = useRef<(draft: PersistedDraft) => void>(() => undefined)
 
   activeDraftIdRef.current = article?.id ?? null
+
+  useEffect(() => {
+    retainLocalVideoReferences(article
+      ? [article.html, article.markdown || '', article.sourceText || '']
+      : [])
+  }, [article?.id])
+
+  useEffect(() => () => retainLocalVideoReferences([]), [])
 
   const beginExclusiveOperation = useCallback((operation: ExclusiveOperation): boolean => {
     if (exclusiveOperationRef.current !== null) return false
@@ -1011,6 +1013,11 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     setBackupNotice(null)
     setHistoryError(null)
     try {
+      const {
+        createLocalBackup,
+        localBackupFileName,
+        serializeLocalBackup,
+      } = await import('./services/local-backup')
       let unsavedDraft: PersistedDraft | undefined
       try {
         await autosave.flush()
@@ -1051,6 +1058,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     setBackupNotice(null)
     setHistoryError(null)
     try {
+      const { importLocalBackup, parseLocalBackup } = await import('./services/local-backup')
       const payload = await parseLocalBackup(file)
       const existingIds = new Set((await draftRepository.listDrafts({ includeDeleted: true })).map(draft => draft.id))
       const replacements = payload.drafts.filter(draft => existingIds.has(draft.id)).length
@@ -1353,7 +1361,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
 
   const updateArticleTitle = (title: string) => {
     if (exclusiveOperationRef.current !== null) return
-    setArticle(current => current ? { ...current, title } : current)
+    setArticle(current => current ? { ...current, title: title.replace(/\s*[\r\n]+\s*/g, ' ') } : current)
     markDraftDirty()
   }
 
@@ -1642,6 +1650,10 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
       ? applyArticleFormatting(deferredArticleHtml, renderedPreviewFormatting)
       : '',
     [deferredArticleHtml, renderedPreviewFormatting],
+  )
+  const previewBoundaryResetKey = useMemo(
+    () => ({ activePlatform, previewHtml }),
+    [activePlatform, previewHtml],
   )
   const articleContent = useMemo(
     () => deferredArticleHtml ? analyzeArticleContent(deferredArticleHtml) : { characterCount: 0, bodyImageCount: 0, resources: [] },
@@ -2138,37 +2150,50 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                   {editorView === 'edit' ? (
                     <div className="article-form editor-view-panel" id="article-edit-view" role="tabpanel">
                       <label className="editor-title-field" htmlFor="article-title">
-                        <input
+                        <span className="editor-title-field-heading">
+                          <strong>文章标题</strong>
+                          <small>{article.title.length > 0 ? `${Array.from(article.title).length} 字` : '可选'}</small>
+                        </span>
+                        <textarea
                           ref={titleInputRef}
                           id="article-title"
                           className="title-input"
                           aria-label="文章标题"
                           placeholder="请输入标题（可选）"
+                          rows={1}
                           value={article.title}
                           disabled={isOperationLocked}
+                          onKeyDown={event => {
+                            if (event.key === 'Enter') event.preventDefault()
+                          }}
                           onChange={event => updateArticleTitle(event.target.value)}
                         />
                       </label>
 
                       <section className="content-editor-section" aria-label="正文内容">
-                        <Suspense fallback={<div className="article-editor-loading">正在准备编辑器…</div>}>
-                          <SourceEditor
-                            key={article.id}
-                            value={articleSource?.text || ''}
-                            language={articleSource?.language || 'markdown'}
-                            focusRequest={editorFocusRequest}
-                            readOnly={isOperationLocked}
-                            onChange={updateArticleSource}
-                            onActiveBlockChange={updateActiveEditorLocation}
-                          />
-                        </Suspense>
+                        <WorkbenchErrorBoundary
+                          resetKey={article.id}
+                          fallback={<div className="article-editor-loading" role="alert">编辑器暂时无法显示，请切换稿件后重试。</div>}
+                        >
+                          <Suspense fallback={<div className="article-editor-loading">正在准备编辑器…</div>}>
+                            <SourceEditor
+                              key={article.id}
+                              value={articleSource?.text || ''}
+                              language={articleSource?.language || 'markdown'}
+                              status={{
+                                characterCount: articleContent.characterCount,
+                                imageCount: articleContent.bodyImageCount,
+                                sourceLabel: sourceLabel(article),
+                              }}
+                              focusRequest={editorFocusRequest}
+                              readOnly={isOperationLocked}
+                              onChange={updateArticleSource}
+                              onActiveBlockChange={updateActiveEditorLocation}
+                            />
+                          </Suspense>
+                        </WorkbenchErrorBoundary>
                       </section>
 
-                      <footer className="article-stats" aria-label="稿件统计">
-                        <span>字数 <strong>{articleContent.characterCount}</strong></span>
-                        <span>图片 <strong>{articleContent.bodyImageCount}</strong></span>
-                        <span>{sourceLabel(article)}</span>
-                      </footer>
                     </div>
                   ) : (
                     <section ref={resourcesPanelRef} className="resource-panel editor-view-panel" id="article-resource-view" role="tabpanel" aria-labelledby="resource-panel-heading">
@@ -2260,34 +2285,39 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
 
                   <div className="preview-lane" id="platform-preview-panel" role="tabpanel">
                     <div className="preview-lane-content">
-                      <Suspense fallback={<div className="preview-loading"><LoaderCircle className="spin" size={22} /> 正在生成平台预览…</div>}>
-                        <div className={`preview-device-frame ${previewDevice}`}>
-                          <PlatformPreviews
-                            key={article.id}
-                            activePlatform={activePlatform}
-                            title={article.title}
-                            html={previewHtml}
-                            sourceText={deferredArticleSourceText}
-                            sourceLanguage={articleSource?.language}
-                            formatting={previewFormatting}
-                            renderFormatting={renderedPreviewFormatting}
-                            onFormattingChange={nextFormatting => updateArticleFormatting(
-                              activePlatform === 'x'
-                                ? nextFormatting
-                                : { ...nextFormatting, theme: formatting.theme },
-                            )}
-                            xhsSettings={xhsSettings}
-                            onXhsSettingsChange={updateXhsCardSettings}
-                            previewAccount={previewAccount}
-                            previewDevice={previewDevice}
-                            isUpdating={isPreviewUpdating}
-                            onPreviewDeviceChange={setPreviewDevice}
-                            locateRequest={previewLocateRequest}
-                            onEditTarget={editPreviewTarget}
-                            onMissingImageAction={requestMissingImageAction}
-                          />
-                        </div>
-                      </Suspense>
+                      <WorkbenchErrorBoundary
+                        resetKey={previewBoundaryResetKey}
+                        fallback={<div className="preview-loading" role="alert">当前预览生成失败；编辑区仍可使用，请修改内容后重试。</div>}
+                      >
+                        <Suspense fallback={<div className="preview-loading"><LoaderCircle className="spin" size={22} /> 正在生成平台预览…</div>}>
+                          <div className={`preview-device-frame ${previewDevice}`}>
+                            <PlatformPreviews
+                              key={article.id}
+                              activePlatform={activePlatform}
+                              title={article.title}
+                              html={previewHtml}
+                              sourceText={deferredArticleSourceText}
+                              sourceLanguage={articleSource?.language}
+                              formatting={previewFormatting}
+                              renderFormatting={renderedPreviewFormatting}
+                              onFormattingChange={nextFormatting => updateArticleFormatting(
+                                activePlatform === 'x'
+                                  ? nextFormatting
+                                  : { ...nextFormatting, theme: formatting.theme },
+                              )}
+                              xhsSettings={xhsSettings}
+                              onXhsSettingsChange={updateXhsCardSettings}
+                              previewAccount={previewAccount}
+                              previewDevice={previewDevice}
+                              isUpdating={isPreviewUpdating}
+                              onPreviewDeviceChange={setPreviewDevice}
+                              locateRequest={previewLocateRequest}
+                              onEditTarget={editPreviewTarget}
+                              onMissingImageAction={requestMissingImageAction}
+                            />
+                          </div>
+                        </Suspense>
+                      </WorkbenchErrorBoundary>
                     </div>
                   </div>
                 </div>
