@@ -1189,6 +1189,7 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
     if (pendingEchoes.at(-1) !== compactedText) pendingEchoes.push(compactedText)
     if (pendingEchoes.length > 20) pendingEchoes.splice(0, pendingEchoes.length - 20)
     onChangeRef.current(expandEmbeddedMedia(compactedText, embeddedImagesRef.current))
+    scheduleActiveBlock(view)
   }
 
   const scheduleSourceChange = (view: EditorView) => {
@@ -1245,17 +1246,30 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
     view.contentDOM.focus({ preventScroll: true })
   }
 
-  const insertText = (text: string, selectFrom = text.length, selectTo = selectFrom) => {
+  const insertText = (
+    text: string,
+    selectFrom = text.length,
+    selectTo = selectFrom,
+    options: { preserveOuterScroll?: boolean; syncImmediately?: boolean } = {},
+  ) => {
     if (readOnlyRef.current) return
     const view = viewRef.current
     if (!view) return
+    const outerScroll = options.preserveOuterScroll ? captureOuterScroll(view) : null
     const { from, to } = view.state.selection.main
     view.dispatch({
       changes: { from, to, insert: text },
       selection: { anchor: from + selectFrom, head: from + selectTo },
       scrollIntoView: true,
     })
-    view.focus()
+    if (options.syncImmediately) emitSourceChange(view)
+    if (outerScroll) {
+      focusEditorWithoutPageScroll(view)
+      restoreOuterScroll(outerScroll)
+      window.requestAnimationFrame(() => restoreOuterScroll(outerScroll))
+    } else {
+      view.focus()
+    }
   }
 
   const undoChange = () => {
@@ -1472,7 +1486,10 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
     try {
       const source = await registerVideoFile(file)
       const token = addEmbeddedVideo(embeddedImagesRef.current, source)
-      insertText(videoHtmlSyntax(file.name, token))
+      insertText(videoHtmlSyntax(file.name, token), undefined, undefined, {
+        preserveOuterScroll: true,
+        syncImmediately: true,
+      })
     } catch (error) {
       setVideoError(error instanceof Error ? error.message : '视频读取失败，请重新选择。')
     }
@@ -1638,6 +1655,10 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
               activeBlockTimerRef.current = null
             }
             if (update.docChanged && !isControlledValueUpdate) {
+              if (activeBlockTimerRef.current !== null) {
+                window.clearTimeout(activeBlockTimerRef.current)
+                activeBlockTimerRef.current = null
+              }
               if (compositionActiveRef.current || update.view.compositionStarted) {
                 if (changeTimerRef.current !== null) window.clearTimeout(changeTimerRef.current)
                 changeTimerRef.current = null
@@ -1645,7 +1666,7 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
                 scheduleSourceChange(update.view)
               }
             }
-            if ((update.docChanged || update.selectionSet) && !isExternalFocusUpdate) scheduleActiveBlock(update.view)
+            if (update.selectionSet && !update.docChanged && !isExternalFocusUpdate) scheduleActiveBlock(update.view)
             if (update.docChanged || update.selectionSet || update.geometryChanged) updateEditorUi(update.view)
           }),
           EditorView.theme({

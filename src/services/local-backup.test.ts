@@ -77,6 +77,8 @@ describe('local backup', () => {
       kind: 'image',
       xhsSettings: {
         template: 'focus',
+        paletteId: 'cobalt',
+        fontMode: 'template',
         showPageNumber: true,
         showFooter: true,
         footerText: 'DISPATCH',

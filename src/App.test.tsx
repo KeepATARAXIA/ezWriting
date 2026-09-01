@@ -821,9 +821,10 @@ describe('App publishing engine onboarding', () => {
     const allWechatThemes = Array.from(container.querySelectorAll<HTMLButtonElement>('.wechat-theme-categories button'))
       .find(button => button.textContent === '全部')!
     await act(async () => allWechatThemes.dispatchEvent(new MouseEvent('click', { bubbles: true })))
-    const wechatTheme = Array.from(container.querySelectorAll<HTMLButtonElement>('.wechat-theme-card'))
-      .find(button => button.textContent?.includes('瑞士索引'))!
-    await act(async () => wechatTheme.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    const wechatTheme = Array.from(container.querySelectorAll<HTMLElement>('.wechat-theme-card'))
+      .find(card => card.textContent?.includes('瑞士索引'))!
+    const wechatThemeSelect = wechatTheme.querySelector<HTMLButtonElement>('.wechat-theme-select-target')!
+    await act(async () => wechatThemeSelect.dispatchEvent(new MouseEvent('click', { bubbles: true })))
     expect(container.querySelector('[data-wechat-theme="swiss-index"]')).not.toBeNull()
 
     const platformTabs = Array.from(container.querySelectorAll<HTMLButtonElement>('.platform-switcher button[role="tab"]'))
@@ -879,10 +880,59 @@ describe('App publishing engine onboarding', () => {
       await new Promise(resolve => window.setTimeout(resolve, 0))
     })
 
-    expect(container.textContent).not.toContain('还差 1 张本地图片')
-    expect(container.querySelector('.x-article img[src^="data:image/png;base64,"]')).not.toBeNull()
+    await vi.waitFor(() => {
+      expect(container.textContent).not.toContain('还差 1 张本地图片')
+      expect(container.querySelector('.x-article img[src^="data:image/png;base64,"]')).not.toBeNull()
+    }, { timeout: 1000 })
     await act(async () => editTab.dispatchEvent(new MouseEvent('click', { bubbles: true })))
     expect(container.querySelector<HTMLInputElement>('[aria-label="文章标题"]')?.value).toBe('补图后保留标题')
+  })
+
+  it('supplements a Windows absolute Markdown image from a selected folder', async () => {
+    bridgeMocks.waitForBridge.mockResolvedValue(false)
+    const absoluteReference = 'C:/Users/29769/Documents/Codex/2026-09-01/output/assets/flow.png'
+
+    await act(async () => {
+      root.render(<App draftRepository={null} />)
+      await Promise.resolve()
+    })
+
+    const articleInput = container.querySelector<HTMLInputElement>('input[accept=".md,.markdown,.html,.htm,.zip"]')!
+    Object.defineProperty(articleInput, 'files', {
+      configurable: true,
+      value: [new File([`# 绝对路径补图\n\n![流程图](${absoluteReference})`], 'article.md', { type: 'text/markdown' })],
+    })
+    await act(async () => {
+      articleInput.dispatchEvent(new Event('change', { bubbles: true }))
+      await new Promise(resolve => window.setTimeout(resolve, 20))
+    })
+
+    expect(container.textContent).toContain('1 张图片待处理')
+    const resourceTab = container.querySelector<HTMLButtonElement>('[aria-controls="article-resource-view"]')!
+    await act(async () => resourceTab.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    expect(container.textContent).toContain('还差 1 张本地图片')
+
+    const image = new File([new Uint8Array([137, 80, 78, 71])], 'flow.png', { type: 'image/png' })
+    Object.defineProperty(image, 'webkitRelativePath', {
+      configurable: true,
+      value: 'assets/flow.png',
+    })
+    const assetDirectoryInput = container.querySelector<HTMLInputElement>('.resource-panel input[webkitdirectory]')!
+    Object.defineProperty(assetDirectoryInput, 'files', {
+      configurable: true,
+      value: [image],
+    })
+    await act(async () => {
+      assetDirectoryInput.dispatchEvent(new Event('change', { bubbles: true }))
+      await new Promise(resolve => window.setTimeout(resolve, 20))
+    })
+
+    expect(container.textContent).not.toContain('还差 1 张本地图片')
+    expect(container.textContent).not.toContain('1 张图片待处理')
+    expect(container.querySelector('.resource-card-copy strong')?.textContent).toBe('流程图')
+    await vi.waitFor(() => {
+      expect(container.querySelector('.wechat-content img[src^="data:image/png;base64,"]')).not.toBeNull()
+    }, { timeout: 1000 })
   })
 
   it('customizes Xiaohongshu cards and exposes single-page and batch exports', async () => {

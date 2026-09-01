@@ -1,34 +1,19 @@
 import type { ArticleDraft, SourceKind } from './article'
 import type { ArticleFormatting } from './formatting'
+import {
+  getXhsDefaultPaletteId,
+  normalizeXhsPaletteId,
+  XHS_CARD_TEMPLATES,
+  type XhsCardTemplate,
+  type XhsTemplateFontMode,
+} from './xhs-template'
+
+export { XHS_CARD_TEMPLATES, type XhsCardTemplate, type XhsTemplateFontMode } from './xhs-template'
 
 export const SAVED_DRAFT_SCHEMA_VERSION = 2
 
 export type DraftKind = 'image' | 'longform'
 
-export const XHS_CARD_TEMPLATES = [
-  'clean',
-  'focus',
-  'index',
-  'memo',
-  'headline',
-  'journal',
-  'quote',
-  'soft',
-  'fresh',
-  'editorial',
-  'retro',
-  'geometry',
-  'doodle',
-  'texture',
-  'logic',
-  'mono',
-  'hero',
-  'narrative',
-  'dust',
-  'topology',
-] as const
-
-export type XhsCardTemplate = typeof XHS_CARD_TEMPLATES[number]
 export type XhsImageLayout = 'full' | 'image-left' | 'image-right'
 
 const XHS_CARD_TEMPLATE_SET = new Set<string>(XHS_CARD_TEMPLATES)
@@ -40,6 +25,8 @@ export interface XhsImageOverride {
 
 export interface XhsCardSettings {
   template: XhsCardTemplate
+  paletteId: string
+  fontMode: XhsTemplateFontMode
   showPageNumber: boolean
   showFooter: boolean
   footerText: string
@@ -48,6 +35,8 @@ export interface XhsCardSettings {
 
 export const DEFAULT_XHS_CARD_SETTINGS: XhsCardSettings = {
   template: 'focus',
+  paletteId: getXhsDefaultPaletteId('focus'),
+  fontMode: 'template',
   showPageNumber: true,
   showFooter: true,
   footerText: 'DISPATCH',
@@ -71,6 +60,9 @@ export function normalizeXhsImageOverride(value: unknown): XhsImageOverride | nu
 
 export function normalizeXhsCardSettings(value?: unknown): XhsCardSettings {
   const candidate = isRecord(value) ? value : {}
+  const template = typeof candidate.template === 'string' && XHS_CARD_TEMPLATE_SET.has(candidate.template)
+    ? candidate.template as XhsCardTemplate
+    : DEFAULT_XHS_CARD_SETTINGS.template
   const rawOverrides = isRecord(candidate.imageOverrides) ? candidate.imageOverrides : {}
   const imageOverrides: Record<string, XhsImageOverride> = {}
   Object.entries(rawOverrides).slice(0, 500).forEach(([key, override]) => {
@@ -80,9 +72,9 @@ export function normalizeXhsCardSettings(value?: unknown): XhsCardSettings {
   })
 
   return {
-    template: typeof candidate.template === 'string' && XHS_CARD_TEMPLATE_SET.has(candidate.template)
-      ? candidate.template as XhsCardTemplate
-      : 'focus',
+    template,
+    paletteId: normalizeXhsPaletteId(template, candidate.paletteId),
+    fontMode: candidate.fontMode === 'sans' || candidate.fontMode === 'serif' ? candidate.fontMode : 'template',
     showPageNumber: typeof candidate.showPageNumber === 'boolean' ? candidate.showPageNumber : DEFAULT_XHS_CARD_SETTINGS.showPageNumber,
     showFooter: typeof candidate.showFooter === 'boolean' ? candidate.showFooter : DEFAULT_XHS_CARD_SETTINGS.showFooter,
     footerText: typeof candidate.footerText === 'string' ? candidate.footerText.slice(0, 80) : DEFAULT_XHS_CARD_SETTINGS.footerText,

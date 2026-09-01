@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 
 const SAMPLE_WEBM = 'GkXfo59ChoEBQveBAULygQRC84EIQoKEd2VibUKHgQJChYECGFOAZwEAAAAAAAKFEU2bdLpNu4tTq4QVSalmU6yBoU27i1OrhBZUrmtTrIHYTbuMU6uEElTDZ1OsggElTbuMU6uEHFO7a1OsggJv7AEAAAAAAABZAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAVSalmsirXsYMPQkBNgI1MYXZmNjIuMTIuMTAxV0GNTGF2ZjYyLjEyLjEwMUSJiEBxgAAAAAAAFlSua8iuAQAAAAAAAD/XgQFzxYi+osIW4IWmLZyBACK1nIN1bmSIgQCGhVZfVlA5g4EBI+ODhAJiWgDgkLCBoLqBWpqBAlWwhFW5gQESVMNnQIBzc6BjwIBnyJpFo4dFTkNPREVSRIeNTGF2ZjYyLjEyLjEwMXNz2mPAi2PFiL6iwhbghaYtZ8ilRaOHRU5DT0RFUkSHmExhdmM2Mi4yOC4xMDEgbGlidnB4LXZwOWfIoUWjiERVUkFUSU9ORIeTMDA6MDA6MDAuMjgwMDAwMDAwAB9DtnVAvueBAKOvgQAAgIJJg0IACfAFlgA4JBwY9gAAMGAAAHk7/+El///+2g///3oc/S6P71LiwACjlYEAKACGAECSHABZAAADIAAAWfmG4KOVgQBQAIYAQJKcAFgAAAMgAABZ+Ybgo5WBAHgAhgBAkhwAWQAAAyAAAFn5huCjlYEAoACGAECSnABWoAADIAAAWfmG4KOVgQDIAIYAQJIcAFkAAAMgAABZ+Ybgo5WBAPAAhgBAkpwAWAAAAyAAAFn5huAcU7trkbuPs4EAt4r3gQHxggGr8IED'
 
-test('uploads, previews, saves, and restores a local video with platform-safe fallback', async ({ page }) => {
+test('uploads, previews, saves, and restores a local video with static right-side previews', async ({ page }) => {
   await page.goto('/')
   await page.getByRole('button', { name: '开始创作' }).click()
 
@@ -16,6 +16,9 @@ test('uploads, previews, saves, and restores a local video with platform-safe fa
   const wechatVideo = page.locator('.wechat-content video')
   await expect(editorVideo).toBeVisible()
   await expect(wechatVideo).toBeVisible()
+  await expect(wechatVideo).not.toHaveAttribute('controls', '')
+  await expect(wechatVideo).toHaveAttribute('data-ez-video-preview', 'static')
+  await expect(wechatVideo).toHaveCSS('pointer-events', 'none')
   await expect(page.locator('.source-video-widget')).toContainText('产品演示.webm')
   await expect.poll(() => editorVideo.evaluate(video => {
     const media = video as HTMLVideoElement
@@ -26,6 +29,7 @@ test('uploads, previews, saves, and restores a local video with platform-safe fa
   await page.reload()
   await expect(page.locator('.source-video-widget video')).toBeVisible()
   await expect(page.locator('.wechat-content video')).toBeVisible()
+  await expect(page.locator('.wechat-content video')).not.toHaveAttribute('controls', '')
 
   await page.getByRole('tab', { name: '小红书' }).click()
   await expect(page.locator('.xhs-card-page [data-ez-video-placeholder]').first()).toContainText('发布时请在小红书原生上传')
@@ -33,6 +37,8 @@ test('uploads, previews, saves, and restores a local video with platform-safe fa
 
   await page.getByRole('tab', { name: 'X 长文' }).click()
   await expect(page.locator('.x-article-content video')).toBeVisible()
+  await expect(page.locator('.x-article-content video')).not.toHaveAttribute('controls', '')
+  await expect(page.locator('.x-article-content video')).toHaveCSS('pointer-events', 'none')
 })
 
 test('keeps the workbench responsive while saving and restoring a 10 MiB local video', async ({ context, page }) => {

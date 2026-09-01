@@ -337,17 +337,64 @@ function fileNameForReference(reference: string): string {
   }
 }
 
+function normalizeAssetPath(value: string): string {
+  const withoutSuffix = value.trim().replace(/^<|>$/g, '').replace(/[?#].*$/, '')
+  let decoded = withoutSuffix
+  try {
+    decoded = decodeURIComponent(withoutSuffix)
+  } catch {
+    // Keep the original path when it contains malformed escape sequences.
+  }
+  const segments: string[] = []
+  for (const segment of decoded.replaceAll('\\', '/').split('/')) {
+    if (!segment || segment === '.') continue
+    if (segment === '..') segments.pop()
+    else segments.push(segment)
+  }
+  return segments.join('/').toLocaleLowerCase()
+}
+
+function imageFileForReference(reference: string, files: File[]): File | undefined {
+  const normalizedReference = normalizeAssetPath(reference)
+  const pathCandidates = files.filter(file => {
+    const path = normalizeAssetPath(file.webkitRelativePath || file.name)
+    return path === normalizedReference
+      || normalizedReference.endsWith(`/${path}`)
+      || path.endsWith(`/${normalizedReference}`)
+  })
+  if (pathCandidates.length === 1) return pathCandidates[0]
+  if (pathCandidates.length > 1) return undefined
+
+  const expectedName = fileNameForReference(reference).toLocaleLowerCase()
+  const nameCandidates = files.filter(file => file.name.toLocaleLowerCase() === expectedName)
+  return nameCandidates.length === 1 ? nameCandidates[0] : undefined
+}
+
 async function resolveMissingImagesFromFiles(article: ArticleDraft, files: File[]): Promise<ArticleDraft> {
-  const filesByName = new Map(files.map(file => [file.name.toLocaleLowerCase(), file]))
+  const references = [...new Set([
+    ...(article.missingAssets || []),
+    ...extractMissingImageTargets(article.html).map(target => target.reference),
+  ])]
+  const resolvedReferences: string[] = []
   let nextArticle = article
 
-  for (const target of extractMissingImageTargets(article.html)) {
-    const file = filesByName.get(fileNameForReference(target.reference).toLocaleLowerCase())
+  for (const reference of references) {
+    const file = imageFileForReference(reference, files)
     if (!file) continue
-    nextArticle = replaceArticleSourceImage(nextArticle, target.reference, await readFileAsDataUrl(file), file.name)
+    const previousSource = resolveArticleSource(nextArticle).text
+    const replaced = replaceArticleSourceImage(nextArticle, reference, await readFileAsDataUrl(file))
+    if (resolveArticleSource(replaced).text === previousSource) continue
+    nextArticle = replaced
+    resolvedReferences.push(reference)
   }
 
-  return reconcileSourceUpdate(article, nextArticle)
+  const reconciled = reconcileSourceUpdate(article, nextArticle)
+  if (!resolvedReferences.length) return reconciled
+  return {
+    ...reconciled,
+    missingAssets: (reconciled.missingAssets || []).filter(reference => !resolvedReferences.includes(reference)),
+    warnings: reconciled.warnings.filter(warning => !resolvedReferences.some(reference => warning.endsWith(`：${reference}`))),
+  }
 }
 
 function reconcileMissingAssetState(article: ArticleDraft, nextHtml: string, previousHtml = article.html): ArticleDraft {
@@ -478,24 +525,6 @@ function analyzeArticleContent(html: string): { characterCount: number; bodyImag
     }
   })
   return { characterCount: Array.from(text).length, bodyImageCount: bodyResources.length, resources: bodyResources }
-}
-
-function mergeResolvedAssets(current: ArticleDraft, previousHtml: string, nextHtml: string): ArticleDraft {
-  const previousDocument = new DOMParser().parseFromString(previousHtml, 'text/html')
-  const nextDocument = new DOMParser().parseFromString(nextHtml, 'text/html')
-  const previousImages = Array.from(previousDocument.body.querySelectorAll('img'))
-  const nextImages = Array.from(nextDocument.body.querySelectorAll('img'))
-  let updated = current
-
-  previousImages.forEach((previousImage, index) => {
-    const nextImage = nextImages[index]
-    const previousSource = previousImage.getAttribute('src') || ''
-    const nextSource = nextImage?.getAttribute('src') || ''
-    if (!previousSource || !nextSource || previousSource === nextSource) return
-    updated = replaceArticleSourceImage(updated, previousSource, nextSource, nextImage.getAttribute('alt') || undefined)
-  })
-
-  return reconcileSourceUpdate(current, updated)
 }
 
 export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
@@ -1156,50 +1185,43 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     if (!files.length || !beginExclusiveOperation('asset-import')) return
     try {
       const validatedFiles = selectImageResourceFiles(files)
-      if (!context) {
-        const currentArticle = article
-        if (!currentArticle) return
-        const operationGeneration = documentGenerationRef.current
-        setError(null)
-        setResults([])
-        setWorkState('parsing')
-        const resolved = await resolveMissingImagesFromFiles(currentArticle, validatedFiles)
-        if (operationGeneration !== documentGenerationRef.current || activeDraftIdRef.current !== currentArticle.id) return
-        setArticle(resolved)
-        markDraftDirty()
-        setWorkState('ready')
-        return
-      }
-      const known = new Map(context.assets.map(file => [file.webkitRelativePath || `${file.name}:${file.size}:${file.lastModified}`, file]))
-      validatedFiles.forEach(file => known.set(file.webkitRelativePath || `${file.name}:${file.size}:${file.lastModified}`, file))
-      const nextAssets = [...known.values()]
+      const currentArticle = article
+      if (!currentArticle) return
       const targetDraftId = activeDraftIdRef.current
       const operationGeneration = documentGenerationRef.current
       setError(null)
       setResults([])
       setWorkState('parsing')
-      const [previousParsed, nextParsed] = await Promise.all([
-        parseContentFile(context.primary, context.assets),
-        parseContentFile(context.primary, nextAssets, {
-          operation: 'asset-supplement',
-          onDiagnostic: recordImportDiagnostic,
-        }),
-      ])
+
+      let nextAssets = validatedFiles
+      let resolved: ArticleDraft
+      if (context) {
+        const known = new Map(context.assets.map(file => [file.webkitRelativePath || `${file.name}:${file.size}:${file.lastModified}`, file]))
+        validatedFiles.forEach(file => known.set(file.webkitRelativePath || `${file.name}:${file.size}:${file.lastModified}`, file))
+        nextAssets = [...known.values()]
+        const [resolvedArticle] = await Promise.all([
+          resolveMissingImagesFromFiles(currentArticle, validatedFiles),
+          parseContentFile(context.primary, nextAssets, {
+            operation: 'asset-supplement',
+            onDiagnostic: recordImportDiagnostic,
+          }),
+        ])
+        resolved = resolvedArticle
+      } else {
+        resolved = await resolveMissingImagesFromFiles(currentArticle, validatedFiles)
+      }
+
       if (operationGeneration !== documentGenerationRef.current || activeDraftIdRef.current !== targetDraftId) return
-      setArticle(current => {
-        if (!current) return nextParsed
-        return {
-          ...mergeResolvedAssets(current, previousParsed.html, nextParsed.html),
-          title: current.title,
-        }
-      })
+      setArticle(resolved)
       markDraftDirty()
-      importContextRef.current = { primary: context.primary, assets: nextAssets }
-      setFileInfo({
-        name: context.primary.name,
-        size: context.primary.size + nextAssets.reduce((total, asset) => total + asset.size, 0),
-        assetCount: nextAssets.filter(asset => asset.type.startsWith('image/') || /\.(png|jpe?g|gif|webp|svg)$/i.test(asset.name)).length,
-      })
+      if (context) {
+        importContextRef.current = { primary: context.primary, assets: nextAssets }
+        setFileInfo({
+          name: context.primary.name,
+          size: context.primary.size + nextAssets.reduce((total, asset) => total + asset.size, 0),
+          assetCount: nextAssets.filter(asset => asset.type.startsWith('image/') || /\.(png|jpe?g|gif|webp|svg)$/i.test(asset.name)).length,
+        })
+      }
       setWorkState('ready')
     } catch (parseError) {
       setWorkState('ready')

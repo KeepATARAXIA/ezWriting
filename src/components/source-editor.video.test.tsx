@@ -33,7 +33,18 @@ describe('SourceEditor local video', () => {
 
   it('uploads an MP4 into a playable editor card while keeping the saved source expanded', async () => {
     const onChange = vi.fn()
-    await act(async () => root.render(<SourceEditor value="正文" language="markdown" onChange={onChange} />))
+    const onActiveBlockChange = vi.fn()
+    const events: string[] = []
+    onChange.mockImplementation(() => events.push('sync'))
+    onActiveBlockChange.mockImplementation(() => events.push('locate'))
+    await act(async () => root.render(
+      <SourceEditor
+        value="正文"
+        language="markdown"
+        onChange={onChange}
+        onActiveBlockChange={onActiveBlockChange}
+      />,
+    ))
     await act(async () => new Promise(resolve => window.setTimeout(resolve, 0)))
 
     const input = container.querySelector<HTMLInputElement>('input[accept=".mp4,.webm,video/mp4,video/webm"]')!
@@ -53,6 +64,9 @@ describe('SourceEditor local video', () => {
     expect(container.querySelector<HTMLVideoElement>('.source-video-widget video')?.src).toMatch(/^(?:blob:|dispatch-local-video:)/)
     expect(container.querySelector('.source-video-widget')?.textContent).toContain('产品演示.mp4')
     expect(container.querySelector('.cm-content')?.textContent).not.toContain('data:video/mp4')
+    await vi.waitFor(() => expect(onActiveBlockChange).toHaveBeenCalledTimes(1), { timeout: 500 })
+    expect(events[0]).toBe('sync')
+    expect(events.filter(event => event === 'locate')).toHaveLength(1)
   })
 
   it('shows a clear error for an unsupported video without changing the article', async () => {

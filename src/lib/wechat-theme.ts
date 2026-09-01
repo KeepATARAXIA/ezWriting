@@ -130,6 +130,81 @@ function applyStyle(element: HTMLElement, cssText?: string): void {
   element.style.cssText = cssText
 }
 
+interface RgbaColor {
+  red: number
+  green: number
+  blue: number
+  alpha: number
+}
+
+function parseCssColor(value: string): RgbaColor | null {
+  const color = value.trim().toLowerCase()
+  const hex = color.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i)
+  if (hex) {
+    const expanded = hex[1].length === 3 ? Array.from(hex[1], digit => digit + digit).join('') : hex[1]
+    const numeric = Number.parseInt(expanded, 16)
+    return { red: numeric >> 16, green: (numeric >> 8) & 255, blue: numeric & 255, alpha: 1 }
+  }
+  const rgb = color.match(/^rgba?\(\s*([\d.]+)[, ]+\s*([\d.]+)[, ]+\s*([\d.]+)(?:\s*[,/]\s*([\d.]+))?\s*\)$/)
+  if (!rgb) return null
+  return {
+    red: Math.min(255, Number(rgb[1])),
+    green: Math.min(255, Number(rgb[2])),
+    blue: Math.min(255, Number(rgb[3])),
+    alpha: rgb[4] === undefined ? 1 : Math.min(1, Number(rgb[4])),
+  }
+}
+
+function blendColor(foreground: RgbaColor, background: RgbaColor): RgbaColor {
+  const alpha = foreground.alpha + background.alpha * (1 - foreground.alpha)
+  if (alpha === 0) return { red: 255, green: 255, blue: 255, alpha: 1 }
+  return {
+    red: (foreground.red * foreground.alpha + background.red * background.alpha * (1 - foreground.alpha)) / alpha,
+    green: (foreground.green * foreground.alpha + background.green * background.alpha * (1 - foreground.alpha)) / alpha,
+    blue: (foreground.blue * foreground.alpha + background.blue * background.alpha * (1 - foreground.alpha)) / alpha,
+    alpha,
+  }
+}
+
+function effectiveAncestorColor(element: HTMLElement, property: 'color' | 'backgroundColor'): RgbaColor | null {
+  let current: HTMLElement | null = element
+  while (current) {
+    const parsed = parseCssColor(current.style[property])
+    if (parsed && parsed.alpha > 0) return parsed
+    current = current.parentElement
+  }
+  return property === 'backgroundColor' ? { red: 255, green: 255, blue: 255, alpha: 1 } : null
+}
+
+function relativeLuminance(color: RgbaColor): number {
+  const channels = [color.red, color.green, color.blue].map(channel => {
+    const normalized = channel / 255
+    return normalized <= 0.04045 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4
+  })
+  return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722
+}
+
+function contrastRatio(first: RgbaColor, second: RgbaColor): number {
+  const light = Math.max(relativeLuminance(first), relativeLuminance(second))
+  const dark = Math.min(relativeLuminance(first), relativeLuminance(second))
+  return (light + 0.05) / (dark + 0.05)
+}
+
+function ensureReadableHighlight(element: HTMLElement): void {
+  const ancestorBackground = effectiveAncestorColor(element.parentElement ?? element, 'backgroundColor')
+    ?? { red: 255, green: 255, blue: 255, alpha: 1 }
+  const rawBackground = parseCssColor(element.style.backgroundColor) ?? ancestorBackground
+  const background = rawBackground.alpha < 1 ? blendColor(rawBackground, ancestorBackground) : rawBackground
+  const foreground = effectiveAncestorColor(element, 'color')
+  if (foreground && contrastRatio(foreground, background) >= 4.5) return
+
+  const darkInk = { red: 17, green: 24, blue: 32, alpha: 1 }
+  const lightInk = { red: 255, green: 252, blue: 244, alpha: 1 }
+  element.style.color = contrastRatio(darkInk, background) >= contrastRatio(lightInk, background)
+    ? '#111820'
+    : '#fffcf4'
+}
+
 function applyHeadingDecoration(
   element: HTMLElement,
   level: number,
@@ -347,7 +422,10 @@ export function applyWechatTheme(
     element.style.fontStyle = 'italic'
   })
   container.querySelectorAll<HTMLElement>('s, del').forEach(element => applyStyle(element, styles.s))
-  container.querySelectorAll<HTMLElement>('mark').forEach(element => applyStyle(element, styles.mark))
+  container.querySelectorAll<HTMLElement>('mark').forEach(element => {
+    applyStyle(element, styles.mark)
+    ensureReadableHighlight(element)
+  })
   container.querySelectorAll<HTMLElement>('hr').forEach(element => {
     applyStyle(element, styles.hr)
     renderThemeSeparator(element, styles.hrHtml)

@@ -84,6 +84,8 @@ describe('draft workspace', () => {
         formatting: { ...DEFAULT_ARTICLE_FORMATTING, theme: 'editorial' as const },
         xhsSettings: {
           template: 'clean' as const,
+          paletteId: 'paper',
+          fontMode: 'template' as const,
           showPageNumber: false,
           showFooter: true,
           footerText: 'LOCAL',
@@ -133,6 +135,8 @@ describe('draft workspace', () => {
       kind: 'image',
       xhsSettings: {
         template: 'editorial',
+        paletteId: 'ivory',
+        fontMode: 'template',
         showPageNumber: false,
         showFooter: true,
         footerText: '恢复测试',

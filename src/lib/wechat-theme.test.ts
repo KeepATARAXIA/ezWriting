@@ -10,6 +10,25 @@ import {
   WECHAT_THEMES,
 } from './wechat-theme'
 
+function rgb(value: string): [number, number, number] {
+  const channels = value.match(/[\d.]+/g)?.slice(0, 3).map(Number)
+  if (!channels || channels.length !== 3) throw new Error(`Invalid RGB color: ${value}`)
+  return channels as [number, number, number]
+}
+
+function contrastRatio(first: string, second: string): number {
+  const luminance = (color: string) => {
+    const channels = rgb(color).map(channel => {
+      const normalized = channel / 255
+      return normalized <= 0.04045 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4
+    })
+    return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722
+  }
+  const light = Math.max(luminance(first), luminance(second))
+  const dark = Math.min(luminance(first), luminance(second))
+  return (light + 0.05) / (dark + 0.05)
+}
+
 describe('wechat theme layer', () => {
   it('exposes the 26 attributed md-wechat themes with stable unique ids', () => {
     expect(WECHAT_THEMES).toHaveLength(26)
@@ -30,6 +49,25 @@ describe('wechat theme layer', () => {
       expect(document.querySelector<HTMLElement>('p strong')?.style.fontWeight, WECHAT_THEMES[index].id).toBe('800')
       expect(document.querySelector<HTMLElement>('em')?.style.fontStyle, WECHAT_THEMES[index].id).toBe('italic')
       expect(output).not.toMatch(/undefined|null/)
+    })
+  })
+
+  it('keeps highlighted text readable in dark WeChat themes and light custom accents', () => {
+    const cases = [
+      { themeId: 'night-film' as const },
+      { themeId: 'midnight-gold' as const },
+      { themeId: 'hk-neon' as const },
+      { themeId: 'swiss-index' as const, accentByTheme: { 'swiss-index': '#fff1a8' } },
+    ]
+
+    cases.forEach(settings => {
+      const output = applyWechatTheme('<p>正文 <mark>高亮文本</mark></p>', settings)
+      const document = new DOMParser().parseFromString(output, 'text/html')
+      const mark = document.querySelector<HTMLElement>('mark')!
+
+      expect(mark.style.backgroundColor, settings.themeId).toBeTruthy()
+      expect(mark.style.color, settings.themeId).toBeTruthy()
+      expect(contrastRatio(mark.style.color, mark.style.backgroundColor), settings.themeId).toBeGreaterThanOrEqual(4.5)
     })
   })
 

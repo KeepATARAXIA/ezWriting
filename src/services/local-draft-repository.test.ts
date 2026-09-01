@@ -125,7 +125,7 @@ describe('LocalDraftRepository', () => {
       kind: 'longform',
       article: article('newer', { title: '长文稿', sourceKind: 'html' }),
       formatting: { ...DEFAULT_ARTICLE_FORMATTING, theme: 'editorial', accent: 'purple' },
-      xhsSettings: { template: 'clean', showPageNumber: false, showFooter: false, footerText: '本地测试', imageOverrides: {} },
+      xhsSettings: { template: 'clean', paletteId: 'paper', fontMode: 'template', showPageNumber: false, showFooter: false, footerText: '本地测试', imageOverrides: {} },
     })
 
     await repository.saveDraft(older)
@@ -144,6 +144,8 @@ describe('LocalDraftRepository', () => {
     expect((await repository.getDraft('newer'))?.formatting).toMatchObject({ theme: 'editorial', accent: 'purple' })
     expect((await repository.getDraft('newer'))?.xhsSettings).toEqual({
       template: 'clean',
+      paletteId: 'paper',
+      fontMode: 'template',
       showPageNumber: false,
       showFooter: false,
       footerText: '本地测试',

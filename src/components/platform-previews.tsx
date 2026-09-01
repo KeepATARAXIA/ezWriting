@@ -55,12 +55,20 @@ import {
   type XhsCardSettings,
   type XhsCardTemplate,
   type XhsImageLayout,
+  type XhsTemplateFontMode,
 } from '../domain/saved-draft'
+import {
+  getXhsDefaultPaletteId,
+  getXhsFontPreset,
+  getXhsTemplatePalette,
+  getXhsTemplateStyle,
+  type XhsTemplatePalette,
+} from '../domain/xhs-template'
 import { captureXhsCard, downloadBlob, safeDownloadName } from '../lib/xhs-export'
 import { paginateForXhsCards } from '../lib/xhs-pagination'
 import { createXhsCardPageMeasurer, waitForXhsPaginationAssets } from '../lib/xhs-pagination-measurement'
 import { renderMissingImagePlaceholders } from '../lib/missing-assets'
-import { materializeLocalVideoHtml } from '../lib/local-video-registry'
+import { expandLocalVideoReferences, materializeLocalVideoHtml } from '../lib/local-video-registry'
 import {
   applyWechatTheme,
   getWechatTheme,
@@ -132,6 +140,7 @@ interface XhsTemplateOption {
   value: XhsCardTemplate
   label: string
   detail: string
+  useCase: string
 }
 
 type XhsTemplateCategoryId = 'inspiration' | 'editorial' | 'paper' | 'information' | 'composition'
@@ -149,10 +158,10 @@ const XHS_TEMPLATE_CATEGORIES: XhsTemplateCategory[] = [
     label: '灵感',
     detail: '明快、手写与情绪表达',
     templates: [
-      { value: 'memo', label: '灵感备忘', detail: '深色卡片 · 亮黄标注' },
-      { value: 'quote', label: '轻感明快', detail: '柠檬纸色 · 大号引语' },
-      { value: 'doodle', label: '涂鸦马克', detail: '手写标记 · 蓝色涂鸦' },
-      { value: 'soft', label: '黄昏手稿', detail: '暖粉纸色 · 手稿气质' },
+      { value: 'memo', label: '灵感备忘', detail: '深色卡片 · 亮黄标注', useCase: '观点随笔、灵感记录' },
+      { value: 'quote', label: '轻感明快', detail: '柠檬纸色 · 大号引语', useCase: '金句合集、情绪表达' },
+      { value: 'doodle', label: '涂鸦马克', detail: '手写标记 · 蓝色涂鸦', useCase: '创意教程、轻松分享' },
+      { value: 'soft', label: '黄昏手稿', detail: '暖粉纸色 · 手稿气质', useCase: '生活感悟、温柔叙事' },
     ],
   },
   {
@@ -160,10 +169,10 @@ const XHS_TEMPLATE_CATEGORIES: XhsTemplateCategory[] = [
     label: '杂志',
     detail: '网格、几何与编辑设计',
     templates: [
-      { value: 'retro', label: '线条复古', detail: '细线框架 · 复古图文' },
-      { value: 'geometry', label: '优雅几何', detail: '留白几何 · 柔色构成' },
-      { value: 'headline', label: '杂志先锋', detail: '荧光标题 · 杂志网格' },
-      { value: 'editorial', label: '文艺清新', detail: '书卷留白 · 图文散文' },
+      { value: 'retro', label: '线条复古', detail: '细线框架 · 复古图文', useCase: '品牌故事、人物访谈' },
+      { value: 'geometry', label: '优雅几何', detail: '留白几何 · 柔色构成', useCase: '审美趋势、设计观察' },
+      { value: 'headline', label: '杂志先锋', detail: '荧光标题 · 杂志网格', useCase: '潮流观点、专题策划' },
+      { value: 'editorial', label: '文艺清新', detail: '书卷留白 · 图文散文', useCase: '旅行散文、文化生活' },
     ],
   },
   {
@@ -171,10 +180,10 @@ const XHS_TEMPLATE_CATEGORIES: XhsTemplateCategory[] = [
     label: '纸感',
     detail: '手帐、纹理与书卷气质',
     templates: [
-      { value: 'journal', label: '手帐书写', detail: '胶带照片 · 旅行手帐' },
-      { value: 'texture', label: '素雅底纹', detail: '淡蓝纸纹 · 典雅宋体' },
-      { value: 'mono', label: '黑白极简', detail: '暖白纸张 · 极简长文' },
-      { value: 'dust', label: '札记集尘', detail: '竖排题签 · 旧纸札记' },
+      { value: 'journal', label: '手帐书写', detail: '胶带照片 · 旅行手帐', useCase: '旅行记录、日常手帐' },
+      { value: 'texture', label: '素雅底纹', detail: '淡蓝纸纹 · 典雅宋体', useCase: '读书笔记、人文观察' },
+      { value: 'mono', label: '黑白极简', detail: '暖白纸张 · 极简长文', useCase: '深度长文、克制表达' },
+      { value: 'dust', label: '札记集尘', detail: '竖排题签 · 旧纸札记', useCase: '历史札记、旧物故事' },
     ],
   },
   {
@@ -182,10 +191,10 @@ const XHS_TEMPLATE_CATEGORIES: XhsTemplateCategory[] = [
     label: '信息',
     detail: '知识、结构与清晰阅读',
     templates: [
-      { value: 'focus', label: '清晰明朗', detail: '建筑留白 · 清晰标题' },
-      { value: 'index', label: '理性现代', detail: '红黑秩序 · 学术信息' },
-      { value: 'logic', label: '逻辑结构', detail: '粉色标线 · 逻辑拆解' },
-      { value: 'clean', label: '简约基础', detail: '中性留白 · 基础长文' },
+      { value: 'focus', label: '清晰明朗', detail: '建筑留白 · 清晰标题', useCase: '方法教程、经验总结' },
+      { value: 'index', label: '理性现代', detail: '红黑秩序 · 学术信息', useCase: '行业分析、研究摘要' },
+      { value: 'logic', label: '逻辑结构', detail: '粉色标线 · 逻辑拆解', useCase: '框架拆解、知识清单' },
+      { value: 'clean', label: '简约基础', detail: '中性留白 · 基础长文', useCase: '通用长文、稳定阅读' },
     ],
   },
   {
@@ -193,15 +202,157 @@ const XHS_TEMPLATE_CATEGORIES: XhsTemplateCategory[] = [
     label: '构成',
     detail: '大图、叙事与色块编排',
     templates: [
-      { value: 'hero', label: '大图纯字', detail: '大图封面 · 纯字叠加' },
-      { value: 'narrative', label: '平实叙事', detail: '黑白图文 · 平实叙述' },
-      { value: 'fresh', label: '拼接色块', detail: '荧光拼接 · 信息卡片' },
-      { value: 'topology', label: '交叉拓扑', detail: '绿橙色块 · 交叉构成' },
+      { value: 'hero', label: '大图纯字', detail: '大图封面 · 纯字叠加', useCase: '摄影故事、人物专题' },
+      { value: 'narrative', label: '平实叙事', detail: '黑白图文 · 平实叙述', useCase: '纪实记录、产品故事' },
+      { value: 'fresh', label: '拼接色块', detail: '荧光拼接 · 信息卡片', useCase: '趋势速读、年轻议题' },
+      { value: 'topology', label: '交叉拓扑', detail: '绿橙色块 · 交叉构成', useCase: '创意提案、先锋观点' },
     ],
   },
 ]
 
 const XHS_TEMPLATE_OPTIONS = XHS_TEMPLATE_CATEGORIES.flatMap(category => category.templates)
+function WechatThemeGraphic({
+  motif,
+  index,
+}: {
+  motif: string
+  index: number
+}) {
+  return (
+    <div className="wechat-theme-graphic" data-motif={motif} aria-hidden="true">
+      <span className="wechat-theme-graphic-index">{String(index + 1).padStart(2, '0')}</span>
+      <span className="wechat-theme-graphic-mark" data-preview-part="accent" />
+      <span className="wechat-theme-graphic-title" data-preview-part="title"><span /><span /></span>
+      <span className="wechat-theme-graphic-copy" data-preview-part="body"><span /><span /><span /></span>
+      <span className="wechat-theme-graphic-quote" data-preview-part="quote"><span /><span /></span>
+    </div>
+  )
+}
+
+type XhsTemplateVariables = Record<`--xhs-${string}`, string>
+
+const XHS_OVERRIDE_FONT_PRESETS = {
+  sans: {
+    label: '通用黑体',
+    titleFamily: ARTICLE_FONT_FAMILIES.sans,
+    bodyFamily: ARTICLE_FONT_FAMILIES.sans,
+    titleWeight: 900,
+    titleLetterSpacing: '-0.045em',
+  },
+  serif: {
+    label: '通用宋体',
+    titleFamily: ARTICLE_FONT_FAMILIES.serif,
+    bodyFamily: ARTICLE_FONT_FAMILIES.serif,
+    titleWeight: 720,
+    titleLetterSpacing: '-0.02em',
+  },
+} as const
+
+function isDarkHexColor(color: string): boolean {
+  const match = color.match(/^#([0-9a-f]{6})$/i)
+  if (!match) return false
+  const value = Number.parseInt(match[1], 16)
+  const channels = [value >> 16, (value >> 8) & 255, value & 255].map(channel => {
+    const normalized = channel / 255
+    return normalized <= 0.04045 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4
+  })
+  return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722 < 0.28
+}
+
+function xhsTemplateVariables(
+  template: XhsCardTemplate,
+  paletteId: string,
+  fontMode: XhsTemplateFontMode = 'template',
+): XhsTemplateVariables {
+  const palette = getXhsTemplatePalette(template, paletteId)
+  const templateFont = getXhsFontPreset(template)
+  const font = fontMode === 'template' ? templateFont : XHS_OVERRIDE_FONT_PRESETS[fontMode]
+  const darkBackground = isDarkHexColor(palette.background)
+  return {
+    '--xhs-bg': palette.background,
+    '--xhs-surface': palette.surface,
+    '--xhs-ink': palette.ink,
+    '--xhs-heading': palette.heading,
+    '--xhs-accent': palette.accent,
+    '--xhs-secondary': palette.secondary,
+    '--xhs-soft': palette.soft,
+    '--xhs-border': palette.border,
+    '--xhs-muted': palette.muted,
+    '--xhs-inverse': palette.inverse,
+    '--xhs-highlight-bg': darkBackground ? palette.accent : palette.soft,
+    '--xhs-highlight-ink': darkBackground ? palette.inverse : palette.heading,
+    '--xhs-title-font': font.titleFamily,
+    '--xhs-body-font': font.bodyFamily,
+    '--xhs-title-weight': String(font.titleWeight),
+    '--xhs-title-letter-spacing': font.titleLetterSpacing,
+  }
+}
+
+function XhsPaletteSwatch({ palette }: { palette: XhsTemplatePalette }) {
+  return (
+    <span className="xhs-palette-swatch" aria-hidden="true">
+      <i style={{ background: palette.background }} />
+      <i style={{ background: palette.accent }} />
+      <i style={{ background: palette.secondary }} />
+      <i style={{ background: palette.heading }} />
+    </span>
+  )
+}
+
+function XhsPaletteControls({
+  template,
+  paletteId,
+  onChange,
+}: {
+  template: XhsCardTemplate
+  paletteId: string
+  onChange: (paletteId: string) => void
+}) {
+  const palettes = getXhsTemplateStyle(template).palettes
+  const selected = getXhsTemplatePalette(template, paletteId)
+  return (
+    <div className="xhs-palette-controls">
+      <div className="xhs-palette-control-heading"><strong>模板专属色板</strong><small>{selected.label} · 整套换色</small></div>
+      <div className="xhs-palette-options" role="radiogroup" aria-label="选择小红书模板色板">
+        {palettes.map(option => (
+          <button
+            type="button"
+            role="radio"
+            aria-label={`${option.label}色板`}
+            aria-checked={paletteId === option.id}
+            className={`xhs-palette-option${paletteId === option.id ? ' selected' : ''}`}
+            title={option.label}
+            key={option.id}
+            onClick={() => onChange(option.id)}
+          >
+            <XhsPaletteSwatch palette={option} />
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function XhsTemplateGraphic({ template, paletteId }: { template: XhsCardTemplate; paletteId: string }) {
+  return (
+    <div className="xhs-template-graphic" data-template={template} style={xhsTemplateVariables(template, paletteId)} aria-hidden="true">
+      <span className="xhs-template-graphic-panel is-cover" data-preview-part="cover">
+        <span className="xhs-template-graphic-kicker" />
+        <span className="xhs-template-graphic-heading"><span /><span /></span>
+        <span className="xhs-template-graphic-seal" />
+      </span>
+      <span className="xhs-template-graphic-panel is-article" data-preview-part="article">
+        <span className="xhs-template-graphic-section" />
+        <span className="xhs-template-graphic-lines"><span /><span /><span /></span>
+        <span className="xhs-template-graphic-quote"><span /><span /></span>
+      </span>
+      <span className="xhs-template-graphic-panel is-image" data-preview-part="image">
+        <span className="xhs-template-graphic-picture"><span /><span /></span>
+        <span className="xhs-template-graphic-caption"><span /><span /></span>
+      </span>
+    </div>
+  )
+}
 
 function xhsTemplateCategoryFor(template: XhsCardTemplate): XhsTemplateCategoryId {
   return XHS_TEMPLATE_CATEGORIES.find(category => category.templates.some(option => option.value === template))?.id ?? 'information'
@@ -299,6 +450,34 @@ function plainTextLength(html: string): number {
   const document = parseHtml(html)
   document.body.querySelectorAll('.missing-image-actions').forEach(element => element.remove())
   return Array.from(document.body.textContent || '').length
+}
+
+function makePreviewVideosStatic(document: Document): void {
+  document.body.querySelectorAll<HTMLVideoElement>('video').forEach(video => {
+    const name = video.dataset.ezVideoName?.trim() || '本地视频'
+    video.controls = false
+    video.autoplay = false
+    video.muted = true
+    video.playsInline = true
+    video.preload = 'auto'
+    video.tabIndex = -1
+    video.removeAttribute('controls')
+    video.removeAttribute('autoplay')
+    video.removeAttribute('role')
+    video.dataset.ezVideoPreview = 'static'
+    video.setAttribute('aria-label', `静态视频预览：${name}；请在左侧编辑区播放`)
+  })
+}
+
+function prepareCopiedVideos(document: Document): void {
+  document.body.querySelectorAll<HTMLVideoElement>('video').forEach(video => {
+    video.controls = true
+    video.autoplay = false
+    video.preload = 'metadata'
+    video.removeAttribute('autoplay')
+    video.removeAttribute('data-ez-video-preview')
+    video.setAttribute('controls', '')
+  })
 }
 
 function directImageLineTarget(node: ChildNode): HTMLElement | null {
@@ -446,6 +625,7 @@ function mapPreviewBlocks(
     image.loading = 'lazy'
     image.decoding = 'async'
   })
+  makePreviewVideosStatic(document)
   return { html: document.body.innerHTML, blockCount: blockIndex }
 }
 
@@ -468,6 +648,49 @@ function FontControls({
         <strong>字号</strong>
         <div className="x-formatting-options three" role="radiogroup" aria-label="选择文章字号">
           {([['small', '小'], ['medium', '中'], ['large', '大']] as const).map(([value, label]) => <button type="button" role="radio" aria-checked={formatting.fontSize === value} className={formatting.fontSize === value ? 'selected' : ''} key={value} onClick={() => onChange?.({ ...formatting, fontSize: value })}>{label}</button>)}
+        </div>
+      </section>
+    </div>
+  )
+}
+
+function XhsFontControls({
+  formatting,
+  settings,
+  onFormattingChange,
+  onFontModeChange,
+}: {
+  formatting: ArticleFormatting
+  settings: XhsCardSettings
+  onFormattingChange?: (formatting: ArticleFormatting) => void
+  onFontModeChange: (fontMode: XhsTemplateFontMode) => void
+}) {
+  const templateFont = getXhsFontPreset(settings.template)
+  return (
+    <div className="article-formatting-controls article-font-controls xhs-font-controls">
+      <section className="x-formatting-section">
+        <span className="xhs-template-font-intro"><strong>{templateFont.label}</strong><small>{templateFont.detail}</small></span>
+        <div className="x-formatting-options three" role="radiogroup" aria-label="选择小红书文章字体">
+          {([
+            ['template', '跟随模板'],
+            ['sans', '黑体'],
+            ['serif', '宋体'],
+          ] as const).map(([value, label]) => (
+            <button
+              type="button"
+              role="radio"
+              aria-checked={settings.fontMode === value}
+              className={settings.fontMode === value ? 'selected' : ''}
+              key={value}
+              onClick={() => onFontModeChange(value)}
+            >{label}</button>
+          ))}
+        </div>
+      </section>
+      <section className="x-formatting-section">
+        <strong>字号</strong>
+        <div className="x-formatting-options three" role="radiogroup" aria-label="选择文章字号">
+          {([['small', '小'], ['medium', '中'], ['large', '大']] as const).map(([value, label]) => <button type="button" role="radio" aria-checked={formatting.fontSize === value} className={formatting.fontSize === value ? 'selected' : ''} key={value} onClick={() => onFormattingChange?.({ ...formatting, fontSize: value })}>{label}</button>)}
         </div>
       </section>
     </div>
@@ -531,6 +754,8 @@ function FormattingAccordion({
   formatting,
   onFormattingChange,
   layoutContent,
+  fontContent,
+  colorControls,
   colorContent,
 }: {
   idPrefix: string
@@ -540,15 +765,17 @@ function FormattingAccordion({
   formatting: ArticleFormatting
   onFormattingChange?: (formatting: ArticleFormatting) => void
   layoutContent: ReactNode
+  fontContent?: ReactNode
+  colorControls?: ReactNode
   colorContent?: ReactNode
 }) {
   const contentBySection: Record<FormattingSection, ReactNode> = {
     layout: layoutContent,
-    font: <FontControls formatting={formatting} onChange={onFormattingChange} />,
+    font: fontContent ?? <FontControls formatting={formatting} onChange={onFormattingChange} />,
     spacing: <SpacingControls formatting={formatting} onChange={onFormattingChange} />,
     color: (
       <>
-        <AccentControls formatting={formatting} onChange={onFormattingChange} />
+        {colorControls ?? <AccentControls formatting={formatting} onChange={onFormattingChange} />}
         {colorContent}
       </>
     ),
@@ -596,6 +823,10 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
   const updateXhsSettings = onXhsSettingsChange ?? setUncontrolledXhsSettings
   const [xhsTemplateCategory, setXhsTemplateCategory] = useState<XhsTemplateCategoryId>(() => xhsTemplateCategoryFor(xhsSettings.template))
   const activeXhsTemplateCategory = XHS_TEMPLATE_CATEGORIES.find(category => category.id === xhsTemplateCategory) ?? XHS_TEMPLATE_CATEGORIES[3]
+  const activeXhsPalette = getXhsTemplatePalette(xhsSettings.template, xhsSettings.paletteId)
+  const activeXhsFont = xhsSettings.fontMode === 'template'
+    ? getXhsFontPreset(xhsSettings.template)
+    : XHS_OVERRIDE_FONT_PRESETS[xhsSettings.fontMode]
   const [selectedTarget, setSelectedTarget] = useState<PreviewEditTarget | null>(null)
   const [activeCard, setActiveCard] = useState(0)
   const [xhsPreviewMode, setXhsPreviewMode] = useState<XhsPreviewMode>('single')
@@ -666,21 +897,21 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
   const paginationKey = useMemo(() => [
     preparedXhsLayout.html,
     title,
-    previewFormatting.font,
     previewFormatting.fontSize,
     previewFormatting.lineHeight,
-    previewFormatting.accent,
     xhsSettings.template,
+    xhsSettings.paletteId,
+    xhsSettings.fontMode,
     String(xhsSettings.showFooter),
     xhsSettings.footerText,
   ].join('\u0001'), [
-    previewFormatting.accent,
-    previewFormatting.font,
     previewFormatting.fontSize,
     previewFormatting.lineHeight,
     preparedXhsLayout.html,
     title,
     xhsSettings.footerText,
+    xhsSettings.fontMode,
+    xhsSettings.paletteId,
     xhsSettings.showFooter,
     xhsSettings.template,
   ])
@@ -813,13 +1044,14 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
   }
 
   const xhsMeasurementVariables = useMemo(() => ({
-    '--article-accent': ARTICLE_ACCENT_COLORS[previewFormatting.accent],
-    '--article-font-family': ARTICLE_FONT_FAMILIES[previewFormatting.font],
+    ...xhsTemplateVariables(xhsSettings.template, xhsSettings.paletteId, xhsSettings.fontMode),
+    '--article-accent': activeXhsPalette.accent,
+    '--article-font-family': activeXhsFont.bodyFamily,
     '--article-font-size': ARTICLE_FONT_SIZES[previewFormatting.fontSize],
     '--article-line-height': ARTICLE_LINE_HEIGHTS[previewFormatting.lineHeight],
     '--xhs-body-font-size': XHS_FONT_SIZES[previewFormatting.fontSize],
     '--xhs-body-line-height': XHS_LINE_HEIGHTS[previewFormatting.lineHeight],
-  }), [previewFormatting.accent, previewFormatting.font, previewFormatting.fontSize, previewFormatting.lineHeight])
+  }), [activeXhsFont.bodyFamily, activeXhsPalette.accent, previewFormatting.fontSize, previewFormatting.lineHeight, xhsSettings.fontMode, xhsSettings.paletteId, xhsSettings.template])
 
   const selectedXhsImage = preparedXhsLayout.images.find(image => image.key === selectedXhsImageKey) ?? null
 
@@ -1004,8 +1236,12 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
     setWechatCopyState('copying')
     if (wechatCopyTimerRef.current !== null) window.clearTimeout(wechatCopyTimerRef.current)
     try {
-      const copyDocument = parseHtml(applyWechatTheme(html, previewWechatSettings, previewFormatting))
-      applyPlatformCompatibilityToDocument(copyDocument, 'wechat')
+      const copyHtml = await expandLocalVideoReferences(
+        applyWechatTheme(html, previewWechatSettings, previewFormatting),
+      )
+      const copyDocument = parseHtml(copyHtml)
+      applyPlatformCompatibilityToDocument(copyDocument, 'wechat', { replaceVideos: false })
+      prepareCopiedVideos(copyDocument)
       await copyRichHtml(copyDocument.body.innerHTML)
       setWechatCopyState('success')
       wechatCopyTimerRef.current = window.setTimeout(() => {
@@ -1561,7 +1797,16 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
     updateXhsSettings({
       ...xhsSettings,
       template,
+      paletteId: getXhsDefaultPaletteId(template),
     })
+  }
+
+  const applyXhsPalette = (paletteId: string) => {
+    updateXhsSettings({ ...xhsSettings, paletteId })
+  }
+
+  const applyXhsFontMode = (fontMode: XhsTemplateFontMode) => {
+    updateXhsSettings({ ...xhsSettings, fontMode })
   }
 
   const changeSelectedXhsImageLayout = (layout: XhsImageLayout) => {
@@ -1744,6 +1989,9 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
     const card = <section
       key={options.exportRef ? index : undefined}
       className={`xhs-card-page template-${xhsSettings.template}${index === 0 ? ' is-cover' : ''}`}
+      data-xhs-palette={xhsSettings.paletteId}
+      data-xhs-font={xhsSettings.fontMode}
+      style={xhsMeasurementVariables as CSSProperties}
       aria-label={options.interactive ? `第 ${index + 1} 张，共 ${cardPages.length} 张` : undefined}
       data-xhs-page={options.interactive ? index : undefined}
       ref={options.exportRef ? element => { exportCardRefs.current[index] = element } : undefined}
@@ -1932,6 +2180,10 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
                   onFormattingChange={onFormattingChange}
                   layoutContent={(
                     <section className="wechat-theme-layout" aria-label="公众号主题排版">
+                      <div className="template-library-summary wechat-template-library-summary">
+                        <span className="template-library-index">W</span>
+                        <span><strong>图形主题库</strong><small>色彩 · 标题 · 引用 · 节奏</small></span>
+                      </div>
                       <div className="wechat-theme-categories" role="tablist" aria-label="筛选公众号主题">
                         {WECHAT_THEME_CATEGORIES.map(category => (
                           <button
@@ -1945,21 +2197,31 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
                         ))}
                       </div>
                       <div className="wechat-theme-grid">
-                        {visibleWechatThemes.map(theme => (
-                          <button
-                            type="button"
-                            className={`wechat-theme-card ${wechatSettings.themeId === theme.id ? 'selected' : ''}`}
-                            aria-pressed={wechatSettings.themeId === theme.id}
+                        {visibleWechatThemes.map((theme, themeIndex) => (
+                          <article
+                            className={`wechat-theme-card${wechatSettings.themeId === theme.id ? ' selected' : ''}`}
                             key={theme.id}
-                            onClick={() => selectWechatTheme(theme.id)}
                             style={{
                               '--theme-primary': theme.primary,
                               '--theme-surface': theme.surface,
                             } as CSSProperties}
                           >
-                            <span className={`wechat-theme-mock mock-${theme.mock}`}><i /><i /><i /></span>
-                            <span><strong>{theme.name}</strong><small>{theme.tag}</small></span>
-                          </button>
+                            <button
+                              type="button"
+                              className="wechat-theme-select-target"
+                              aria-label={`应用${theme.name}主题：${theme.description}`}
+                              aria-pressed={wechatSettings.themeId === theme.id}
+                              onClick={() => selectWechatTheme(theme.id)}
+                            />
+                            <WechatThemeGraphic motif={theme.mock} index={themeIndex} />
+                            <footer className="wechat-theme-card-copy">
+                              <span className="wechat-theme-card-heading">
+                                <span><strong>{theme.name}</strong><small>{theme.tag}</small></span>
+                                <b>{getWechatThemeCategory(theme.id)}</b>
+                              </span>
+                              <span className="wechat-theme-card-status" aria-hidden="true">{wechatSettings.themeId === theme.id ? '✓ 已选' : '应用'}</span>
+                            </footer>
+                          </article>
                         ))}
                       </div>
                     </section>
@@ -2117,9 +2379,15 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
                   onSectionToggle={section => toggleFormattingSection('xhs', section)}
                   formatting={formatting}
                   onFormattingChange={onFormattingChange}
+                  fontContent={<XhsFontControls formatting={formatting} settings={xhsSettings} onFormattingChange={onFormattingChange} onFontModeChange={applyXhsFontMode} />}
+                  colorControls={<XhsPaletteControls template={xhsSettings.template} paletteId={xhsSettings.paletteId} onChange={applyXhsPalette} />}
                   layoutContent={(
                     <section className="xhs-template-tools" aria-label="小红书视觉模板">
-                      <div className="xhs-tool-heading"><strong>视觉模板</strong><small>{XHS_TEMPLATE_OPTIONS.length} 套 · 三页预览</small></div>
+                      <div className="template-library-summary xhs-template-library-summary">
+                        <span className="template-library-index">R</span>
+                        <span><strong>长文页型图谱</strong><small>封面 · 正文 · 图片</small></span>
+                        <b>{XHS_TEMPLATE_OPTIONS.length} 套</b>
+                      </div>
                       <div className="xhs-template-category-nav" role="tablist" aria-label="选择模板分类">
                         {XHS_TEMPLATE_CATEGORIES.map(category => (
                           <button
@@ -2158,16 +2426,18 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
                                   aria-checked={xhsSettings.template === option.value}
                                   aria-label={`${option.label}：${option.detail}`}
                                   title={`选择${option.label}`}
-                                  className={`xhs-template-option template-${option.value}${xhsSettings.template === option.value ? ' selected' : ''}`}
+                                  className="xhs-template-select-target"
                                   onClick={() => applyXhsTemplate(option.value)}
-                                >
-                                  <span className="xhs-template-triptych" aria-hidden="true">
-                                    {(['cover', 'article', 'image'] as const).map(variant => (
-                                      <span className="xhs-template-mock" data-template={option.value} data-variant={variant} key={variant}><i /><i /><i /><i /><i /></span>
-                                    ))}
-                                  </span>
-                                </button>
+                                />
+                                <XhsTemplateGraphic
+                                  template={option.value}
+                                  paletteId={xhsSettings.template === option.value ? xhsSettings.paletteId : getXhsDefaultPaletteId(option.value)}
+                                />
                               </div>
+                              <footer className="xhs-template-card-meta">
+                                <span className="xhs-template-use-case"><b>适合</b>{option.useCase}</span>
+                                <span className="xhs-template-card-status" aria-hidden="true">{xhsSettings.template === option.value ? '✓ 已选' : '应用'}</span>
+                              </footer>
                             </section>
                           ))}
                         </div>

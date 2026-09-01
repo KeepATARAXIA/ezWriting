@@ -2,9 +2,10 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_ARTICLE_FORMATTING } from '../domain/formatting'
-import type { XhsCardSettings } from '../domain/saved-draft'
+import { DEFAULT_XHS_CARD_SETTINGS, type XhsCardSettings } from '../domain/saved-draft'
 import * as xhsExport from '../lib/xhs-export'
 import * as xhsPagination from '../lib/xhs-pagination'
+import { clearLocalVideoRegistry, registerLocalVideo } from '../lib/local-video-registry'
 import * as wechatTheme from '../lib/wechat-theme'
 import { PlatformPreviews } from './platform-previews'
 
@@ -23,6 +24,7 @@ describe('PlatformPreviews editor-to-preview locating', () => {
   afterEach(async () => {
     await act(async () => root.unmount())
     container.remove()
+    clearLocalVideoRegistry()
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
   })
@@ -379,10 +381,23 @@ describe('PlatformPreviews editor-to-preview locating', () => {
     expect(categoryButtons[0].getAttribute('aria-selected')).toBe('true')
     expect(container.querySelectorAll('.wechat-theme-card').length).toBeGreaterThan(0)
     expect(container.querySelectorAll('.wechat-theme-card').length).toBeLessThan(26)
+    expect(container.querySelectorAll('.wechat-theme-card .wechat-theme-graphic')).toHaveLength(
+      container.querySelectorAll('.wechat-theme-card').length,
+    )
+    expect(container.querySelectorAll('.wechat-theme-card [data-preview-part="title"]')).toHaveLength(
+      container.querySelectorAll('.wechat-theme-card').length,
+    )
+    expect(container.querySelectorAll('.wechat-theme-card [data-preview-part="quote"]')).toHaveLength(
+      container.querySelectorAll('.wechat-theme-card').length,
+    )
+    expect(container.querySelector('.wechat-theme-card .wechat-theme-preview-document')).toBeNull()
+    expect(container.querySelectorAll('.wechat-theme-card .wechat-theme-select-target')).toHaveLength(
+      container.querySelectorAll('.wechat-theme-card').length,
+    )
     expect(container.querySelector('.wechat-layout')?.classList.contains('tool-rail-open')).toBe(true)
     expect(container.querySelector('.wechat-viewport')?.nextElementSibling?.classList.contains('preview-tool-resizer')).toBe(true)
     expect(container.querySelector('.preview-context-actions .preview-settings-toggle')?.textContent).toContain('设置')
-    expect(container.querySelector('[data-wechat-theme="literary"]')).not.toBeNull()
+    expect(container.querySelector('.wechat-content [data-wechat-theme="literary"]')).not.toBeNull()
     expect(container.querySelector('#wechat-settings-layout-trigger')?.getAttribute('aria-expanded')).toBe('true')
     expect(container.querySelectorAll('#wechat-theme-panel .settings-accordion-trigger')).toHaveLength(4)
     expect(container.querySelector('#wechat-settings-layout-panel [aria-label="选择文章版式"]')).toBeNull()
@@ -398,16 +413,17 @@ describe('PlatformPreviews editor-to-preview locating', () => {
     onFormattingChange.mockClear()
 
     await act(async () => categoryButtons.at(-1)?.click())
-    const cards = container.querySelectorAll<HTMLButtonElement>('.wechat-theme-card')
+    const cards = container.querySelectorAll<HTMLElement>('.wechat-theme-card')
     expect(cards).toHaveLength(26)
     const swiss = Array.from(cards).find(card => card.textContent?.includes('瑞士索引'))!
+    const swissSelect = swiss.querySelector<HTMLButtonElement>('.wechat-theme-select-target')!
 
-    await act(async () => swiss.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })))
-    expect(container.querySelector('[data-wechat-theme="literary"]')).not.toBeNull()
-    expect(container.querySelector('[data-wechat-theme="swiss-index"]')).toBeNull()
+    await act(async () => swissSelect.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })))
+    expect(container.querySelector('.wechat-content [data-wechat-theme="literary"]')).not.toBeNull()
+    expect(container.querySelector('.wechat-content [data-wechat-theme="swiss-index"]')).toBeNull()
     expect(onFormattingChange).not.toHaveBeenCalled()
 
-    await act(async () => swiss.click())
+    await act(async () => swissSelect.click())
     expect(onFormattingChange).toHaveBeenCalledWith(expect.objectContaining({
       wechat: expect.objectContaining({ themeId: 'swiss-index' }),
     }))
@@ -450,6 +466,58 @@ describe('PlatformPreviews editor-to-preview locating', () => {
     expect(clipboardPayload?.['text/plain'].type).toBe('text/plain')
     expect(copyButton.textContent).toContain('已复制')
     expect(copyButton.getAttribute('aria-label')).toBe('公众号格式已复制')
+  })
+
+  it('keeps right-side videos static while preserving a playable video in WeChat clipboard HTML', async () => {
+    const reference = registerLocalVideo(new Blob(['clip'], { type: 'video/mp4' }))
+    const write = vi.fn().mockResolvedValue(undefined)
+    let clipboardPayload: Record<string, Blob> | undefined
+    class ClipboardItemMock {
+      constructor(payload: Record<string, Blob>) {
+        clipboardPayload = payload
+      }
+    }
+    vi.stubGlobal('ClipboardItem', ClipboardItemMock)
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { write },
+    })
+
+    await act(async () => root.render(
+      <PlatformPreviews
+        activePlatform="wechat"
+        title="Static video preview"
+        html={`<p>正文</p><video controls src="${reference}" data-ez-video-name="演示.mp4"></video>`}
+        formatting={DEFAULT_ARTICLE_FORMATTING}
+        previewDevice="desktop"
+        onPreviewDeviceChange={vi.fn()}
+      />,
+    ))
+
+    const previewVideo = container.querySelector<HTMLVideoElement>('.wechat-content video')!
+    expect(previewVideo).not.toBeNull()
+    expect(previewVideo.controls).toBe(false)
+    expect(previewVideo.autoplay).toBe(false)
+    expect(previewVideo.getAttribute('role')).toBeNull()
+    expect(previewVideo.dataset.ezVideoPreview).toBe('static')
+    expect(previewVideo.getAttribute('aria-label')).toContain('请在左侧编辑区播放')
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="复制公众号格式"]')?.click()
+      await vi.waitFor(() => expect(write).toHaveBeenCalledTimes(1), { timeout: 800 })
+    })
+
+    const copiedHtml = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.addEventListener('load', () => resolve(String(reader.result || '')), { once: true })
+      reader.addEventListener('error', () => reject(reader.error), { once: true })
+      reader.readAsText(clipboardPayload!['text/html'])
+    })
+    expect(copiedHtml).toContain('<video')
+    expect(copiedHtml).toContain('controls=""')
+    expect(copiedHtml).toContain('src="data:video/mp4;base64,Y2xpcA=="')
+    expect(copiedHtml).not.toContain('data-ez-video-preview')
+    expect(copiedHtml).not.toContain('data-ez-video-placeholder')
   })
 
   it('focuses the left source immediately when a preview block is selected and has no floating edit button', async () => {
@@ -591,8 +659,15 @@ describe('PlatformPreviews editor-to-preview locating', () => {
       expect(container.querySelector('.xhs-template-category-description')?.textContent).toBe(description)
       expect(templateLabels).toEqual(expectedTemplates)
       expect(container.querySelectorAll('.xhs-template-gallery [role="radio"]')).toHaveLength(4)
-      expect(container.querySelectorAll('.xhs-template-gallery .xhs-template-triptych')).toHaveLength(4)
-      expect(container.querySelectorAll('.xhs-template-gallery .xhs-template-mock')).toHaveLength(12)
+      expect(container.querySelectorAll('.xhs-template-gallery .xhs-template-graphic')).toHaveLength(4)
+      expect(container.querySelectorAll('.xhs-template-gallery .xhs-template-graphic-panel')).toHaveLength(12)
+      expect(container.querySelectorAll('.xhs-template-gallery [data-preview-part="cover"]')).toHaveLength(4)
+      expect(container.querySelectorAll('.xhs-template-gallery [data-preview-part="article"]')).toHaveLength(4)
+      expect(container.querySelectorAll('.xhs-template-gallery [data-preview-part="image"]')).toHaveLength(4)
+      expect(container.querySelectorAll('.xhs-template-gallery .xhs-template-graphic-picture')).toHaveLength(4)
+      expect(container.querySelector('.xhs-template-gallery .xhs-template-use-case')?.textContent?.trim().length).toBeGreaterThan(6)
+      expect(container.querySelector('.xhs-template-gallery .xhs-template-preview-page')).toBeNull()
+      expect(container.querySelector('.xhs-template-gallery .xhs-template-preview-image')).toBeNull()
     }
     await act(async () => categoryTabs.find(tab => tab.textContent?.startsWith('信息'))?.click())
     expect(container.querySelectorAll('.xhs-template-gallery [role="radio"][aria-checked="true"]')).toHaveLength(1)
@@ -783,6 +858,8 @@ describe('PlatformPreviews editor-to-preview locating', () => {
     const onXhsSettingsChange = vi.fn()
     const xhsSettings: XhsCardSettings = {
       template: 'clean',
+      paletteId: 'paper',
+      fontMode: 'template',
       showPageNumber: false,
       showFooter: false,
       footerText: '独立署名',
@@ -815,7 +892,67 @@ describe('PlatformPreviews editor-to-preview locating', () => {
     expect(onXhsSettingsChange).toHaveBeenCalledWith({
       ...xhsSettings,
       template: 'geometry',
+      paletteId: 'cobalt-cream',
     })
+  })
+
+  it('applies template palettes, template fonts, and readable dark highlights as one Xiaohongshu preset', async () => {
+    const onXhsSettingsChange = vi.fn()
+    const renderSettings = async (settings: XhsCardSettings) => act(async () => root.render(
+      <PlatformPreviews
+        activePlatform="xhs"
+        title="暗色高亮适配"
+        html="<p>正文 <mark>需要看清的高亮</mark></p>"
+        formatting={DEFAULT_ARTICLE_FORMATTING}
+        xhsSettings={settings}
+        onXhsSettingsChange={onXhsSettingsChange}
+        previewDevice="desktop"
+        onPreviewDeviceChange={vi.fn()}
+      />,
+    ))
+    const memoSettings: XhsCardSettings = {
+      ...DEFAULT_XHS_CARD_SETTINGS,
+      template: 'memo',
+      paletteId: 'yellow-note',
+      fontMode: 'template',
+    }
+
+    await renderSettings(memoSettings)
+    const darkPage = container.querySelector<HTMLElement>('.xhs-card-page')!
+    expect(darkPage.dataset.xhsPalette).toBe('yellow-note')
+    expect(darkPage.style.getPropertyValue('--xhs-bg')).toBe('#2d2e2c')
+    expect(darkPage.style.getPropertyValue('--xhs-highlight-bg')).toBe('#f3d64e')
+    expect(darkPage.style.getPropertyValue('--xhs-highlight-ink')).toBe('#171816')
+    expect(darkPage.style.getPropertyValue('--xhs-title-font')).toContain('MiSans')
+    expect(darkPage.textContent).toContain('需要看清的高亮')
+
+    await act(async () => container.querySelector<HTMLButtonElement>('#xhs-settings-color-trigger')?.click())
+    expect(container.querySelectorAll('[aria-label="选择小红书模板色板"]')).toHaveLength(1)
+    const bluePalette = container.querySelector<HTMLButtonElement>('#xhs-settings-color-panel [aria-label="蓝标黑色板"]')!
+    await act(async () => bluePalette.click())
+    expect(onXhsSettingsChange).toHaveBeenLastCalledWith({ ...memoSettings, paletteId: 'blue-note' })
+
+    const blueSettings = { ...memoSettings, paletteId: 'blue-note' }
+    await renderSettings(blueSettings)
+    const bluePage = container.querySelector<HTMLElement>('.xhs-card-page')!
+    expect(bluePage.style.getPropertyValue('--xhs-bg')).toBe('#25292d')
+    expect(bluePage.style.getPropertyValue('--xhs-accent')).toBe('#52b7ff')
+    expect(container.querySelector<HTMLElement>('.xhs-template-showcase.selected .xhs-template-graphic')?.style.getPropertyValue('--xhs-bg')).toBe('#25292d')
+
+    const journalSettings: XhsCardSettings = {
+      ...memoSettings,
+      template: 'journal',
+      paletteId: 'kraft',
+    }
+    await renderSettings(journalSettings)
+    expect(container.querySelector<HTMLElement>('.xhs-card-page')?.style.getPropertyValue('--xhs-title-font')).toContain('LXGW WenKai')
+
+    await act(async () => container.querySelector<HTMLButtonElement>('#xhs-settings-font-trigger')?.click())
+    expect(container.querySelector('.xhs-template-font-intro')?.textContent).toContain('手写楷体')
+    const serifFont = Array.from(container.querySelectorAll<HTMLButtonElement>('#xhs-settings-font-panel [aria-label="选择小红书文章字体"] button'))
+      .find(button => button.textContent === '宋体')!
+    await act(async () => serifFont.click())
+    expect(onXhsSettingsChange).toHaveBeenLastCalledWith({ ...journalSettings, fontMode: 'serif' })
   })
 
   it('selects a Xiaohongshu image and edits its layout and width without editing the source body', async () => {
@@ -911,6 +1048,8 @@ describe('PlatformPreviews editor-to-preview locating', () => {
     const onXhsSettingsChange = vi.fn()
     const settings: XhsCardSettings = {
       template: 'clean',
+      paletteId: 'paper',
+      fontMode: 'template',
       showPageNumber: true,
       showFooter: true,
       footerText: 'EZWRITING',
