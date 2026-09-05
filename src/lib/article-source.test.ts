@@ -38,6 +38,16 @@ describe('article source', () => {
     expect(next.html).toContain('data-callout="warning"')
   })
 
+  it('renders punctuation-adjacent strong text while keeping the edited source unchanged', () => {
+    const markdown = '请注意，是**整次请求！**都按高价算。'
+    const next = updateArticleFromSource(article(), markdown)
+
+    expect(next.html).toContain('<strong>整次请求！</strong>都按高价算。')
+    expect(next.sourceText).toBe(markdown)
+    expect(next.markdown).toBe(markdown)
+    expect(sourceLinesByBlock(markdown, 'markdown')).toEqual([[1]])
+  })
+
   it('turns legacy HTML into readable Markdown while preserving embedded images underneath', () => {
     const dataUri = 'data:image/png;base64,AQIDBA=='
     const source = resolveArticleSource(article({

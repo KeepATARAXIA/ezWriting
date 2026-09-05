@@ -499,7 +499,7 @@ test('flushes an immediate edit before delete and restores the latest version', 
   await page.locator('.history-draft-menu-button').first().click()
   await page.getByRole('menuitem', { name: '删除' }).click()
   await page.getByRole('button', { name: '展开历史记录' }).click()
-  await page.locator('.history-undo-notice button').click()
+  await page.locator('.history-undo-notice').getByRole('button', { name: '撤销', exact: true }).click()
   await page.locator('.history-draft-open').first().click()
 
   await expect(page.getByLabel('文章标题')).toHaveValue('删除前最后一版')

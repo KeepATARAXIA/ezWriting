@@ -836,6 +836,7 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
   const [xhsImagePopover, setXhsImagePopover] = useState<XhsImagePopoverPosition | null>(null)
   const [wechatThemeCategory, setWechatThemeCategory] = useState<WechatThemeCategory>('简约')
   const [toolRailWidth, setToolRailWidth] = useState(readToolRailWidth)
+  const [toolRailLayout, setToolRailLayout] = useState<{ max: number; value: number } | null>(null)
   const [toolRailOpen, setToolRailOpen] = useState(readToolRailOpen)
   const [openFormattingSections, setOpenFormattingSections] = useState<Record<PreviewPlatform, FormattingSection[]>>({
     wechat: ['layout'],
@@ -1289,7 +1290,7 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
     if (!stage) return
     const rawWidth = stage.getBoundingClientRect().right - clientX
     if (toolRailResizeRef.current) toolRailResizeRef.current.rawWidth = rawWidth
-    setToolRailWidth(Math.min(TOOL_RAIL_MAX_WIDTH, Math.max(TOOL_RAIL_MIN_WIDTH, rawWidth)))
+    setToolRailWidth(Math.min(toolRailLayout?.max ?? TOOL_RAIL_MAX_WIDTH, Math.max(TOOL_RAIL_MIN_WIDTH, rawWidth)))
   }
 
   const startToolRailResize = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -1315,7 +1316,7 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
       persistToolRailOpen({ ...toolRailOpen, [activePlatform]: false })
       return
     }
-    const persistedWidth = Math.min(TOOL_RAIL_MAX_WIDTH, Math.max(TOOL_RAIL_MIN_WIDTH, resizeState.rawWidth))
+    const persistedWidth = Math.min(toolRailLayout?.max ?? TOOL_RAIL_MAX_WIDTH, Math.max(TOOL_RAIL_MIN_WIDTH, resizeState.rawWidth))
     setToolRailWidth(persistedWidth)
     try {
       window.localStorage.setItem(TOOL_RAIL_WIDTH_KEY, String(persistedWidth))
@@ -1330,13 +1331,13 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
       persistToolRailOpen({ ...toolRailOpen, [activePlatform]: false })
       return
     }
-    let next = toolRailWidth
+    let next = toolRailLayout?.value ?? toolRailWidth
     if (event.key === 'ArrowLeft') next += 16
     else if (event.key === 'ArrowRight') next -= 16
-    else if (event.key === 'End') next = TOOL_RAIL_MAX_WIDTH
+    else if (event.key === 'End') next = toolRailLayout?.max ?? TOOL_RAIL_MAX_WIDTH
     else return
     event.preventDefault()
-    next = Math.min(TOOL_RAIL_MAX_WIDTH, Math.max(TOOL_RAIL_MIN_WIDTH, next))
+    next = Math.min(toolRailLayout?.max ?? TOOL_RAIL_MAX_WIDTH, Math.max(TOOL_RAIL_MIN_WIDTH, next))
     setToolRailWidth(next)
     try {
       window.localStorage.setItem(TOOL_RAIL_WIDTH_KEY, String(next))
@@ -1349,6 +1350,29 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
     onPreviewDeviceChange('desktop')
     window.requestAnimationFrame(() => mobilePreviewButtonRef.current?.focus())
   }, [onPreviewDeviceChange])
+
+  useEffect(() => {
+    const stage = previewStageRef.current
+    const rail = stage?.querySelector<HTMLElement>('.preview-tool-rail')
+    if (!stage || !rail || typeof ResizeObserver === 'undefined') return
+    const measure = () => {
+      const width = stage.getBoundingClientRect().width
+      const separator = stage.querySelector<HTMLElement>('.preview-tool-resizer')
+      if (!width || !separator?.getBoundingClientRect().width) {
+        setToolRailLayout(null)
+        return
+      }
+      // Reserve the readable preview and its 10px divider, matching the CSS grid.
+      const max = Math.max(TOOL_RAIL_MIN_WIDTH, Math.min(TOOL_RAIL_MAX_WIDTH, Math.floor(width - 450)))
+      const value = Math.round(rail.getBoundingClientRect().width)
+      setToolRailLayout(current => current?.max === max && current.value === value ? current : { max, value })
+    }
+    const observer = new ResizeObserver(measure)
+    observer.observe(stage)
+    observer.observe(rail)
+    measure()
+    return () => observer.disconnect()
+  }, [activePlatform, toolRailOpen])
 
   useEffect(() => {
     if (!shouldDeferEstimatedPagination) return
@@ -2157,8 +2181,8 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
                   aria-label="调整公众号主题侧栏宽度"
                   aria-orientation="vertical"
                   aria-valuemin={TOOL_RAIL_MIN_WIDTH}
-                  aria-valuemax={TOOL_RAIL_MAX_WIDTH}
-                  aria-valuenow={toolRailWidth}
+                  aria-valuemax={toolRailLayout?.max ?? TOOL_RAIL_MAX_WIDTH}
+                  aria-valuenow={toolRailLayout?.value ?? toolRailWidth}
                   title="向左右拖动调整宽度；缩到最窄后松开可收起"
                   onPointerDown={startToolRailResize}
                   onPointerMove={moveToolRailResize}
@@ -2358,8 +2382,8 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
                   aria-label="调整小红书工具侧栏宽度"
                   aria-orientation="vertical"
                   aria-valuemin={TOOL_RAIL_MIN_WIDTH}
-                  aria-valuemax={TOOL_RAIL_MAX_WIDTH}
-                  aria-valuenow={toolRailWidth}
+                  aria-valuemax={toolRailLayout?.max ?? TOOL_RAIL_MAX_WIDTH}
+                  aria-valuenow={toolRailLayout?.value ?? toolRailWidth}
                   title="向左右拖动调整宽度；缩到最窄后松开可收起"
                   onPointerDown={startToolRailResize}
                   onPointerMove={moveToolRailResize}
@@ -2491,8 +2515,8 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
                   aria-label="调整 X 长文排版侧栏宽度"
                   aria-orientation="vertical"
                   aria-valuemin={TOOL_RAIL_MIN_WIDTH}
-                  aria-valuemax={TOOL_RAIL_MAX_WIDTH}
-                  aria-valuenow={toolRailWidth}
+                  aria-valuemax={toolRailLayout?.max ?? TOOL_RAIL_MAX_WIDTH}
+                  aria-valuenow={toolRailLayout?.value ?? toolRailWidth}
                   title="向左右拖动调整宽度；缩到最窄后松开可收起"
                   onPointerDown={startToolRailResize}
                   onPointerMove={moveToolRailResize}

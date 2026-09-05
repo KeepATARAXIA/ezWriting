@@ -207,6 +207,91 @@ describe('renderMarkdownToSafeHtml', () => {
     expect(normalizeMarkdownStrongWhitespace(markdown)).toBe(markdown)
   })
 
+  it('renders the screenshot sentence without exposing strong markers', () => {
+    const markdown = '输入费直接翻倍，输出费涨 1.5 倍！请注意，是**整次请求！**都按高价算。'
+    const document = new DOMParser().parseFromString(renderMarkdownToSafeHtml(markdown), 'text/html')
+
+    expect(document.querySelector('strong')?.textContent).toBe('整次请求！')
+    expect(document.querySelector('p')?.textContent).toBe(markdown.replaceAll('**', ''))
+  })
+
+  it.each([
+    ['是**“整次请求”**都算', '“整次请求”'],
+    ['是**（整次请求）**都算', '（整次请求）'],
+    ['是**【整次请求】**都算', '【整次请求】'],
+    ['是**！整次请求**都算', '！整次请求'],
+    ['是**整次请求：**都算', '整次请求：'],
+    ['是**整次请求!**都算', '整次请求!'],
+    ['是**"整次请求"**都算', '"整次请求"'],
+    ['注意：**整次请求！**都算', '整次请求！'],
+    ['请看**“整次请求”**。', '“整次请求”'],
+  ])('supports punctuation at strong boundaries: %s', (markdown, expected) => {
+    const document = new DOMParser().parseFromString(renderMarkdownToSafeHtml(markdown), 'text/html')
+
+    expect(document.querySelector('strong')?.textContent).toBe(expected)
+    expect(document.querySelector('p')?.textContent).toBe(markdown.replaceAll('**', ''))
+  })
+
+  it('keeps adjacent strong spans separate when punctuation prevents the first closing marker', () => {
+    const markdown = '是**整次请求！**都算，另有**正常加粗**和**“第二处”**要看。'
+    const document = new DOMParser().parseFromString(renderMarkdownToSafeHtml(markdown), 'text/html')
+
+    expect(Array.from(document.querySelectorAll('strong'), element => element.textContent))
+      .toEqual(['整次请求！', '正常加粗', '“第二处”'])
+    expect(document.querySelector('p')?.textContent).toBe(markdown.replaceAll('**', ''))
+  })
+
+  it('preserves inline formatting and masks markers inside code, links, and HTML attributes', () => {
+    const markdown = '是**“含 *斜体*、`**代码**`、[链接](https://example.test/a**b)和<span title="**属性**">正文</span>！”**都算'
+    const document = new DOMParser().parseFromString(renderMarkdownToSafeHtml(markdown), 'text/html')
+    const strong = document.querySelector('strong')
+
+    expect(document.querySelectorAll('strong')).toHaveLength(1)
+    expect(strong?.querySelector('em')?.textContent).toBe('斜体')
+    expect(strong?.querySelector('code')?.textContent).toBe('**代码**')
+    expect(strong?.querySelector('a')?.getAttribute('href')).toBe('https://example.test/a**b')
+    expect(strong?.querySelector('span')?.getAttribute('title')).toBe('**属性**')
+    expect(strong?.textContent).toBe('“含 斜体、**代码**、链接和正文！”')
+  })
+
+  it('keeps code examples, escaped delimiters, and incomplete strong markers literal', () => {
+    const markdown = [
+      '`是**“代码！”**都算`',
+      '',
+      '```md',
+      '是**“围栏！”**都算',
+      '```',
+      '',
+      '    是**“缩进！”**都算',
+      '',
+      String.raw`是\*\*“转义！”\*\*都算`,
+      '',
+      String.raw`是**“未闭合！”\*\*都算`,
+      '',
+      '是**“缺少结尾！',
+    ].join('\n')
+    const document = new DOMParser().parseFromString(renderMarkdownToSafeHtml(markdown), 'text/html')
+
+    expect(document.querySelector('strong')).toBeNull()
+    expect(Array.from(document.querySelectorAll('code'), element => element.textContent?.trim()))
+      .toEqual(['是**“代码！”**都算', '是**“围栏！”**都算', '是**“缩进！”**都算'])
+    expect(document.body.textContent).toContain('是**“转义！”**都算')
+    expect(document.body.textContent).toContain('是**“未闭合！”**都算')
+  })
+
+  it('preserves standard nested emphasis and strong punctuation in footnotes', () => {
+    const document = new DOMParser().parseFromString(renderMarkdownToSafeHtml([
+      '***加粗斜体***，**加粗和 *斜体***，**外层 __内层__ 外层**。正文[^a]',
+      '',
+      '[^a]: 是**整次请求！**都算',
+    ].join('\n')), 'text/html')
+
+    expect(document.querySelector('p em > strong')?.textContent).toBe('加粗斜体')
+    expect(document.querySelector('p strong > em')?.textContent).toBe('斜体')
+    expect(document.querySelector('p strong > strong')?.textContent).toBe('内层')
+    expect(document.querySelector('[data-footnote-content] strong')?.textContent).toBe('整次请求！')
+  })
+
   it('converts Obsidian callouts into semantic editable containers', () => {
     const html = renderMarkdownToSafeHtml([
       '> [!warning] 先备份，再接入同步',

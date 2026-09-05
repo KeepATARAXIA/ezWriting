@@ -12,6 +12,8 @@ const COMPATIBILITY_MARKDOWN = [
   '',
   '截图中的异常写法也应修复：支持** 100 万 Token 上下文**。',
   '',
+  '请注意，是**整次请求！**都按高价算；也支持**“带引号的加粗”**紧贴正文。',
+  '',
   '- [x] 已完成任务',
   '- [ ] 待处理任务',
   '',
@@ -36,6 +38,8 @@ function parse(html: string): Document {
 function expectCompatibilitySemantics(document: Document, label: string): void {
   expect(Array.from(document.querySelectorAll('strong')).some(element => element.textContent === '粗体'), label).toBe(true)
   expect(Array.from(document.querySelectorAll('strong')).some(element => element.textContent === '100 万 Token 上下文'), label).toBe(true)
+  expect(Array.from(document.querySelectorAll('strong')).some(element => element.textContent === '整次请求！'), label).toBe(true)
+  expect(Array.from(document.querySelectorAll('strong')).some(element => element.textContent === '“带引号的加粗”'), label).toBe(true)
   expect(document.querySelector('em')?.textContent, label).toBe('斜体')
   expect(document.querySelector('del')?.textContent, label).toBe('删除线')
   expect(document.querySelector('mark')?.textContent, label).toBe('高亮')

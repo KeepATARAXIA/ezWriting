@@ -84,7 +84,7 @@ The editor includes:
 - Show/hide-syntax modes: the presentation mode hides most Markdown marks while the active line can still reveal its source.
 - At least 100 recent independent editing events in the undo history, with visible undo/redo depth.
 - Local image insertion, replacement, removal, and caption editing.
-- Local MP4 and WebM insertion and playback up to 50 MiB per file; video plays only in the left editor, while platform previews use a stable poster frame and native-upload destinations receive an explicit manual-action note.
+- Local MP4 and WebM insertion and playback up to 100 MiB per file; video plays only in the left editor, while platform previews use a stable poster frame and native-upload destinations receive an explicit manual-action note.
 - Preview-to-source locating: select preview content to focus the corresponding source block.
 
 The import menu inside the editor can append a file to the current source or replace the current draft.
@@ -276,6 +276,7 @@ EZWRITING uses React, TypeScript, and Vite. File handling, the article model, ed
 - X Article draft creation depends on account eligibility and platform behavior and still needs broader real-account verification.
 - Xiaohongshu and other image-post destinations primarily use PNG / ZIP export; draft behavior depends on the current Wechatsync response.
 - Local video can play in the editor and applicable previews, but native media upload still needs destination-specific handling.
+- Large videos are repeated as Base64 in complete-library backups, which may exceed the current 128 MiB backup-import limit. Keep the original videos and do not clear browser data assuming an oversized backup can be restored.
 - Delivery creates drafts by default. Unattended publishing is intentionally out of scope.
 - Accounts, cloud sync, scheduling, analytics, DOCX / PDF import, and AI rewriting are not included.
 - This is still an MVP, and target-platform page changes may affect extension-based delivery.

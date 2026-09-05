@@ -86,6 +86,10 @@
   grid-template-rows: auto minmax(0, 1fr) auto;
 }
 
+.content-editor-section .source-editor:has(> .source-video-error) {
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+}
+
 .source-toolbar {
   background: #fbfcfd;
 }
@@ -94,18 +98,20 @@
   box-sizing: border-box;
   min-width: 0;
   min-height: 38px;
-  padding: 0 8px 0 13px;
+  padding: 5px 8px 5px 13px;
   border-top: 1px solid #e7ebee;
   background: #fbfcfd;
   color: #7d8892;
   display: flex;
   align-items: center;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 4px 10px;
   font-size: 10px;
 }
 
 .source-document-stats {
   min-width: 0;
+  flex-shrink: 0;
   margin-right: auto;
   display: flex;
   align-items: center;

@@ -1,6 +1,6 @@
 export const SUPPORTED_VIDEO_MIME_TYPES = ['video/mp4', 'video/webm'] as const
 export const VIDEO_FILE_ACCEPT = '.mp4,.webm,video/mp4,video/webm'
-export const MAX_LOCAL_VIDEO_BYTES = 50 * 1024 * 1024
+export const MAX_LOCAL_VIDEO_BYTES = 100 * 1024 * 1024
 
 const STORAGE_RESERVE_BYTES = 5 * 1024 * 1024
 
@@ -42,7 +42,11 @@ export async function validateLocalVideoFile(
   const mimeType = supportedVideoMimeType(file)
   if (!mimeType) throw new Error('仅支持 MP4 或 WebM 视频。')
   if (file.size === 0) throw new Error('视频文件为空，请重新选择。')
-  if (file.size > MAX_LOCAL_VIDEO_BYTES) throw new Error('单个视频不能超过 50 MiB。')
+  if (file.size > MAX_LOCAL_VIDEO_BYTES) {
+    const sizeMiB = (Math.ceil(file.size / (1024 * 1024) * 100) / 100).toFixed(2)
+    const limitMiB = MAX_LOCAL_VIDEO_BYTES / (1024 * 1024)
+    throw new Error(`视频“${localVideoFileName(file.name)}”为 ${sizeMiB} MiB，单个视频不能超过 ${limitMiB} MiB。请压缩后重试，或选择更小的视频。`)
+  }
 
   if (storage?.estimate) {
     try {

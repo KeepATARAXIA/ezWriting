@@ -1,7 +1,30 @@
 import DOMPurify from 'dompurify'
-import { marked } from 'marked'
+import { Marked } from 'marked'
 import { isLocalVideoReference, localVideoBlob } from './local-video-registry'
 import { isSupportedVideoDataUri, localVideoFileName, supportedVideoDataMimeType } from './video-assets'
+
+// Keep this compatibility rule local to article rendering, without changing the global lexer.
+const articleMarkdown = new Marked({
+  tokenizer: {
+    emStrong(source, maskedSource, previousCharacter = '') {
+      if (!source.startsWith('**') || previousCharacter === '*') return false
+
+      // Marked masks code, escapes, links, and HTML so their stars cannot close this span.
+      // Only handle a single pair of **; leave other delimiter runs to the standard tokenizer.
+      const match = /^\*\*(?![*\s])(?:[^*\n]|\*(?!\*))+?\*\*(?!\*)/.exec(maskedSource.slice(-source.length))
+      if (!match) return false
+      const raw = source.slice(0, match[0].length)
+      const text = raw.slice(2, -2)
+      if (/\s$/.test(text)) return false
+
+      const openingConflict = /^[\p{P}\p{S}]/u.test(text) && /[^\s\p{P}\p{S}]/u.test(previousCharacter)
+      const closingConflict = /[\p{P}\p{S}]$/u.test(text) && /^[^\s\p{P}\p{S}]/u.test(source.slice(raw.length))
+      if (!openingConflict && !closingConflict) return false
+
+      return { type: 'strong', raw, text, tokens: this.lexer.inlineTokens(text) }
+    },
+  },
+})
 
 export const MARKDOWN_CALLOUT_TYPES = [
   'note',
@@ -520,7 +543,7 @@ function appendMarkdownFootnotes(
 
     const content = document.createElement('div')
     content.dataset.footnoteContent = 'true'
-    content.innerHTML = String(marked.parseInline(reference.definition.markdown, { gfm: true, breaks: false }))
+    content.innerHTML = String(articleMarkdown.parseInline(reference.definition.markdown, { gfm: true, breaks: false }))
     reference.referenceIds.forEach((referenceId, index) => {
       const backlink = document.createElement('a')
       backlink.className = 'ez-footnote-backref'
@@ -742,7 +765,7 @@ export function renderMarkdownToSafeHtml(markdown: string): string {
   const extracted = extractMarkdownFootnotes(syntaxNormalized)
   const footnotes = injectMarkdownFootnoteReferences(extracted.body, extracted.definitions)
   const normalized = preserveMarkdownBlankLines(footnotes.markdown)
-  const parsed = String(marked.parse(normalized, { gfm: true, breaks: true }))
+  const parsed = String(articleMarkdown.parse(normalized, { gfm: true, breaks: true }))
   const document = new DOMParser().parseFromString(parsed, 'text/html')
 
   appendMarkdownFootnotes(document, footnotes.references)

@@ -40,7 +40,6 @@ describe('HistorySidebar', () => {
       onSelectDraft: vi.fn(),
       onChangeKind: vi.fn(),
       onDeleteDraft: vi.fn(),
-      onUndoDelete: vi.fn(),
       onExportBackup: vi.fn(),
       onImportBackup: vi.fn(),
       onExportDiagnostics: vi.fn(),
@@ -187,24 +186,15 @@ describe('HistorySidebar', () => {
     expect(document.activeElement).toBe(menuButton)
   })
 
-  it('renders the undo notice and local backup actions', async () => {
-    const onUndoDelete = vi.fn()
+  it('renders local backup actions', async () => {
     const onExportBackup = vi.fn()
     const onImportBackup = vi.fn()
     const onExportDiagnostics = vi.fn()
     await render({
-      undoDraft: { id: 'deleted-id', title: '误删稿件' },
-      onUndoDelete,
       onExportBackup,
       onImportBackup,
       onExportDiagnostics,
     })
-
-    expect(container.querySelector('[role="status"]')?.textContent).toContain('“误删稿件”已删除')
-    const undoButton = Array.from(container.querySelectorAll<HTMLButtonElement>('button'))
-      .find(button => button.textContent?.includes('撤销'))!
-    await act(async () => undoButton.dispatchEvent(new MouseEvent('click', { bubbles: true })))
-    expect(onUndoDelete).toHaveBeenCalledWith('deleted-id')
 
     const dataTrigger = container.querySelector<HTMLButtonElement>('.history-data-trigger')!
     expect(dataTrigger.getAttribute('aria-expanded')).toBe('false')
@@ -228,13 +218,11 @@ describe('HistorySidebar', () => {
   it('disables draft mutations and backup actions while an exclusive operation is running', async () => {
     await render({
       drafts: [draft({ id: 'locked' })],
-      undoDraft: { id: 'deleted-id', title: '待恢复稿件' },
       interactionLocked: true,
     })
 
     expect(container.querySelector<HTMLButtonElement>('.history-draft-open')?.disabled).toBe(true)
     expect(container.querySelector<HTMLButtonElement>('.history-draft-menu-button')?.disabled).toBe(true)
-    expect(container.querySelector<HTMLButtonElement>('.history-undo-notice button')?.disabled).toBe(true)
     await act(async () => container.querySelector<HTMLButtonElement>('.history-data-trigger')?.click())
     expect(Array.from(container.querySelectorAll<HTMLButtonElement>('.history-backup-actions button')).every(button => button.disabled)).toBe(true)
   })

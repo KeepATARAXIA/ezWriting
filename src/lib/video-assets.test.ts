@@ -17,6 +17,14 @@ import {
 afterEach(() => clearLocalVideoRegistry())
 
 describe('local video assets', () => {
+  it.each([60, 100])('accepts a %i MiB local video', async sizeMiB => {
+    await expect(validateLocalVideoFile({
+      name: 'demo.mp4',
+      type: 'video/mp4',
+      size: sizeMiB * 1024 * 1024,
+    } as File, undefined)).resolves.toBe('video/mp4')
+  })
+
   it('accepts MP4 and WebM while rejecting unsupported, empty, oversized, and quota-constrained files', async () => {
     await expect(validateLocalVideoFile(new File(['mp4'], 'demo.mp4', { type: 'video/mp4' }), undefined)).resolves.toBe('video/mp4')
     await expect(validateLocalVideoFile(new File(['webm'], 'demo.webm'), undefined)).resolves.toBe('video/webm')
@@ -26,7 +34,7 @@ describe('local video assets', () => {
       name: 'large.mp4',
       type: 'video/mp4',
       size: MAX_LOCAL_VIDEO_BYTES + 1,
-    } as File, undefined)).rejects.toThrow('不能超过 50 MiB')
+    } as File, undefined)).rejects.toThrow('视频“large.mp4”为 100.01 MiB，单个视频不能超过 100 MiB。请压缩后重试，或选择更小的视频。')
     await expect(validateLocalVideoFile(new File(['video'], 'demo.mp4', { type: 'video/mp4' }), {
       estimate: async () => ({ quota: 5 * 1024 * 1024, usage: 1 }),
     })).rejects.toThrow('本地存储空间不足')

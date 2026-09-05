@@ -19,15 +19,9 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Trash2,
-  Undo2,
   Upload,
 } from 'lucide-react'
 import type { DraftKind, DraftSummary } from '../domain/saved-draft'
-
-export interface HistoryUndoDraft {
-  id: string
-  title: string
-}
 
 export type HistorySaveStatus = 'idle' | 'dirty' | 'saving' | 'saved' | 'error'
 
@@ -36,12 +30,10 @@ export interface HistorySidebarProps {
   activeDraftId?: string | null
   activeSaveStatus?: HistorySaveStatus
   isExpanded: boolean
-  undoDraft?: HistoryUndoDraft | null
   onToggleExpanded: () => void
   onSelectDraft: (id: string) => void
   onChangeKind: (id: string, kind: DraftKind) => void
   onDeleteDraft: (id: string) => void
-  onUndoDelete?: (id: string) => void
   onExportBackup?: () => void
   onImportBackup?: () => void
   onExportDiagnostics?: () => void
@@ -143,12 +135,10 @@ export function HistorySidebar({
   activeDraftId = null,
   activeSaveStatus = 'saved',
   isExpanded,
-  undoDraft = null,
   onToggleExpanded,
   onSelectDraft,
   onChangeKind,
   onDeleteDraft,
-  onUndoDelete,
   onExportBackup,
   onImportBackup,
   onExportDiagnostics,
@@ -432,15 +422,6 @@ export function HistorySidebar({
             })
           )}
         </div>
-
-        {undoDraft && onUndoDelete && (
-          <div className="history-undo-notice" role="status" aria-live="polite">
-            <span><Trash2 size={13} aria-hidden="true" />“{displayTitle(undoDraft.title)}”已删除</span>
-            <button type="button" disabled={interactionLocked} onClick={() => onUndoDelete(undoDraft.id)}>
-              <Undo2 size={13} aria-hidden="true" /> 撤销
-            </button>
-          </div>
-        )}
 
         <footer className={`history-account-footer ${dataActionsExpanded ? 'expanded' : ''}`}>
           <button

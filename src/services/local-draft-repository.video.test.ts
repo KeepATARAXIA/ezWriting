@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { DEFAULT_ARTICLE_FORMATTING } from '../domain/formatting'
 import { createPersistedDraft, type PersistedDraft } from '../domain/saved-draft'
 import type { ArticleDraft } from '../domain/article'
-import { clearLocalVideoRegistry, localVideoBlob } from '../lib/local-video-registry'
+import { clearLocalVideoRegistry, localVideoBlob, registerLocalVideo } from '../lib/local-video-registry'
 import {
   DRAFT_ASSET_PROTOCOL,
   LocalDraftRepository,
@@ -33,6 +33,41 @@ afterEach(async () => {
 })
 
 describe('LocalDraftRepository video assets', () => {
+  it.each([60, 100])('stores and restores a %i MiB video without expanding the article', async sizeMiB => {
+    const bytes = new Uint8Array(sizeMiB * 1024 * 1024)
+    bytes.set([1, 2, 3, 4])
+    const reference = registerLocalVideo(new Blob([bytes], { type: 'video/mp4' }))
+    const source = `<video controls src="${reference}" data-ez-video-name="大视频.mp4"></video>`
+    const article: ArticleDraft = {
+      id: 'large-video-draft',
+      title: '大视频稿件',
+      html: source,
+      markdown: source,
+      sourceText: source,
+      sourceLanguage: 'markdown',
+      tags: [],
+      sourceFile: 'article.md',
+      sourceKind: 'markdown',
+      importedAt: '2026-09-04T03:00:00.000Z',
+      warnings: [],
+      missingAssets: [],
+    }
+    const repository = new LocalDraftRepository({ databaseName })
+    await repository.saveDraft(createPersistedDraft(article, DEFAULT_ARTICLE_FORMATTING))
+    await repository.close()
+    clearLocalVideoRegistry()
+
+    const reopened = new LocalDraftRepository({ databaseName })
+    const restored = await reopened.getDraft(article.id)
+    const restoredReference = restored?.article.sourceText?.match(/dispatch-local-video:\/\/[a-z0-9-]+/i)?.[0]
+    const blob = localVideoBlob(restoredReference || '')
+    expect(blob?.size).toBe(bytes.byteLength)
+    expect(new Uint8Array(await blob!.slice(0, 4).arrayBuffer())).toEqual(new Uint8Array([1, 2, 3, 4]))
+    expect(restored?.article.sourceText).not.toContain('data:video/')
+    expect(restored?.article.sourceText?.length).toBeLessThan(300)
+    await reopened.close()
+  })
+
   it('stores embedded video once as a Blob and restores the editable data URI', async () => {
     const source = 'data:video/mp4;base64,AQIDBA=='
     const article: ArticleDraft = {

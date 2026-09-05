@@ -32,13 +32,14 @@ import {
   PlugZap,
   RotateCcw,
   ShieldCheck,
+  Undo2,
   Upload,
   XCircle,
 } from 'lucide-react'
 import type { ArticleDraft, MissingImageAction, MissingImageTarget, PlatformAccount, PublishResult } from './domain/article'
 import { DEFAULT_ARTICLE_FORMATTING, type ArticleFormatting } from './domain/formatting'
 import { DispatchControls, type BridgeState, type WorkState } from './components/dispatch-controls'
-import { HistorySidebar, type HistoryUndoDraft } from './components/history-sidebar'
+import { HistorySidebar } from './components/history-sidebar'
 import { WorkbenchErrorBoundary } from './components/workbench-error-boundary'
 import type { SourceEditorActiveLocation, SourceEditorFocusRequest } from './components/source-editor'
 import type { PreviewDevice, PreviewEditTarget, PreviewLocateRequest, PreviewPlatform } from './components/platform-previews'
@@ -280,7 +281,7 @@ function readHistorySidebarExpanded(): boolean {
 }
 
 function isHistoryOverlayViewport(): boolean {
-  return typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 1280px)').matches
+  return typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 1300px)').matches
 }
 
 function sourceLabel(article: ArticleDraft): string {
@@ -546,7 +547,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   const [historyExpanded, setHistoryExpanded] = useState(readHistorySidebarExpanded)
   const [historyOverlayOpen, setHistoryOverlayOpen] = useState(false)
   const [historyError, setHistoryError] = useState<string | null>(null)
-  const [undoDraft, setUndoDraft] = useState<HistoryUndoDraft | null>(null)
+  const [undoDraft, setUndoDraft] = useState<{ id: string; title: string } | null>(null)
   const [backupStatus, setBackupStatus] = useState<'idle' | 'exporting' | 'importing'>('idle')
   const [backupNotice, setBackupNotice] = useState<string | null>(null)
   const [storagePersistent, setStoragePersistent] = useState<boolean | null>(null)
@@ -563,6 +564,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   const [activePlatform, setActivePlatform] = useState<PreviewPlatform>('wechat')
   const [formatting, setFormatting] = useState<ArticleFormatting>(DEFAULT_ARTICLE_FORMATTING)
   const [editorPanePercents, setEditorPanePercents] = useState(readEditorPanePercents)
+  const [paneLayout, setPaneLayout] = useState<{ min: number; max: number; value: number } | null>(null)
   const [editorFocusRequest, setEditorFocusRequest] = useState<SourceEditorFocusRequest | null>(null)
   const [previewLocateRequest, setPreviewLocateRequest] = useState<PreviewLocateRequest | null>(null)
   const [activeEditorLocation, setActiveEditorLocation] = useState<SourceEditorActiveLocation | null>(null)
@@ -600,7 +602,6 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   const documentGenerationRef = useRef(0)
   const exclusiveOperationRef = useRef<ExclusiveOperation | null>(null)
   const publishAttemptRef = useRef(0)
-  const undoTimerRef = useRef<number | null>(null)
   const historyTriggerRef = useRef<HTMLButtonElement>(null)
   const historySidebarSlotRef = useRef<HTMLDivElement>(null)
   const topbarRef = useRef<HTMLElement>(null)
@@ -934,7 +935,6 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   useEffect(() => () => {
     document.body.classList.remove('is-resizing-panes')
     if (locatedFieldTimerRef.current !== null) window.clearTimeout(locatedFieldTimerRef.current)
-    if (undoTimerRef.current !== null) window.clearTimeout(undoTimerRef.current)
     locatedFieldRef.current?.classList.remove('editor-located-target')
   }, [])
 
@@ -1282,8 +1282,37 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
 
   const editorPanePercent = editorPanePercents[activePlatform]
 
+  useEffect(() => {
+    const grid = editorGridRef.current
+    const paper = grid?.querySelector<HTMLElement>('.paper-panel')
+    if (!grid || !paper || typeof ResizeObserver === 'undefined') return
+
+    const measure = () => {
+      const width = grid.getBoundingClientRect().width
+      const separator = grid.querySelector<HTMLElement>('.pane-resizer')
+      if (!width || !separator?.getBoundingClientRect().width) {
+        setPaneLayout(null)
+        return
+      }
+      const previewMinWidth = Number.parseFloat(getComputedStyle(grid).getPropertyValue('--preview-pane-min-width'))
+      const max = Math.min(MAX_EDITOR_PANE_PERCENT, Math.round((width - 14 - previewMinWidth) / width * 100))
+      const min = Math.min(max, Math.max(MIN_EDITOR_PANE_PERCENT, Math.ceil(280 / width * 100)))
+      const value = Math.round(paper.getBoundingClientRect().width / width * 100)
+      setPaneLayout(current => current?.min === min && current.max === max && current.value === value
+        ? current
+        : { min, max, value })
+    }
+    const observer = new ResizeObserver(measure)
+    observer.observe(grid)
+    observer.observe(paper)
+    measure()
+    return () => observer.disconnect()
+  }, [article?.id, activePlatform, workspaceMode])
+
   const updateEditorPanePercent = (value: number, persist = false, platform = activePlatform) => {
-    const next = clampEditorPanePercent(value)
+    const next = paneLayout
+      ? Math.min(paneLayout.max, Math.max(paneLayout.min, Math.round(value)))
+      : clampEditorPanePercent(value)
     const nextPercents = { ...editorPanePercentsRef.current, [platform]: next }
     editorPanePercentsRef.current = nextPercents
     setEditorPanePercents(nextPercents)
@@ -1325,11 +1354,11 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   }
 
   const adjustPaneWithKeyboard = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    let next = editorPanePercentsRef.current[activePlatform]
+    let next = paneLayout?.value ?? editorPanePercentsRef.current[activePlatform]
     if (event.key === 'ArrowLeft') next -= 2
     else if (event.key === 'ArrowRight') next += 2
-    else if (event.key === 'Home') next = MIN_EDITOR_PANE_PERCENT
-    else if (event.key === 'End') next = MAX_EDITOR_PANE_PERCENT
+    else if (event.key === 'Home') next = paneLayout?.min ?? MIN_EDITOR_PANE_PERCENT
+    else if (event.key === 'End') next = paneLayout?.max ?? MAX_EDITOR_PANE_PERCENT
     else return
     event.preventDefault()
     updateEditorPanePercent(next, true, activePlatform)
@@ -1477,8 +1506,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
       const deleted = await draftRepository.softDeleteDraft(id)
       if (!deleted) return
       setUndoDraft({ id, title: summary?.title || deleted.article.title })
-      if (undoTimerRef.current !== null) window.clearTimeout(undoTimerRef.current)
-      undoTimerRef.current = window.setTimeout(() => setUndoDraft(null), 7000)
+      closeHistoryOverlay(false)
       const nextDrafts = await refreshDraftSummaries()
       if (deletingActiveDraft) {
         clearActiveDraft()
@@ -1504,7 +1532,6 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
       await draftRepository.restoreDraft(id)
       await refreshDraftSummaries()
       setUndoDraft(null)
-      if (undoTimerRef.current !== null) window.clearTimeout(undoTimerRef.current)
     } catch (restoreError) {
       setHistoryError(`撤销删除失败：${(restoreError as Error).message}`)
     } finally {
@@ -1690,6 +1717,15 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     <div className="app-shell article-open">
       <header ref={topbarRef} className={`topbar ${article ? 'workbench-topbar' : ''}`}>
         <div className="brand-cluster">
+          <button
+            ref={historyTriggerRef}
+            type="button"
+            className="history-mobile-trigger"
+            aria-label="打开历史记录"
+            aria-expanded={historyOverlayOpen}
+            aria-controls="history-sidebar-panel"
+            onClick={() => setHistoryOverlayOpen(true)}
+          ><PanelLeftOpen size={18} /></button>
           <a className="brand" href="/" aria-label="EZWRITING 首页">
             <span className="brand-mark" aria-hidden="true"><img src={brandLogo} alt="" /></span>
             <span>EZWRITING</span>
@@ -1864,16 +1900,6 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
 
       <div className="workbench-layout">
         <button
-          ref={historyTriggerRef}
-          type="button"
-          className="history-mobile-trigger"
-          aria-label="打开历史记录"
-          aria-expanded={historyOverlayOpen}
-          onClick={() => setHistoryOverlayOpen(true)}
-        >
-          <PanelLeftOpen size={18} />
-        </button>
-        <button
           type="button"
           className={`history-sidebar-backdrop ${historyOverlayOpen ? 'visible' : ''}`}
           aria-label="关闭历史记录"
@@ -1893,12 +1919,10 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
             activeDraftId={article?.id}
             activeSaveStatus={autosave.status}
             isExpanded={historyOverlayOpen || historyExpanded}
-            undoDraft={undoDraft}
             onToggleExpanded={toggleHistorySidebar}
             onSelectDraft={id => void selectHistoryDraft(id)}
             onChangeKind={(id, kind) => void changeHistoryDraftKind(id, kind)}
             onDeleteDraft={id => void deleteHistoryDraft(id)}
-            onUndoDelete={id => void undoDeleteHistoryDraft(id)}
             onExportBackup={() => void exportLocalData()}
             onImportBackup={() => {
               if (backupInputRef.current) {
@@ -2169,8 +2193,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                     </div>
                   </nav>
 
-                  {editorView === 'edit' ? (
-                    <div className="article-form editor-view-panel" id="article-edit-view" role="tabpanel">
+                    <div className="article-form editor-view-panel" id="article-edit-view" role="tabpanel" hidden={editorView !== 'edit'}>
                       <label className="editor-title-field" htmlFor="article-title">
                         <span className="editor-title-field-heading">
                           <strong>文章标题</strong>
@@ -2208,7 +2231,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                                 sourceLabel: sourceLabel(article),
                               }}
                               focusRequest={editorFocusRequest}
-                              readOnly={isOperationLocked}
+                              readOnly={isOperationLocked || editorView !== 'edit' || workspaceMode === 'preview'}
                               onChange={updateArticleSource}
                               onActiveBlockChange={updateActiveEditorLocation}
                             />
@@ -2217,7 +2240,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                       </section>
 
                     </div>
-                  ) : (
+                  {editorView === 'resources' && (
                     <section ref={resourcesPanelRef} className="resource-panel editor-view-panel" id="article-resource-view" role="tabpanel" aria-labelledby="resource-panel-heading">
                       <header className="resource-panel-heading">
                         <div>
@@ -2290,10 +2313,10 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                     tabIndex={0}
                     aria-label="调整编辑区和预览区宽度"
                     aria-orientation="vertical"
-                    aria-valuemin={MIN_EDITOR_PANE_PERCENT}
-                    aria-valuemax={MAX_EDITOR_PANE_PERCENT}
-                    aria-valuenow={editorPanePercent}
-                    aria-valuetext={`编辑区 ${editorPanePercent}%，预览区 ${100 - editorPanePercent}%`}
+                    aria-valuemin={paneLayout?.min ?? MIN_EDITOR_PANE_PERCENT}
+                    aria-valuemax={paneLayout?.max ?? MAX_EDITOR_PANE_PERCENT}
+                    aria-valuenow={paneLayout?.value ?? editorPanePercent}
+                    aria-valuetext={`编辑区 ${paneLayout?.value ?? editorPanePercent}%，预览区 ${100 - (paneLayout?.value ?? editorPanePercent)}%`}
                     title="拖动调整宽度，双击恢复当前平台默认比例"
                     onPointerDown={startPaneResize}
                     onPointerMove={movePaneResize}
@@ -2348,12 +2371,36 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
         </section>
       </main>
       </div>
-      {(backupNotice || historyError || autosave.error) && (
-        <div className={`local-history-notice ${!backupNotice && (historyError || autosave.error) ? 'error' : ''}`} role="status" aria-live="polite">
-          <span>{backupNotice || historyError || (autosave.error ? `自动保存失败：${autosave.error.message}` : null)}</span>
-          <button type="button" aria-label="关闭提示" onClick={() => { setHistoryError(null); setBackupNotice(null) }}><XCircle size={15} /></button>
-        </div>
-      )}
+      <div className="workbench-notices" aria-label="工作台通知">
+        {autosave.error && (
+          <div className="local-history-notice error" role="alert">
+            <span>自动保存失败：{autosave.error.message}。当前编辑仍保留，请重试或导出备份。</span>
+            <div className="notice-actions">
+              <button type="button" aria-label="重试保存" disabled={isOperationLocked || autosave.status === 'saving'} onClick={() => void autosave.flush().catch(() => undefined)}>重试保存</button>
+              <button type="button" disabled={isOperationLocked} onClick={() => void exportLocalData()}>导出备份</button>
+            </div>
+          </div>
+        )}
+        {historyError && (
+          <div className="local-history-notice error" role="alert">
+            <span>{historyError}</span>
+            <button type="button" className="notice-close" aria-label="关闭历史操作提示" onClick={() => setHistoryError(null)}><XCircle size={16} /></button>
+          </div>
+        )}
+        {undoDraft && (
+          <div className="history-undo-notice" role="status">
+            <span>“{undoDraft.title.trim() || '未命名稿件'}”已删除</span>
+            <button type="button" disabled={isOperationLocked} onClick={() => void undoDeleteHistoryDraft(undoDraft.id)}><Undo2 size={16} /> 撤销</button>
+            <button type="button" className="notice-close" aria-label="关闭撤销删除提示" onClick={() => setUndoDraft(null)}><XCircle size={16} /></button>
+          </div>
+        )}
+        {backupNotice && (
+          <div className="local-history-notice" role="status">
+            <span>{backupNotice}</span>
+            <button type="button" className="notice-close" aria-label="关闭备份提示" onClick={() => setBackupNotice(null)}><XCircle size={16} /></button>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

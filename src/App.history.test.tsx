@@ -1,6 +1,7 @@
 import 'fake-indexeddb/auto'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { EditorView } from '@codemirror/view'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
 import { DEFAULT_ARTICLE_FORMATTING } from './domain/formatting'
@@ -104,11 +105,40 @@ describe('App local draft history', () => {
     expect(await repository.listDrafts()).toHaveLength(0)
 
     const undoButton = Array.from(container.querySelectorAll<HTMLButtonElement>('.history-undo-notice button'))[0]
+    expect(undoButton.closest('[hidden], [inert]')).toBeNull()
+    expect(undoButton.closest('.history-sidebar-slot')).toBeNull()
     await act(async () => {
       undoButton.click()
       await new Promise(resolve => window.setTimeout(resolve, 50))
     })
     expect((await repository.listDrafts()).map(draft => draft.title)).toEqual(['本地历史测试稿'])
+  })
+
+  it('preserves source undo, redo and selection across the resources view', async () => {
+    await renderApp()
+    await act(async () => container.querySelector<HTMLButtonElement>('.drop-actions .primary-button')?.click())
+    await act(async () => {
+      await vi.waitFor(() => expect(container.querySelector('.cm-editor')).not.toBeNull())
+    })
+    const sourceView = () => EditorView.findFromDOM(container.querySelector<HTMLElement>('.cm-editor')!)!
+    await act(async () => {
+      sourceView().dispatch({ changes: { from: 0, insert: '保留这段编辑' }, selection: { anchor: 2, head: 5 } })
+      await new Promise(resolve => window.setTimeout(resolve, 100))
+    })
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await act(async () => container.querySelector<HTMLButtonElement>('[aria-controls="article-resource-view"]')?.click())
+      expect(container.querySelector<HTMLElement>('#article-edit-view')?.hidden).toBe(true)
+      await act(async () => container.querySelector<HTMLButtonElement>('[aria-controls="article-edit-view"]')?.click())
+      expect(sourceView().state.doc.toString()).toBe('保留这段编辑')
+      expect(sourceView().state.selection.main.from).toBe(2)
+      expect(sourceView().state.selection.main.to).toBe(5)
+    }
+    const undo = container.querySelector<HTMLButtonElement>('.source-toolbar [aria-label="撤销"]')!
+    expect(undo.disabled).toBe(false)
+    await act(async () => undo.click())
+    expect(sourceView().state.doc.toString()).toBe('')
+    await act(async () => container.querySelector<HTMLButtonElement>('.source-toolbar [aria-label="重做"]')?.click())
+    expect(sourceView().state.doc.toString()).toBe('保留这段编辑')
   })
 
   it('repairs and autosaves malformed strong spacing when restoring an existing Markdown draft', async () => {
@@ -229,11 +259,48 @@ describe('App local draft history', () => {
       await vi.waitFor(() => expect(anchorClick).toHaveBeenCalledTimes(1))
     })
 
-    const notice = container.querySelector('.local-history-notice')
+    const notice = container.querySelector('.local-history-notice:not(.error)')
     expect(notice?.textContent).toContain('本地保存失败，但已将当前编辑直接写入备份')
     expect(notice?.classList.contains('error')).toBe(false)
+    expect(container.querySelector('.local-history-notice.error')?.textContent).toContain('自动保存失败')
     const payload = JSON.parse(await backupBlob!.text()) as { drafts: Array<{ article: { title: string } }> }
     expect(payload.drafts[0].article.title).toBe('配额失败时的当前编辑')
+  })
+
+  it('keeps a later save failure visible alongside backup success and allows retry', async () => {
+    await renderApp()
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('.drop-actions .primary-button')?.click()
+      await new Promise(resolve => window.setTimeout(resolve, 40))
+    })
+    await openLocalDataActions()
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('.history-backup-actions button')?.click()
+      await new Promise(resolve => window.setTimeout(resolve, 100))
+    })
+    expect(container.textContent).toContain('已导出 1 篇稿件')
+    const save = vi.spyOn(repository, 'saveDraft').mockRejectedValue(new DOMException('Storage quota exceeded', 'QuotaExceededError'))
+    await act(async () => {
+      const title = container.querySelector<HTMLTextAreaElement>('[aria-label="文章标题"]')!
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set?.call(title, '保存失败后重试的稿件')
+      title.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => {
+      await new Promise(resolve => window.setTimeout(resolve, 800))
+    })
+    expect(container.querySelector('.local-history-notice.error')?.textContent).toContain('自动保存失败')
+    expect(container.querySelector('.local-history-notice:not(.error)')?.textContent).toContain('已导出 1 篇稿件')
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="关闭备份提示"]')?.click())
+    expect(container.querySelector('.local-history-notice.error')?.textContent).toContain('自动保存失败')
+    expect(container.querySelector('.local-history-notice.error [aria-label="关闭提示"]')).toBeNull()
+    save.mockRestore()
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[aria-label="重试保存"]')?.click()
+      await new Promise(resolve => window.setTimeout(resolve, 50))
+    })
+    expect(container.querySelector('.local-history-notice.error')).toBeNull()
+    expect((await repository.listDrafts())[0].title).toBe('保存失败后重试的稿件')
   })
 
   it('cancels the old autosave generation after an atomic backup import', async () => {

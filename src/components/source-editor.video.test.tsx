@@ -89,6 +89,61 @@ describe('SourceEditor local video', () => {
     expect(onChange).not.toHaveBeenCalled()
   })
 
+  it('explains an oversized upload and clears the notice after choosing a valid file', async () => {
+    const onChange = vi.fn()
+    await act(async () => root.render(<SourceEditor value="原有正文" language="markdown" onChange={onChange} />))
+    const input = container.querySelector<HTMLInputElement>('input[accept=".mp4,.webm,video/mp4,video/webm"]')!
+    const oversized = new File(['clip'], '超限演示.mp4', { type: 'video/mp4' })
+    Object.defineProperty(oversized, 'size', { value: 120 * 1024 * 1024 })
+    Object.defineProperty(input, 'files', { configurable: true, value: [oversized] })
+
+    await act(async () => {
+      input.dispatchEvent(new Event('change', { bubbles: true }))
+      await Promise.resolve()
+    })
+
+    const message = container.querySelector('.source-editor > [role="alert"]')?.textContent
+    expect(message).toContain('超限演示.mp4')
+    expect(message).toContain('120.00 MiB')
+    expect(message).toContain('100 MiB')
+    expect(message).toContain('压缩')
+    expect(onChange).not.toHaveBeenCalled()
+    expect(container.querySelector('.cm-content')?.textContent).toContain('原有正文')
+
+    Object.defineProperty(input, 'files', {
+      configurable: true,
+      value: [new File(['clip'], '小视频.mp4', { type: 'video/mp4' })],
+    })
+    await act(async () => {
+      input.dispatchEvent(new Event('change', { bubbles: true }))
+      await vi.waitFor(() => expect(onChange).toHaveBeenCalled(), { timeout: 800 })
+    })
+    expect(container.querySelector('.source-editor > [role="alert"]')).toBeNull()
+    expect(container.querySelector('.source-video-widget')?.textContent).toContain('小视频.mp4')
+  })
+
+  it('explains an oversized replacement without removing the existing video', async () => {
+    const onChange = vi.fn()
+    const value = '<video controls src="data:video/mp4;base64,Y2xpcA==" data-ez-video-name="原视频.mp4"></video>'
+    await act(async () => root.render(<SourceEditor value={value} language="markdown" onChange={onChange} />))
+    const input = container.querySelector<HTMLInputElement>('.source-video-widget input[type="file"]')!
+    const oversized = new File(['clip'], '替换超限.mp4', { type: 'video/mp4' })
+    Object.defineProperty(oversized, 'size', { value: 120 * 1024 * 1024 })
+    Object.defineProperty(input, 'files', { configurable: true, value: [oversized] })
+
+    await act(async () => {
+      input.dispatchEvent(new Event('change', { bubbles: true }))
+      await Promise.resolve()
+    })
+
+    const message = container.querySelector('.source-video-widget [role="alert"]')?.textContent
+    expect(message).toContain('替换超限.mp4')
+    expect(message).toContain('120.00 MiB')
+    expect(message).toContain('100 MiB')
+    expect(onChange).not.toHaveBeenCalled()
+    expect(container.querySelector('.source-video-widget')?.getAttribute('aria-label')).toBe('视频：原视频.mp4')
+  })
+
   it('renders mixed video and image cards in document order', async () => {
     const value = [
       '<video controls src="data:video/mp4;base64,Y2xpcA==" data-ez-video-name="演示.mp4"></video>',
