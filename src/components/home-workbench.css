@@ -1,0 +1,28 @@
+.empty-workbench-content { width: min(1040px, 100%); }
+.empty-workbench-hero { max-width: 1040px; }
+.empty-workbench-hero h1 { font-size: clamp(30px, 2.6vw, 42px); line-height: 1.3; }
+.empty-workbench-hero .drop-actions > button { min-width: 160px; min-height: 48px; font-size: 15px; }
+.home-content-flow { margin: 22px 0 0; padding: 0; list-style: none; display: flex; justify-content: center; flex-wrap: wrap; gap: 8px 14px; color: #596672; font-size: 14px; line-height: 1.6; }
+.home-content-flow li + li::before { content: '→'; margin-right: 14px; color: #87939e; }
+.home-connection-note { margin-top: 14px; display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 0 8px; color: #596672; font-size: 13px; line-height: 1.6; }
+.home-connection-note .directory-link { min-height: 36px; color: var(--blue); }
+.home-import-zone { margin-top: 26px; padding: 8px 18px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+.home-import-drop-target { min-height: 108px; padding: 16px 12px; flex-direction: row; justify-content: flex-start; text-align: left; gap: 16px; }
+.home-import-icon { width: 44px; height: 44px; flex: 0 0 44px; }
+.home-import-actions { padding: 0 0 0 16px; border-top: 0; border-left: 1px solid #e5e9ed; display: flex; }
+.home-import-actions .directory-link { min-width: 0; }
+.home-recent-grid strong, .home-template-copy strong { font-size: 16px; }
+.home-template-copy small { font-size: 14px; }
+.home-recent-grid small { font-size: 13px; }
+@media (max-width: 700px) {
+  .empty-workbench-hero .drop-actions { display: grid; grid-template-columns: 1fr 1fr; }
+  .empty-workbench-hero .drop-actions > button { width: 100%; min-width: 0; padding-inline: 10px; }
+  .empty-workbench-hero .primary-button svg:last-child { display: none; }
+  .home-content-flow { font-size: 13px; gap: 5px 8px; }
+  .home-content-flow li + li::before { margin-right: 8px; }
+  .home-import-zone { padding: 8px 12px; grid-template-columns: 1fr; }
+  .home-import-drop-target { min-height: 100px; padding: 12px 0; gap: 12px; }
+  .home-import-actions { padding: 0; border-left: 0; justify-content: flex-end; }
+  .home-import-actions button { width: auto; }
+  .home-template-copy small { font-size: 13px; }
+}

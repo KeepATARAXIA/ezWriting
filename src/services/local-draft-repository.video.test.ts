@@ -1,5 +1,5 @@
 import 'fake-indexeddb/auto'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_ARTICLE_FORMATTING } from '../domain/formatting'
 import { createPersistedDraft, type PersistedDraft } from '../domain/saved-draft'
 import type { ArticleDraft } from '../domain/article'
@@ -28,6 +28,7 @@ function openDatabase(): Promise<IDBDatabase> {
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   clearLocalVideoRegistry()
   await resetLocalDraftDatabase(databaseName)
 })
@@ -36,7 +37,9 @@ describe('LocalDraftRepository video assets', () => {
   it.each([60, 100])('stores and restores a %i MiB video without expanding the article', async sizeMiB => {
     const bytes = new Uint8Array(sizeMiB * 1024 * 1024)
     bytes.set([1, 2, 3, 4])
-    const reference = registerLocalVideo(new Blob([bytes], { type: 'video/mp4' }))
+    const original = new Blob([bytes], { type: 'video/mp4' })
+    const read = vi.spyOn(original, 'arrayBuffer')
+    const reference = registerLocalVideo(original)
     const source = `<video controls src="${reference}" data-ez-video-name="大视频.mp4"></video>`
     const article: ArticleDraft = {
       id: 'large-video-draft',
@@ -54,6 +57,12 @@ describe('LocalDraftRepository video assets', () => {
     }
     const repository = new LocalDraftRepository({ databaseName })
     await repository.saveDraft(createPersistedDraft(article, DEFAULT_ARTICLE_FORMATTING))
+    expect(read).toHaveBeenCalledTimes(1)
+    read.mockClear()
+    const put = vi.spyOn(IDBObjectStore.prototype, 'put')
+    await repository.saveDraft(createPersistedDraft({ ...article, title: '只改标题' }, DEFAULT_ARTICLE_FORMATTING))
+    expect(read).not.toHaveBeenCalled()
+    expect(put.mock.instances.filter(store => (store as IDBObjectStore).name === 'assets')).toHaveLength(0)
     await repository.close()
     clearLocalVideoRegistry()
 
@@ -65,6 +74,11 @@ describe('LocalDraftRepository video assets', () => {
     expect(new Uint8Array(await blob!.slice(0, 4).arrayBuffer())).toEqual(new Uint8Array([1, 2, 3, 4]))
     expect(restored?.article.sourceText).not.toContain('data:video/')
     expect(restored?.article.sourceText?.length).toBeLessThan(300)
+    const restoredRead = vi.spyOn(blob!, 'arrayBuffer')
+    put.mockClear()
+    await reopened.saveDraft(restored!)
+    expect(restoredRead).not.toHaveBeenCalled()
+    expect(put.mock.instances.filter(store => (store as IDBObjectStore).name === 'assets')).toHaveLength(0)
     await reopened.close()
   })
 

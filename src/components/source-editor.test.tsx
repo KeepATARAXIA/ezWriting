@@ -1,3 +1,4 @@
+import { expandLocalImageReferences, retainLocalImageReferences, registerLocalImage } from '../lib/local-image-registry'
 import { act } from 'react'
 import { EditorView } from '@codemirror/view'
 import { createRoot, type Root } from 'react-dom/client'
@@ -27,6 +28,7 @@ describe('SourceEditor', () => {
   afterEach(async () => {
     await act(async () => root.unmount())
     container.remove()
+    retainLocalImageReferences([])
     vi.restoreAllMocks()
   })
 
@@ -47,7 +49,7 @@ describe('SourceEditor', () => {
     expect(container.querySelector('.source-editor-statusbar')?.textContent).toContain('字数 6')
     expect(container.querySelector('.source-editor-statusbar')?.textContent).toContain('历史 ≥100')
     expect(container.querySelector('.source-toolbar button[aria-label*="Markdown 语法"]')).toBeNull()
-    expect(container.querySelector('.source-editor-statusbar button[aria-label="隐藏 Markdown 语法"]')).not.toBeNull()
+    expect(container.querySelector('.source-editor-statusbar button[aria-label="显示 Markdown 语法"]')).not.toBeNull()
     await act(async () => {
       container.querySelector<HTMLButtonElement>('button[aria-label="警告块"]')?.click()
       await vi.waitFor(() => expect(onChange).toHaveBeenCalled(), { timeout: 500 })
@@ -55,7 +57,7 @@ describe('SourceEditor', () => {
     expect(onChange).toHaveBeenLastCalledWith(expect.stringContaining('> [!warning] 警告标题'))
   })
 
-  it('toggles a Markdown presentation view without changing the saved source', async () => {
+  it('defaults to Markdown presentation and can show syntax without changing the saved source', async () => {
     const source = '# 正文标题\n\n**重点内容**、*补充说明*和[参考链接](https://example.test/guide)'
     const onChange = vi.fn()
     await act(async () => root.render(
@@ -66,7 +68,6 @@ describe('SourceEditor', () => {
     const editor = container.querySelector<HTMLElement>('.cm-content')!
     const view = EditorView.findFromDOM(editor)!
     await act(async () => {
-      container.querySelector<HTMLButtonElement>('button[aria-label="隐藏 Markdown 语法"]')?.click()
       view.dispatch({ selection: { anchor: view.state.doc.line(2).from } })
     })
 
@@ -102,7 +103,6 @@ describe('SourceEditor', () => {
     const editor = container.querySelector<HTMLElement>('.cm-content')!
     const view = EditorView.findFromDOM(editor)!
     await act(async () => {
-      container.querySelector<HTMLButtonElement>('button[aria-label="隐藏 Markdown 语法"]')?.click()
       view.dispatch({ selection: { anchor: view.state.doc.line(3).to } })
     })
 
@@ -121,7 +121,6 @@ describe('SourceEditor', () => {
     const editor = container.querySelector<HTMLElement>('.cm-content')!
     const view = EditorView.findFromDOM(editor)!
     await act(async () => {
-      container.querySelector<HTMLButtonElement>('button[aria-label="隐藏 Markdown 语法"]')?.click()
       view.dispatch({ selection: { anchor: view.state.doc.line(3).to } })
     })
 
@@ -147,7 +146,6 @@ describe('SourceEditor', () => {
     const editor = container.querySelector<HTMLElement>('.cm-content')!
     const view = EditorView.findFromDOM(editor)!
     await act(async () => {
-      container.querySelector<HTMLButtonElement>('button[aria-label="隐藏 Markdown 语法"]')?.click()
       view.dispatch({ selection: { anchor: view.state.doc.line(3).to } })
     })
 
@@ -267,13 +265,13 @@ describe('SourceEditor', () => {
     await act(async () => {
       input.dispatchEvent(new Event('change', { bubbles: true }))
       await vi.waitFor(
-        () => expect(onChange).toHaveBeenLastCalledWith('![新流程图](data:image/png;base64,bmV3)'),
+        () => expect(expandLocalImageReferences(onChange.mock.lastCall?.[0] ?? '')).toBe('![新流程图](data:image/png;base64,bmV3)'),
         { timeout: 500 },
       )
     })
 
-    expect(onChange).toHaveBeenLastCalledWith('![新流程图](data:image/png;base64,bmV3)')
-    expect(container.querySelector('.source-image-widget img')?.getAttribute('src')).toBe('data:image/png;base64,bmV3')
+    expect(expandLocalImageReferences(onChange.mock.lastCall?.[0] ?? '')).toBe('![新流程图](data:image/png;base64,bmV3)')
+    expect(expandLocalImageReferences(container.querySelector('.source-image-widget img')?.getAttribute('src') ?? '')).toBe('data:image/png;base64,bmV3')
     expect(container.querySelector('.cm-content')?.textContent).not.toContain('data:image/png')
   })
 
@@ -292,15 +290,15 @@ describe('SourceEditor', () => {
     await act(async () => {
       input.dispatchEvent(new Event('change', { bubbles: true }))
       await vi.waitFor(
-        () => expect(onChange).toHaveBeenLastCalledWith('![新流程图](data:image/png;base64,bmV3 "旧图说明")'),
+        () => expect(expandLocalImageReferences(onChange.mock.lastCall?.[0] ?? '')).toBe('![新流程图](data:image/png;base64,bmV3 "旧图说明")'),
         { timeout: 500 },
       )
     })
   })
 
-  it('restores an embedded image after delete, controlled refresh, and undo', async () => {
+  it.each(['data', 'runtime'])('restores an embedded %s image after delete, controlled refresh, and undo', async kind => {
     const onChange = vi.fn()
-    const dataUri = 'data:image/png;base64,aW1hZ2U='
+    const dataUri = kind === 'runtime' ? registerLocalImage('data:image/png;base64,aW1hZ2U=') : 'data:image/png;base64,aW1hZ2U='
     const original = `正文\n\n![本地流程图](${dataUri})\n\n结尾`
     const deleted = '正文\n\n\n\n结尾'
     await act(async () => root.render(

@@ -115,13 +115,17 @@ function imageSources(html: string): string[] {
   return Array.from(new Set(sources))
 }
 
-function waitForImage(source: string): Promise<void> {
+function waitForImage(source: string, signal?: AbortSignal): Promise<void> {
   return new Promise(resolve => {
     const image = new Image()
     let settled = false
     const finish = () => {
       if (settled) return
       settled = true
+      window.clearTimeout(timer)
+      signal?.removeEventListener('abort', finish)
+      image.onload = image.onerror = null
+      image.removeAttribute('src')
       resolve()
     }
     const timer = window.setTimeout(finish, 1200)
@@ -133,6 +137,8 @@ function waitForImage(source: string): Promise<void> {
       window.clearTimeout(timer)
       finish()
     }
+    signal?.addEventListener('abort', finish, { once: true })
+    if (signal?.aborted) { finish(); return }
     image.src = source
     if (image.complete) {
       window.clearTimeout(timer)
@@ -141,12 +147,12 @@ function waitForImage(source: string): Promise<void> {
   })
 }
 
-export async function waitForXhsPaginationAssets(html: string): Promise<void> {
+export async function waitForXhsPaginationAssets(html: string, signal?: AbortSignal): Promise<void> {
   const fontsReady = 'fonts' in document
     ? Promise.race([
       document.fonts.ready.then(() => undefined),
       new Promise<void>(resolve => window.setTimeout(resolve, 1200)),
     ])
     : Promise.resolve()
-  await Promise.all([fontsReady, ...imageSources(html).map(waitForImage)])
+  await Promise.all([fontsReady, ...imageSources(html).map(source => waitForImage(source, signal))])
 }

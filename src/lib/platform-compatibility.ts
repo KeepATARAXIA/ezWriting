@@ -1,4 +1,5 @@
 import { normalizeMarkdownStrongWhitespace } from './markdown-compatibility'
+import { restoreSourceStyles } from './source-style-policy'
 
 export type PlatformContentTarget = 'wechat' | 'xhs' | 'x' | 'generic'
 
@@ -73,6 +74,7 @@ export function applyPlatformCompatibilityToDocument(
   target: PlatformContentTarget,
   options: PlatformCompatibilityOptions = {},
 ): void {
+  restoreSourceStyles(document)
   document.body.querySelectorAll<HTMLElement>('mark').forEach(mark => replaceMark(mark, target))
   if (options.replaceVideos ?? true) {
     document.body.querySelectorAll<HTMLVideoElement>('video').forEach(video => replaceVideo(video, target))

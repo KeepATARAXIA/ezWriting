@@ -1,0 +1,86 @@
+import { expect, test } from '@playwright/test'
+
+const gif = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAAAAAAALAAAAAABAAEAAAIBRAA7'
+
+test('classifies resources, shows export caveats, and copies X original images', async ({ page }, testInfo) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
+      write: async (items: ClipboardItem[]) => {
+        Object.assign(window, { __copiedHtml: await (await items[0].getType('text/html')).text() })
+      },
+    } })
+  })
+  await page.goto('/')
+  await page.locator('input[type="file"][accept*=".md"]').first().setInputFiles({
+    name: 'resource-workflow.md', mimeType: 'text/markdown',
+    buffer: Buffer.from(`# 资源工作流\n\n![动画](${gif})\n\n![待补图片](missing.png)\n\n<video src="data:video/webm;base64,AAAA" data-ez-video-name="视频样本"></video>\n\n正文保留。`),
+  })
+  await page.getByRole('tab', { name: /^资源/ }).click()
+  await expect(page.locator('.article-resource-card')).toHaveCount(3)
+  const filters = page.getByRole('group', { name: '筛选资源类型' })
+  await filters.getByRole('button', { name: /^视频/ }).click()
+  await expect(page.locator('.article-resource-card')).toHaveCount(1)
+  await expect(page.locator('.article-resource-card')).toContainText('需在目标平台上传')
+  await expect(page.locator('.resource-panel video')).toHaveCount(0)
+  await filters.getByRole('button', { name: /^待补齐/ }).click()
+  await expect(page.locator('.article-resource-card')).toContainText('missing.png')
+  await expect(page.locator('.resource-panel').getByRole('button', { name: '重新链接', exact: true })).toBeVisible()
+  await filters.getByRole('button', { name: /^图片/ }).click()
+  await expect(page.locator('.article-resource-card')).toHaveCount(1)
+  await filters.getByRole('button', { name: /^全部/ }).click()
+  await page.screenshot({ path: testInfo.outputPath('resources-1440.png') })
+  await page.getByRole('tab', { name: 'X 长文', exact: true }).click()
+  await page.getByRole('button', { name: '复制 X 长文格式', exact: true }).click()
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __copiedHtml: string }).__copiedHtml)).toContain(gif)
+  const copied = await page.evaluate(() => (window as unknown as { __copiedHtml: string }).__copiedHtml)
+  expect(copied).not.toContain('dispatch-local-video://')
+  expect(copied).toContain('原生上传视频')
+  await page.getByRole('tab', { name: '小红书', exact: true }).click()
+  await expect(page.getByLabel('输出前提醒')).toContainText('GIF 将输出为静态图片')
+  await expect(page.locator('.preview-settings-toggle')).toHaveAttribute('aria-expanded', 'false')
+  await expect(page.getByRole('button', { name: '下载全部图片', exact: true })).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('output-1440.png') })
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.getByRole('navigation', { name: '手机工作区' }).getByRole('button', { name: /^资源/ }).click()
+  await expect(page.locator('.article-resource-card')).toHaveCount(3)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  await page.screenshot({ path: testInfo.outputPath('resources-390.png') })
+})
+
+test('mobile workspace preserves editor history and exposes search and settings', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/')
+  await page.locator('input[type="file"][accept*=".md"]').first().setInputFiles({
+    name: 'mobile-workflow.md', mimeType: 'text/markdown', buffer: Buffer.from('# 手机切换测试\n\n原有正文。'),
+  })
+  const editor = page.locator('.cm-content')
+  await editor.click()
+  await editor.press('Control+End')
+  await page.keyboard.insertText('新增文字')
+  const tabs = page.getByRole('navigation', { name: '手机工作区' })
+  await tabs.getByRole('button', { name: '预览', exact: true }).click()
+  await expect(editor).toBeHidden()
+  await expect(page.locator('.wechat-content')).toBeVisible()
+  await expect(page.locator('.preview-settings-toggle')).toHaveAttribute('aria-expanded', 'false')
+  await page.locator('.preview-settings-toggle').click()
+  await page.getByRole('button', { name: '关闭公众号设置', exact: true }).click()
+  await expect(page.locator('.preview-tool-rail')).toBeHidden()
+  await page.screenshot({ path: testInfo.outputPath('preview-390.png') })
+  await tabs.getByRole('button', { name: /^资源/ }).click()
+  await expect(page.locator('.resource-panel')).toBeVisible()
+  await expect(page.locator('.preview-lane')).toBeHidden()
+  await tabs.getByRole('button', { name: '编辑', exact: true }).click()
+  await expect(editor).toContainText('新增文字')
+  await page.getByRole('button', { name: '撤销', exact: true }).click()
+  await expect(editor).not.toContainText('新增文字')
+  await page.getByRole('button', { name: '重做', exact: true }).click()
+  await expect(editor).toContainText('新增文字')
+  await page.getByRole('button', { name: '打开历史记录', exact: true }).click()
+  await page.getByRole('searchbox', { name: '搜索历史稿件' }).fill('不存在的标题')
+  await expect(page.locator('.history-empty-state')).toContainText('没有匹配的稿件')
+  await page.getByRole('searchbox', { name: '搜索历史稿件' }).fill('手机')
+  await expect(page.locator('.history-draft-open')).toHaveCount(1)
+  await page.keyboard.press('Escape')
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  await page.screenshot({ path: testInfo.outputPath('editor-390.png') })
+})

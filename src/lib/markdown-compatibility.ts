@@ -1,3 +1,4 @@
+import { protectLocalImageReferences } from './local-image-registry'
 import DOMPurify from 'dompurify'
 import { Marked } from 'marked'
 import { isLocalVideoReference, localVideoBlob } from './local-video-registry'
@@ -320,7 +321,8 @@ export function normalizeMarkdownCalloutType(value: string): MarkdownCalloutType
 }
 
 function sanitizeContentHtmlWithAttributes(html: string, additionalAttributes: string[]): string {
-  const embeddedVideos = compactHtmlEmbeddedVideos(html)
+  const images = protectLocalImageReferences(html)
+  const embeddedVideos = compactHtmlEmbeddedVideos(images.html)
   const sanitized = DOMPurify.sanitize(embeddedVideos.html, {
     USE_PROFILES: { html: true },
     FORBID_TAGS: FORBIDDEN_CONTENT_TAGS,
@@ -329,7 +331,7 @@ function sanitizeContentHtmlWithAttributes(html: string, additionalAttributes: s
     ADD_ATTR: [...SAFE_CONTENT_DATA_ATTRIBUTES, ...additionalAttributes],
   })
   const filtered = filterLocalVideos(filterInlineStyles(sanitized))
-  return restoreHtmlEmbeddedVideos(filtered, embeddedVideos.videos)
+  return images.restore(restoreHtmlEmbeddedVideos(filtered, embeddedVideos.videos))
 }
 
 export function sanitizeContentHtml(html: string): string {

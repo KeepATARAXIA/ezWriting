@@ -1,3 +1,4 @@
+import { localImageSource } from './local-image-registry'
 import {
   normalizeXhsImageOverride,
   type XhsImageLayout,
@@ -19,6 +20,7 @@ export interface XhsPreparedLayout {
 }
 
 function sourceFingerprint(source: string): string {
+  source = localImageSource(source) ?? source
   const sample = source.length > 8192
     ? `${source.slice(0, 4096)}:${source.length}:${source.slice(-4096)}`
     : source
@@ -107,7 +109,7 @@ export function prepareXhsImageLayout(
   const images: XhsPreparedImage[] = []
 
   Array.from(document.body.querySelectorAll<HTMLImageElement>('img')).forEach(image => {
-    const fingerprint = sourceFingerprint(image.getAttribute('src') || image.getAttribute('data-missing-asset') || image.alt)
+    const fingerprint = sourceFingerprint(image.getAttribute('data-ez-gif-source') || image.getAttribute('src') || image.getAttribute('data-missing-asset') || image.alt)
     const occurrence = (occurrences.get(fingerprint) ?? 0) + 1
     occurrences.set(fingerprint, occurrence)
     const key = `xhs-img-${fingerprint}-${occurrence}`

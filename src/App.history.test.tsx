@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
 import { DEFAULT_ARTICLE_FORMATTING } from './domain/formatting'
 import { createPersistedDraft } from './domain/saved-draft'
-import { LOCAL_BACKUP_FORMAT, LOCAL_BACKUP_VERSION } from './services/local-backup'
+import { LOCAL_BACKUP_FORMAT, LOCAL_BACKUP_VERSION, parseLocalBackup } from './services/local-backup'
 import { LocalDraftRepository, resetLocalDraftDatabase } from './services/local-draft-repository'
 
 const bridgeMocks = vi.hoisted(() => ({
@@ -127,7 +127,8 @@ describe('App local draft history', () => {
     })
     for (let attempt = 0; attempt < 2; attempt += 1) {
       await act(async () => container.querySelector<HTMLButtonElement>('[aria-controls="article-resource-view"]')?.click())
-      expect(container.querySelector<HTMLElement>('#article-edit-view')?.hidden).toBe(true)
+      expect(container.querySelector<HTMLElement>('#article-edit-view')?.hidden).toBe(false)
+      expect(container.querySelector('.resource-sidebar')).not.toBeNull()
       await act(async () => container.querySelector<HTMLButtonElement>('[aria-controls="article-edit-view"]')?.click())
       expect(sourceView().state.doc.toString()).toBe('保留这段编辑')
       expect(sourceView().state.selection.main.from).toBe(2)
@@ -260,10 +261,10 @@ describe('App local draft history', () => {
     })
 
     const notice = container.querySelector('.local-history-notice:not(.error)')
-    expect(notice?.textContent).toContain('本地保存失败，但已将当前编辑直接写入备份')
+    expect(notice?.textContent).toContain('本地保存失败，但已将当前编辑写入资产包')
     expect(notice?.classList.contains('error')).toBe(false)
     expect(container.querySelector('.local-history-notice.error')?.textContent).toContain('自动保存失败')
-    const payload = JSON.parse(await backupBlob!.text()) as { drafts: Array<{ article: { title: string } }> }
+    const payload = await parseLocalBackup(new File([backupBlob!], 'emergency.ezwriting-backup.zip'))
     expect(payload.drafts[0].article.title).toBe('配额失败时的当前编辑')
   })
 
@@ -279,7 +280,7 @@ describe('App local draft history', () => {
       container.querySelector<HTMLButtonElement>('.history-backup-actions button')?.click()
       await new Promise(resolve => window.setTimeout(resolve, 100))
     })
-    expect(container.textContent).toContain('已导出 1 篇稿件')
+    expect(container.textContent).toContain('已请求下载 1 篇稿件')
     const save = vi.spyOn(repository, 'saveDraft').mockRejectedValue(new DOMException('Storage quota exceeded', 'QuotaExceededError'))
     await act(async () => {
       const title = container.querySelector<HTMLTextAreaElement>('[aria-label="文章标题"]')!
@@ -290,7 +291,7 @@ describe('App local draft history', () => {
       await new Promise(resolve => window.setTimeout(resolve, 800))
     })
     expect(container.querySelector('.local-history-notice.error')?.textContent).toContain('自动保存失败')
-    expect(container.querySelector('.local-history-notice:not(.error)')?.textContent).toContain('已导出 1 篇稿件')
+    expect(container.querySelector('.local-history-notice:not(.error)')?.textContent).toContain('已请求下载 1 篇稿件')
     await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="关闭备份提示"]')?.click())
     expect(container.querySelector('.local-history-notice.error')?.textContent).toContain('自动保存失败')
     expect(container.querySelector('.local-history-notice.error [aria-label="关闭提示"]')).toBeNull()
@@ -386,5 +387,33 @@ describe('App local draft history', () => {
       await secondRepository.close()
       secondContainer.remove()
     }
+  })
+
+  it('reports a post-import display failure without claiming the committed backup was cancelled', async () => {
+    await renderApp()
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('.drop-actions .primary-button')?.click()
+      await new Promise(resolve => window.setTimeout(resolve, 40))
+    })
+    const stored = (await repository.getDraft((await repository.listDrafts())[0].id))!
+    const backupDraft = { ...stored, article: { ...stored.article, title: '已提交的恢复稿' } }
+    const backup = new File([JSON.stringify({ format: LOCAL_BACKUP_FORMAT, version: LOCAL_BACKUP_VERSION,
+      exportedAt: new Date().toISOString(), activeDraftId: stored.id, drafts: [backupDraft],
+    })], 'display-failure.json')
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const importAtomic = repository.importDraftsAtomically.bind(repository)
+    vi.spyOn(repository, 'importDraftsAtomically').mockImplementation(async (...args) => {
+      await importAtomic(...args)
+      vi.spyOn(repository, 'getDraft').mockRejectedValue(new Error('显示加载失败'))
+    })
+    const input = container.querySelector<HTMLInputElement>('input[accept*=".ezwriting-backup"]')!
+    Object.defineProperty(input, 'files', { configurable: true, value: [backup] })
+    await act(async () => {
+      input.dispatchEvent(new Event('change', { bubbles: true }))
+      await new Promise(resolve => window.setTimeout(resolve, 100))
+    })
+    expect(container.textContent).toContain('备份已写入，但打开恢复稿件失败')
+    expect(container.textContent).not.toContain('未写入备份稿件')
+    expect((await repository.readDraftForBackup(stored.id))!.draft.article.title).toBe('已提交的恢复稿')
   })
 })

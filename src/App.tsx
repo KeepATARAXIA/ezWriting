@@ -1,3 +1,4 @@
+import { compactArticleMedia, compactLocalImages, localImageBlob, expandLocalImageReferences, retainLocalImageReferences } from './lib/local-image-registry'
 import {
   lazy,
   startTransition,
@@ -33,13 +34,15 @@ import {
   RotateCcw,
   ShieldCheck,
   Undo2,
-  Upload,
   XCircle,
 } from 'lucide-react'
 import type { ArticleDraft, MissingImageAction, MissingImageTarget, PlatformAccount, PublishResult } from './domain/article'
 import { DEFAULT_ARTICLE_FORMATTING, type ArticleFormatting } from './domain/formatting'
 import { DispatchControls, type BridgeState, type WorkState } from './components/dispatch-controls'
 import { HistorySidebar } from './components/history-sidebar'
+import { ResourceImage } from './components/resource-image'
+import { ResourceSidebar } from './components/resource-sidebar'
+import { isGifSource } from './lib/media-preview'
 import { WorkbenchErrorBoundary } from './components/workbench-error-boundary'
 import type { SourceEditorActiveLocation, SourceEditorFocusRequest } from './components/source-editor'
 import type { PreviewDevice, PreviewEditTarget, PreviewLocateRequest, PreviewPlatform } from './components/platform-previews'
@@ -82,7 +85,7 @@ import {
   validateImageResourceFiles,
 } from './lib/file-parser'
 import { extractMissingImageTargets } from './lib/missing-assets'
-import { retainLocalVideoReferences } from './lib/local-video-registry'
+import { compactLocalVideoData, retainLocalVideoReferences, localVideoBlob, localVideoPreviewUrl } from './lib/local-video-registry'
 import { normalizeMarkdownStrongWhitespace } from './lib/markdown-compatibility'
 import { getBrowserExtensionGuide } from './lib/browser-extension-install'
 import { getPlatformAccounts, publishDraft, waitForBridge } from './lib/wechatsync-bridge'
@@ -110,6 +113,8 @@ interface ArticleResource {
   src: string
   name: string
   kind: 'body'
+  mediaType: 'image' | 'gif' | 'video'
+  size?: number
   blockIndex?: number
   missingTarget?: MissingImageTarget
 }
@@ -205,7 +210,7 @@ const MIN_EDITOR_PANE_PERCENT = 32
 const MAX_EDITOR_PANE_PERCENT = 68
 const EDITOR_PANE_STORAGE_KEY = 'dispatch.editor-pane-percent.v3'
 const LEGACY_EDITOR_PANE_STORAGE_KEY = 'dispatch.editor-pane-percent.v2'
-const HISTORY_SIDEBAR_STORAGE_KEY = 'dispatch.history-sidebar-expanded.v1'
+const HISTORY_SIDEBAR_STORAGE_KEY = 'dispatch.history-sidebar-expanded.v2'
 const AUTOSAVE_DELAY_MS = 700
 
 let defaultDraftRepository: DraftRepository | null | undefined
@@ -213,7 +218,7 @@ let defaultDraftRepository: DraftRepository | null | undefined
 function getDefaultDraftRepository(): DraftRepository | null {
   if (defaultDraftRepository !== undefined) return defaultDraftRepository
   try {
-    defaultDraftRepository = new LocalDraftRepository()
+    defaultDraftRepository = new LocalDraftRepository({ runtimeImageReferences: true })
   } catch {
     defaultDraftRepository = null
   }
@@ -274,14 +279,14 @@ function saveEditorPanePercents(value: EditorPanePercents): void {
 
 function readHistorySidebarExpanded(): boolean {
   try {
-    return window.localStorage.getItem(HISTORY_SIDEBAR_STORAGE_KEY) !== 'false'
+    return window.localStorage.getItem(HISTORY_SIDEBAR_STORAGE_KEY) === 'true'
   } catch {
-    return true
+    return false
   }
 }
 
 function isHistoryOverlayViewport(): boolean {
-  return typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 1300px)').matches
+  return typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 1440px)').matches
 }
 
 function sourceLabel(article: ArticleDraft): string {
@@ -310,7 +315,7 @@ function accountMatchesPreview(account: PlatformAccount, platform: PreviewPlatfo
 
 function getResourceName(source: string, alt: string | null, index: number): string {
   if (alt?.trim()) return alt.trim()
-  if (source.startsWith('data:image/')) return `本地图片 ${index + 1}`
+  if (source.startsWith('data:image/') || localImageBlob(source)) return `本地图片 ${index + 1}`
   const pathName = source.split(/[?#]/)[0].split('/').pop()
   if (!pathName) return `正文图片 ${index + 1}`
   try {
@@ -508,8 +513,9 @@ function analyzeArticleContent(html: string): { characterCount: number; bodyImag
   const document = new DOMParser().parseFromString(html, 'text/html')
   const text = (document.body.textContent || '').replace(/\s+/g, '')
   const bodyBlocks = Array.from(document.body.children).filter(element => !element.hasAttribute('data-source-spacer'))
-  const bodyResources = Array.from(document.body.querySelectorAll('img')).map((image, index) => {
+  const bodyResources = Array.from(document.body.querySelectorAll<HTMLElement>('img, video')).map((image, index) => {
     const src = image.getAttribute('src') || ''
+    const mediaType = image.tagName === 'VIDEO' ? 'video' as const : isGifSource(src) ? 'gif' as const : 'image' as const
     const missingId = image.dataset.missingId
     const missingReference = image.dataset.missingAsset
     let sourceBlock: Element = image
@@ -519,13 +525,15 @@ function analyzeArticleContent(html: string): { characterCount: number; bodyImag
     return {
       id: `body-${index}`,
       src,
-      name: getResourceName(src, image.getAttribute('alt'), index),
+      name: mediaType === 'video' ? image.dataset.ezVideoName || `视频 ${index + 1}` : getResourceName(src, image.getAttribute('alt'), index),
       kind: 'body' as const,
+      mediaType,
+      size: (mediaType === 'video' ? localVideoBlob(src) : localImageBlob(src))?.size,
       blockIndex: bodyBlocks.indexOf(sourceBlock),
       missingTarget: missingId && missingReference ? { id: missingId, reference: missingReference } : undefined,
     }
   })
-  return { characterCount: Array.from(text).length, bodyImageCount: bodyResources.length, resources: bodyResources }
+  return { characterCount: Array.from(text).length, bodyImageCount: bodyResources.filter(resource => resource.mediaType !== 'video').length, resources: bodyResources }
 }
 
 export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
@@ -537,7 +545,13 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     () => getBrowserExtensionGuide(typeof navigator === 'undefined' ? '' : navigator.userAgent),
     [],
   )
-  const [article, setArticle] = useState<ArticleDraft | null>(null)
+  const [article, setArticleState] = useState<ArticleDraft | null>(null)
+  const setArticle = useCallback((update: ArticleDraft | null | ((current: ArticleDraft | null) => ArticleDraft | null)) => {
+    setArticleState(current => {
+      const next = typeof update === 'function' ? update(current) : update
+      return next ? compactArticleMedia(next) : null
+    })
+  }, [])
   const [fileInfo, setFileInfo] = useState<DraftSourceInfo>(null)
   const [hydrationPhase, setHydrationPhase] = useState<HydrationPhase>(() => draftRepository ? 'loading' : 'ready')
   const [drafts, setDrafts] = useState<DraftSummary[]>([])
@@ -550,6 +564,9 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   const [undoDraft, setUndoDraft] = useState<{ id: string; title: string } | null>(null)
   const [backupStatus, setBackupStatus] = useState<'idle' | 'exporting' | 'importing'>('idle')
   const [backupNotice, setBackupNotice] = useState<string | null>(null)
+  const [backupProgress, setBackupProgress] = useState<string | null>(null)
+  const backupControllerRef = useRef<AbortController | null>(null)
+  useEffect(() => () => backupControllerRef.current?.abort(), [])
   const [storagePersistent, setStoragePersistent] = useState<boolean | null>(null)
   const [workState, setWorkState] = useState<WorkState>('idle')
   const [exclusiveOperation, setExclusiveOperation] = useState<ExclusiveOperation | null>(null)
@@ -569,6 +586,17 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   const [previewLocateRequest, setPreviewLocateRequest] = useState<PreviewLocateRequest | null>(null)
   const [activeEditorLocation, setActiveEditorLocation] = useState<SourceEditorActiveLocation | null>(null)
   const [editorView, setEditorView] = useState<EditorView>('edit')
+  const [syncScroll, setSyncScroll] = useState(() => {
+    try { return window.localStorage.getItem('dispatch.sync-scroll.v1') !== 'false' } catch { return true }
+  })
+  const [resourceWidth, setResourceWidth] = useState(() => {
+    try { return Math.max(260, Math.min(440, Number(window.localStorage.getItem('dispatch.resource-width.v1')) || 300)) } catch { return 300 }
+  })
+  const [resourceFilter, setResourceFilter] = useState<'all' | 'image' | 'gif' | 'video' | 'missing'>('all')
+  const [failedResources, setFailedResources] = useState<Set<string>>(() => new Set())
+  const [resourceRetries, setResourceRetries] = useState<Record<string, number>>({})
+  useEffect(() => { setFailedResources(new Set()); setResourceRetries({}) }, [article?.id])
+  const [mobileWorkspace, setMobileWorkspace] = useState<'edit' | 'preview' | 'resources'>('edit')
   const [previewDevice, setPreviewDevice] = useState<PreviewDevice>('desktop')
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('split')
   const [warningsExpanded, setWarningsExpanded] = useState(false)
@@ -597,7 +625,6 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   const locatedFieldTimerRef = useRef<number | null>(null)
   const activeDraftRecordRef = useRef<PersistedDraft | null>(null)
   const activeDraftIdRef = useRef<string | null>(null)
-  const previousHomeDraftCountRef = useRef<number | null>(null)
   const draftRevisionRef = useRef(0)
   const documentGenerationRef = useRef(0)
   const exclusiveOperationRef = useRef<ExclusiveOperation | null>(null)
@@ -611,12 +638,13 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   activeDraftIdRef.current = article?.id ?? null
 
   useEffect(() => {
+    retainLocalImageReferences(article ? [article.html, article.markdown || '', article.sourceText || ''] : [])
     retainLocalVideoReferences(article
       ? [article.html, article.markdown || '', article.sourceText || '']
       : [])
   }, [article?.id])
 
-  useEffect(() => () => retainLocalVideoReferences([]), [])
+  useEffect(() => () => { retainLocalVideoReferences([]); retainLocalImageReferences([]) }, [])
 
   const beginExclusiveOperation = useCallback((operation: ExclusiveOperation): boolean => {
     if (exclusiveOperationRef.current !== null) return false
@@ -721,10 +749,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
 
   useEffect(() => {
     if (hydrationPhase !== 'ready') return
-    const previousCount = previousHomeDraftCountRef.current
     if (homeDrafts.length === 0) setHistoryExpanded(false)
-    else if (previousCount === 0) setHistoryExpanded(true)
-    previousHomeDraftCountRef.current = homeDrafts.length
   }, [homeDrafts.length, hydrationPhase])
 
   useEffect(() => {
@@ -752,6 +777,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
 
   const applyPersistedDraft = useCallback((persisted: PersistedDraft) => {
     const restored = snapshotFromPersistedDraft(persisted)
+    restored.article = compactArticleMedia(restored.article)
     const restoredArticle: ArticleDraft = {
       ...restored.article,
       html: sanitizeEditedHtml(restored.article.html),
@@ -785,6 +811,8 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     setActiveEditorLocation(null)
     setEditorView('edit')
     setPreviewDevice('desktop')
+    setMobileWorkspace('edit')
+    setResourceFilter('all')
     setWarningsExpanded(false)
     setIsImportMenuOpen(false)
     importContextRef.current = null
@@ -792,6 +820,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   applyPersistedDraftRef.current = applyPersistedDraft
 
   const activateNewDraft = useCallback((snapshot: DraftWorkspaceSnapshot, platform: PreviewPlatform = 'wechat') => {
+    snapshot = { ...snapshot, article: compactArticleMedia(snapshot.article) }
     documentGenerationRef.current += 1
     draftRevisionRef.current += 1
     activeDraftRecordRef.current = null
@@ -812,6 +841,8 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     setEditorView('edit')
     setPreviewDevice('desktop')
     setWorkspaceMode('split')
+    setMobileWorkspace('edit')
+    setResourceFilter('all')
     setWarningsExpanded(false)
     setIsImportMenuOpen(false)
     importContextRef.current = null
@@ -850,6 +881,8 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     setEditorView('edit')
     setPreviewDevice('desktop')
     setWorkspaceMode('split')
+    setMobileWorkspace('edit')
+    setResourceFilter('all')
     setWarningsExpanded(false)
     setIsImportMenuOpen(false)
     importContextRef.current = null
@@ -1038,14 +1071,15 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
 
   const exportLocalData = async () => {
     if (!draftRepository || !beginExclusiveOperation('backup-export')) return
+    const controller = new AbortController()
+    backupControllerRef.current = controller
+    setBackupProgress('正在准备媒体资产包…')
     setBackupStatus('exporting')
     setBackupNotice(null)
     setHistoryError(null)
     try {
       const {
-        createLocalBackup,
-        localBackupFileName,
-        serializeLocalBackup,
+        createLocalBackupArchive,
       } = await import('./services/local-backup')
       let unsavedDraft: PersistedDraft | undefined
       try {
@@ -1057,19 +1091,23 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
           : await draftRepository.getDraft(currentDraftSnapshot.article.id)
         unsavedDraft = persistedDraftFromSnapshot(currentDraftSnapshot as DraftWorkspaceSnapshot, current)
       }
-      const payload = await createLocalBackup(draftRepository, new Date(), unsavedDraft)
-      const url = URL.createObjectURL(serializeLocalBackup(payload))
+      const payload = await createLocalBackupArchive(draftRepository, new Date(), unsavedDraft, { signal: controller.signal, onProgress: setBackupProgress })
+      controller.signal.throwIfAborted()
+      const url = URL.createObjectURL(payload.blob)
       const anchor = document.createElement('a')
       anchor.href = url
-      anchor.download = localBackupFileName()
+      anchor.download = payload.fileName
       anchor.click()
-      window.setTimeout(() => URL.revokeObjectURL(url), 0)
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
       setBackupNotice(unsavedDraft
-        ? `本地保存失败，但已将当前编辑直接写入备份；共导出 ${payload.drafts.length} 篇稿件。`
-        : `已导出 ${payload.drafts.length} 篇稿件及其本地图片。`)
+        ? `本地保存失败，但已将当前编辑写入资产包；已请求下载 ${payload.draftCount} 篇稿件、${payload.assetCount} 个去重媒体，请确认文件已保存。`
+        : `已请求下载 ${payload.draftCount} 篇稿件、${payload.assetCount} 个去重媒体（${(payload.blob.size / 1048576).toFixed(1)} MiB）；请确认备份文件已保存。`)
     } catch (backupError) {
-      setHistoryError(`导出备份失败：${(backupError as Error).message}`)
+      if (controller.signal.aborted) setBackupNotice('已取消备份导出，原稿件未删除。')
+      else setHistoryError(`导出备份失败：${(backupError as Error).message}`)
     } finally {
+      backupControllerRef.current = null
+      setBackupProgress(null)
       setBackupStatus('idle')
       endExclusiveOperation('backup-export')
     }
@@ -1084,26 +1122,38 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
       return
     }
     setBackupStatus('importing')
+    const controller = new AbortController()
+    backupControllerRef.current = controller
+    const backupOptions = { signal: controller.signal, onProgress: setBackupProgress }
+    setBackupProgress('正在校验备份文件…')
     setBackupNotice(null)
     setHistoryError(null)
+    let committed = false
     try {
       const { importLocalBackup, parseLocalBackup } = await import('./services/local-backup')
-      const payload = await parseLocalBackup(file)
+      const payload = await parseLocalBackup(file, backupOptions)
       const existingIds = new Set((await draftRepository.listDrafts({ includeDeleted: true })).map(draft => draft.id))
       const replacements = payload.drafts.filter(draft => existingIds.has(draft.id)).length
       if (replacements > 0 && !window.confirm(`备份中有 ${replacements} 篇稿件与本机记录相同。继续导入会用备份版本覆盖这些稿件，是否继续？`)) return
       await autosave.flush()
       documentGenerationRef.current += 1
       autosave.cancel()
-      const result = await importLocalBackup(draftRepository, payload)
+      const result = await importLocalBackup(draftRepository, payload, backupOptions)
+      committed = true
+      backupControllerRef.current = null
+      setBackupProgress(null)
       const nextDrafts = await refreshDraftSummaries()
       const preferredId = result.activeDraftId || nextDrafts[0]?.id || null
       const preferred = preferredId ? await draftRepository.getDraft(preferredId) : null
       if (preferred && !preferred.deletedAt) applyPersistedDraft(preferred)
       setBackupNotice(`已导入 ${result.draftCount} 篇稿件；相同稿件已使用备份版本。`)
     } catch (backupError) {
-      setHistoryError(`导入备份失败：${(backupError as Error).message}`)
+      if (committed) setHistoryError(`备份已写入，但打开恢复稿件失败：${(backupError as Error).message}。可从历史记录重新打开。`)
+      else if (controller.signal.aborted) setBackupNotice('已取消备份导入，未写入备份稿件。')
+      else setHistoryError(`导入备份失败：${(backupError as Error).message}`)
     } finally {
+      backupControllerRef.current = null
+      setBackupProgress(null)
       setBackupStatus('idle')
       endExclusiveOperation('backup-import')
       if (backupInputRef.current) backupInputRef.current.value = ''
@@ -1288,7 +1338,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     if (!grid || !paper || typeof ResizeObserver === 'undefined') return
 
     const measure = () => {
-      const width = grid.getBoundingClientRect().width
+      const width = grid.getBoundingClientRect().right - paper.getBoundingClientRect().left
       const separator = grid.querySelector<HTMLElement>('.pane-resizer')
       if (!width || !separator?.getBoundingClientRect().width) {
         setPaneLayout(null)
@@ -1323,8 +1373,10 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     const grid = editorGridRef.current
     if (!grid) return
     const bounds = grid.getBoundingClientRect()
-    if (!bounds.width) return
-    updateEditorPanePercent(((clientX - bounds.left) / bounds.width) * 100, false, platform)
+    const left = grid.querySelector('.paper-panel')?.getBoundingClientRect().left ?? bounds.left
+    const width = bounds.right - left
+    if (!width) return
+    updateEditorPanePercent(((clientX - left) / width) * 100, false, platform)
   }
 
   const startPaneResize = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -1380,10 +1432,12 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   }
 
   const editPreviewTarget = (target: PreviewEditTarget) => {
+    setMobileWorkspace('edit')
+    setEditorView('edit')
     setActiveEditorLocation(null)
     setPreviewLocateRequest(null)
     if (target.kind === 'title') {
-      locateEditorField(titleInputRef.current, titleInputRef.current)
+      window.requestAnimationFrame(() => locateEditorField(titleInputRef.current, titleInputRef.current))
       return
     }
     if (!article) return
@@ -1402,6 +1456,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   const locateResourceInPreview = (resource: ArticleResource) => {
     if (resource.kind !== 'body' || resource.blockIndex === undefined || resource.blockIndex < 0) return
     setWorkspaceMode('split')
+    setMobileWorkspace('preview')
     setPreviewDevice('desktop')
     previewLocateRequestIdRef.current += 1
     setPreviewLocateRequest({
@@ -1420,7 +1475,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     if (exclusiveOperationRef.current !== null) return
     startTransition(() => {
       setArticle(current => current
-        ? reconcileSourceUpdate(current, updateArticleFromSource(current, sourceText))
+        ? reconcileSourceUpdate(current, updateArticleFromSource(current, compactLocalImages(compactLocalVideoData(sourceText))))
         : current)
       markDraftDirty()
     })
@@ -1570,8 +1625,9 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
         : formattedHtml
       return {
         ...normalizedArticle,
-        html: applyPlatformCompatibility(themedHtml, target),
-        markdown: applyPlatformMarkdownCompatibility(normalizedArticle.markdown, target),
+        html: expandLocalImageReferences(applyPlatformCompatibility(themedHtml, target)),
+        markdown: applyPlatformMarkdownCompatibility(normalizedArticle.markdown === undefined ? undefined : expandLocalImageReferences(normalizedArticle.markdown), target),
+        sourceText: normalizedArticle.sourceText === undefined ? undefined : expandLocalImageReferences(normalizedArticle.sourceText),
       }
     }
     const groups = (['wechat', 'xhs', 'x', 'generic'] as const)
@@ -1664,7 +1720,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
 
   const isPublishing = workState === 'publishing'
   const isOperationLocked = exclusiveOperation !== null
-  const hasPublishableArticle = Boolean(article && hasArticleBodyContent(article.html))
+  const hasPublishableArticle = useMemo(() => Boolean(article && hasArticleBodyContent(article.html)), [article?.html])
   const articleHtml = article?.html ?? ''
   const deferredArticleHtml = useDeferredValue(articleHtml)
   const deferredFormatting = useDeferredValue(formatting)
@@ -1678,14 +1734,14 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     || deferredFormatting !== formatting
     || deferredArticleSourceText !== articleSourceText
   useEffect(() => {
-    if (!article || !activeEditorLocation || isPreviewUpdating) return
+    if (!syncScroll || !article || !activeEditorLocation || isPreviewUpdating) return
     previewLocateRequestIdRef.current += 1
     setPreviewLocateRequest({
       blockIndex: activeEditorLocation.blockIndex,
       line: activeEditorLocation.line,
       requestId: previewLocateRequestIdRef.current,
     })
-  }, [activeEditorLocation, activePlatform, article?.id, isPreviewUpdating])
+  }, [activeEditorLocation, activePlatform, article?.id, isPreviewUpdating, syncScroll])
   const previewFormatting = useMemo(
     () => articleFormattingForTarget(formatting, activePlatform),
     [activePlatform, formatting],
@@ -1712,6 +1768,8 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     () => accounts.find(account => accountMatchesPreview(account, activePlatform)),
     [accounts, activePlatform],
   )
+  const visibleResources = articleContent.resources.filter(resource => resourceFilter === 'all' || (resourceFilter === 'missing' ? resource.missingTarget || !resource.src : resource.mediaType === resourceFilter))
+  const connectedPlatformCount = accounts.filter(account => platformAccountType(account) !== 'zip-download').length
 
   return (
     <div className="app-shell article-open">
@@ -1785,7 +1843,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                   aria-pressed={workspaceMode === 'editor'}
                   aria-label="仅显示编辑端"
                   title="仅显示编辑端"
-                  onClick={() => setWorkspaceMode('editor')}
+                  onClick={() => { setWorkspaceMode('editor'); setMobileWorkspace('edit'); setEditorView('edit') }}
                 ><PanelLeft size={17} /></button>
                 <button
                   type="button"
@@ -1801,12 +1859,13 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                   aria-pressed={workspaceMode === 'preview'}
                   aria-label="仅显示预览端"
                   title="仅显示预览端"
-                  onClick={() => setWorkspaceMode('preview')}
+                  onClick={() => { setWorkspaceMode('preview'); setMobileWorkspace('preview') }}
                 ><PanelRight size={17} /></button>
               </div>
             </nav>
 
             <div className="workbench-actions" role="group" aria-label="发布状态与操作">
+              <span className={`workbench-save-state ${autosave.status}`} role="status" aria-label="本地保存状态">{({ idle: '未保存', dirty: '待保存', saving: '保存中', saved: '已保存', error: '保存失败' })[autosave.status]}</span>
               <button
                 type="button"
                 className={`extension-chip topbar-status-command ${bridgeState}`}
@@ -1821,7 +1880,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                 {bridgeState === 'checking' && <LoaderCircle className="spin" size={15} />}
                 {bridgeState === 'connected' && <PlugZap size={15} />}
                 {(bridgeState === 'missing' || bridgeState === 'error') && <CircleAlert size={15} />}
-                {bridgeState === 'checking' ? '正在连接发布引擎' : bridgeState === 'connected' ? `引擎已就绪 · ${accounts.length} 平台` : bridgeState === 'error' ? '引擎连接异常' : '引擎待连接'}
+                {bridgeState === 'checking' ? '正在连接发布引擎' : bridgeState === 'connected' ? `引擎已就绪 · ${connectedPlatformCount} 平台` : bridgeState === 'error' ? '引擎连接异常' : '引擎待连接'}
               </button>
 
               <div className="topbar-publish-group" data-topbar-group="publish" role="group" aria-label="发布操作">
@@ -1871,7 +1930,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
               {bridgeState === 'checking' && <LoaderCircle className="spin" size={14} />}
               {bridgeState === 'connected' && <PlugZap size={14} />}
               {(bridgeState === 'missing' || bridgeState === 'error') && <CircleAlert size={14} />}
-              <span>{bridgeState === 'checking' ? '正在检测发布通道' : bridgeState === 'connected' ? `已连接 ${accounts.length} 个平台` : bridgeState === 'error' ? '发布通道异常' : '发布通道待连接'}</span>
+              <span>{bridgeState === 'checking' ? '正在检测发布通道' : bridgeState === 'connected' ? `已连接 ${connectedPlatformCount} 个平台` : bridgeState === 'error' ? '发布通道异常' : '发布通道待连接'}</span>
               <span className="home-status-divider" aria-hidden="true" />
               <ShieldCheck size={14} aria-hidden="true" />
               <span>文件保存在本地</span>
@@ -1910,7 +1969,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
           <input
             ref={backupInputRef}
             type="file"
-            accept=".json,.ezwriting-backup.json,application/json"
+            accept=".json,.ezwriting-backup.json,.ezwriting-backup.zip,application/json,application/zip"
             hidden
             onChange={event => void importLocalData(event.target.files?.[0])}
           />
@@ -1965,10 +2024,28 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                     <div className="drop-actions">
                       <button type="button" className="primary-button" onClick={() => void createNewArticle()} disabled={workState === 'parsing' || isOperationLocked}>
                         <FilePlus2 size={19} />
-                        开始创作
+                        开始写稿
                         <ArrowRight size={18} />
                       </button>
+                      <button type="button" className="folder-button" onClick={() => fileInputRef.current?.click()} disabled={workState === 'parsing' || isOperationLocked}>
+                        <FileUp size={19} /> 导入稿件
+                      </button>
                     </div>
+                    <ol className="home-content-flow" aria-label="内容处理流程">
+                      <li>写稿 / 导入</li><li>编辑与平台预览</li><li>导出 / 同步平台草稿</li>
+                    </ol>
+                    {(bridgeState !== 'connected' || connectedPlatformCount === 0) && (
+                      <div className="home-connection-note">
+                        <span role="status">{bridgeState === 'checking'
+                          ? '正在检测发布通道，可先开始本地编辑。'
+                          : bridgeState === 'error'
+                            ? `${bridgeError || '发布通道连接异常。'} 可继续本地编辑、预览与导出。`
+                            : bridgeState === 'missing'
+                              ? '未检测到发布扩展，可继续本地编辑、预览与导出。'
+                              : '暂未连接内容平台，可先本地编辑；登录目标平台后重试。'}</span>
+                        {bridgeState !== 'checking' && <button type="button" className="directory-link" disabled={isOperationLocked} onClick={() => void refreshBridge()}><RotateCcw size={14} /> 重新连接</button>}
+                      </div>
+                    )}
                   </section>
 
                   <section
@@ -2007,7 +2084,6 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                       </span>
                     </button>
                     <div className="home-import-actions">
-                      <button type="button" className="folder-button" onClick={() => fileInputRef.current?.click()} disabled={workState === 'parsing' || isOperationLocked}><FileUp size={17} /> 选择文件</button>
                       <button type="button" className="directory-link" onClick={() => directoryInputRef.current?.click()} disabled={workState === 'parsing' || isOperationLocked}><FolderOpen size={17} /> 选择文件夹</button>
                     </div>
                     {error && (
@@ -2017,35 +2093,6 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                         <button type="button" onClick={() => setError(null)} aria-label="关闭错误提示"><XCircle size={16} /></button>
                       </div>
                     )}
-                  </section>
-
-                  <section className="home-workbench-overview" aria-labelledby="home-workbench-heading">
-                    <header>
-                      <div>
-                        <h2 id="home-workbench-heading">内容从文件进入发布轨道</h2>
-                        <p>本地完成整理和预览，确认后再保存到各平台草稿箱。</p>
-                      </div>
-                      <dl className="home-workbench-stats" aria-label="工作台状态">
-                        <div><dt>本地草稿</dt><dd>{homeDrafts.length}</dd></div>
-                        <div><dt>已连接平台</dt><dd>{bridgeState === 'connected' ? accounts.length : '—'}</dd></div>
-                      </dl>
-                    </header>
-                    <ol className="home-workflow">
-                      <li>
-                        <span><FilePlus2 size={21} /></span>
-                        <div><strong>创建或导入</strong><small>从空白文档、文件或内容包开始</small></div>
-                        <ArrowRight className="home-workflow-arrow" size={18} aria-hidden="true" />
-                      </li>
-                      <li>
-                        <span><Columns2 size={21} /></span>
-                        <div><strong>编辑与预览</strong><small>同步检查不同平台的实际效果</small></div>
-                        <ArrowRight className="home-workflow-arrow" size={18} aria-hidden="true" />
-                      </li>
-                      <li>
-                        <span><Upload size={21} /></span>
-                        <div><strong>保存或发布</strong><small>人工复核后，再进入平台发布流程</small></div>
-                      </li>
-                    </ol>
                   </section>
 
                   {homeDrafts.length > 0 && (
@@ -2108,10 +2155,99 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
             ) : (
               <div
                 ref={editorGridRef}
-                className={`editor-grid workspace-mode-${workspaceMode}`}
+                className={`editor-grid workspace-mode-${workspaceMode} mobile-workspace-${mobileWorkspace} ${editorView === 'resources' ? 'resources-open' : ''}`}
                 data-preview-platform={activePlatform}
-                style={{ '--editor-pane-width': `${editorPanePercent}%` } as CSSProperties}
+                style={{ '--editor-pane-width': `${editorPanePercent}%`, '--editor-weight': `${editorPanePercent}fr`, '--preview-weight': `${100 - editorPanePercent}fr`, '--resource-width': `${resourceWidth}px` } as CSSProperties}
               >
+                  <nav className="mobile-workspace-tabs" aria-label="手机工作区">
+                    {(['edit', 'preview', 'resources'] as const).map(view => (
+                      <button type="button" key={view} aria-pressed={mobileWorkspace === view} onClick={() => {
+                        setMobileWorkspace(view)
+                        setWorkspaceMode('split')
+                        if (view !== 'preview') setEditorView(view)
+                      }}>{view === 'edit' ? '编辑' : view === 'preview' ? '预览' : `资源 ${articleContent.resources.length}`}</button>
+                    ))}
+                  </nav>
+                  {editorView === 'resources' && (
+                    <ResourceSidebar width={resourceWidth} onWidthChange={setResourceWidth} onClose={() => { setEditorView('edit'); setMobileWorkspace('edit') }}>
+                    <section ref={resourcesPanelRef} className="resource-panel editor-view-panel" id="article-resource-view" role="tabpanel" aria-labelledby="resource-panel-heading">
+                      <header className="resource-panel-heading">
+                        <div>
+                          <p>DOCUMENT ASSETS</p>
+                          <h2 id="resource-panel-heading">文档资源</h2>
+                          <span>图片、GIF 与视频集中管理；点击缩略图定位正文。</span>
+                        </div>
+                        <div className="resource-actions">
+                          <input ref={assetInputRef} type="file" accept="image/*" multiple onChange={event => void supplementAssets(Array.from(event.target.files || []))} hidden />
+                          <input ref={assetDirectoryInputRef} type="file" multiple onChange={event => void supplementAssets(Array.from(event.target.files || []))} {...{ webkitdirectory: '', directory: '' }} hidden />
+                          <button type="button" disabled={isOperationLocked} onClick={() => assetInputRef.current?.click()}><ImagePlus size={15} /> 批量选择图片</button>
+                          <button type="button" disabled={isOperationLocked} onClick={() => assetDirectoryInputRef.current?.click()}><FolderOpen size={15} /> 选择文件夹</button>
+                        </div>
+                      </header>
+
+                      {(article.missingAssets?.length || 0) > 0 && (
+                        <div className="asset-repair" role="status">
+                          <div className="asset-repair-icon"><ImagePlus size={18} /></div>
+                          <div className="asset-repair-copy"><strong>还差 {article.missingAssets?.length} 张本地图片</strong><p>{article.missingAssets?.slice(0, 3).join(' · ')}</p></div>
+                          <div className="asset-repair-actions">
+                            <button type="button" disabled={isOperationLocked} onClick={() => assetInputRef.current?.click()}>选择图片</button>
+                            <button type="button" disabled={isOperationLocked} onClick={() => assetDirectoryInputRef.current?.click()}>选择文件夹</button>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="resource-filters" role="group" aria-label="筛选资源类型">
+                        {(['all', 'image', 'gif', 'video', 'missing'] as const).map(filter => <button type="button" key={filter} aria-pressed={resourceFilter === filter} onClick={() => setResourceFilter(filter)}>{({ all: '全部', image: '图片', gif: 'GIF', video: '视频', missing: '待补齐' })[filter]} <span>{articleContent.resources.filter(resource => filter === 'all' || (filter === 'missing' ? resource.missingTarget || !resource.src : resource.mediaType === filter)).length}</span></button>)}
+                      </div>
+                      {articleContent.resources.length > 0 ? (
+                        <div className="resource-grid" aria-label={`共 ${articleContent.resources.length} 项资源`}>
+                          {visibleResources.map((resource, index) => (
+                            <figure className={`article-resource-card ${resource.missingTarget ? 'missing' : ''}`} data-resource-kind={resource.kind} key={resource.id}>
+                              <button
+                                type="button"
+                                className="resource-card-locate"
+                                aria-label={`在右侧定位：${resource.name}`}
+                                disabled={resource.blockIndex === undefined || resource.blockIndex < 0}
+                                onClick={() => locateResourceInPreview(resource)}
+                              >
+                                <span className="resource-thumbnail">
+                                  {resource.missingTarget || !resource.src
+                                    ? <span className="resource-missing-thumbnail"><ImagePlus size={22} /><span>图片待处理</span></span>
+                                    : <ResourceImage key={`${resource.src}:${resourceRetries[resource.src] || 0}`} src={resource.mediaType === 'video' ? localVideoPreviewUrl(resource.src) || '' : resource.src} alt={resource.name} video={resource.mediaType === 'video'} onError={() => setFailedResources(current => new Set(current).add(resource.src))} />}
+                                </span>
+                                <span className="resource-card-copy">
+                                  <strong>{resource.name}</strong>
+                                  <span>{resource.missingTarget ? resource.missingTarget.reference : !resource.src ? '缺少来源，请在正文中替换' : resource.mediaType === 'video' ? '视频 · 需在目标平台上传' : resource.mediaType === 'gif' ? 'GIF · 静态预览' : localImageBlob(resource.src) ? '本地图片' : /^https?:\/\//i.test(resource.src) ? '外链图片' : '本地图片'}{resource.size !== undefined && ` · ${resource.size >= 1048576 ? `${(resource.size / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(resource.size / 1024))} KB`}`}</span>
+                                </span>
+                                <small>{String(index + 1).padStart(2, '0')}</small>
+                              </button>
+                              {resource.missingTarget && (
+                                <div className="resource-card-actions">
+                                  <button type="button" onClick={() => requestMissingImageAction(resource.missingTarget!, 'relink')}>重新链接</button>
+                                  <button type="button" onClick={() => requestMissingImageAction(resource.missingTarget!, 'replace')}>替换</button>
+                                  <button type="button" className="delete" onClick={() => requestMissingImageAction(resource.missingTarget!, 'delete')}>删除</button>
+                                </div>
+                              )}
+                              {!resource.missingTarget && <div className="resource-card-actions">
+                                {failedResources.has(resource.src) && <button type="button" onClick={() => {
+                                  setFailedResources(current => { const next = new Set(current); next.delete(resource.src); return next })
+                                  setResourceRetries(current => ({ ...current, [resource.src]: (current[resource.src] || 0) + 1 }))
+                                }}>重试</button>}
+                                {resource.mediaType !== 'video' && resource.src && <button type="button" disabled={isOperationLocked} onClick={() => requestMissingImageAction({ id: resource.id, reference: resource.src }, 'replace')}>替换</button>}
+                                <button type="button" onClick={() => {
+                                setWorkspaceMode('split')
+                                editPreviewTarget({ kind: 'body', blockIndex: resource.blockIndex ?? 0 })
+                              }}>在编辑区管理</button></div>}
+                            </figure>
+                          ))}
+                          {visibleResources.length === 0 && <p className="resource-filter-empty" role="status">该分类暂无资源，切换“全部”查看其他素材。</p>}
+                        </div>
+                      ) : (
+                        <div className="resource-empty"><Images size={25} /><strong>正文里还没有资源</strong><span>在编辑工具栏中插入图片或视频后，会自动出现在这里。</span></div>
+                      )}
+                    </section>
+                    </ResourceSidebar>
+                  )}
                   <section className="paper-panel">
                     <div className="article-workspace-pane">
                   {error && (
@@ -2141,7 +2277,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                         aria-selected={editorView === 'edit'}
                         aria-controls="article-edit-view"
                         className={editorView === 'edit' ? 'active' : ''}
-                        onClick={() => setEditorView('edit')}
+                        onClick={() => { setEditorView('edit'); setMobileWorkspace('edit') }}
                       >编辑</button>
                       <button
                         type="button"
@@ -2149,7 +2285,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                         aria-selected={editorView === 'resources'}
                         aria-controls="article-resource-view"
                         className={editorView === 'resources' ? 'active' : ''}
-                        onClick={() => setEditorView('resources')}
+                        onClick={() => { setEditorView(current => current === 'resources' ? 'edit' : 'resources'); setMobileWorkspace('resources') }}
                       ><Images size={15} />资源 <span>{articleContent.resources.length}</span></button>
                     </div>
                     <div className="editor-import" ref={editorImportMenuRef}>
@@ -2193,7 +2329,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                     </div>
                   </nav>
 
-                    <div className="article-form editor-view-panel" id="article-edit-view" role="tabpanel" hidden={editorView !== 'edit'}>
+                    <div className="article-form editor-view-panel" id="article-edit-view" role="tabpanel">
                       <label className="editor-title-field" htmlFor="article-title">
                         <span className="editor-title-field-heading">
                           <strong>文章标题</strong>
@@ -2231,7 +2367,8 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                                 sourceLabel: sourceLabel(article),
                               }}
                               focusRequest={editorFocusRequest}
-                              readOnly={isOperationLocked || editorView !== 'edit' || workspaceMode === 'preview'}
+                              readOnly={isOperationLocked || workspaceMode === 'preview'}
+                              syncScroll={syncScroll}
                               onChange={updateArticleSource}
                               onActiveBlockChange={updateActiveEditorLocation}
                             />
@@ -2240,70 +2377,6 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                       </section>
 
                     </div>
-                  {editorView === 'resources' && (
-                    <section ref={resourcesPanelRef} className="resource-panel editor-view-panel" id="article-resource-view" role="tabpanel" aria-labelledby="resource-panel-heading">
-                      <header className="resource-panel-heading">
-                        <div>
-                          <p>DOCUMENT ASSETS</p>
-                          <h2 id="resource-panel-heading">文档资源</h2>
-                          <span>点击正文图片可在右侧定位上下文；缺图时可一次选择多张图片或整个文件夹补齐。</span>
-                        </div>
-                        <div className="resource-actions">
-                          <input ref={assetInputRef} type="file" accept="image/*" multiple onChange={event => void supplementAssets(Array.from(event.target.files || []))} hidden />
-                          <input ref={assetDirectoryInputRef} type="file" multiple onChange={event => void supplementAssets(Array.from(event.target.files || []))} {...{ webkitdirectory: '', directory: '' }} hidden />
-                          <button type="button" disabled={isOperationLocked} onClick={() => assetInputRef.current?.click()}><ImagePlus size={15} /> 批量选择图片</button>
-                          <button type="button" disabled={isOperationLocked} onClick={() => assetDirectoryInputRef.current?.click()}><FolderOpen size={15} /> 选择文件夹</button>
-                        </div>
-                      </header>
-
-                      {(article.missingAssets?.length || 0) > 0 && (
-                        <div className="asset-repair" role="status">
-                          <div className="asset-repair-icon"><ImagePlus size={18} /></div>
-                          <div className="asset-repair-copy"><strong>还差 {article.missingAssets?.length} 张本地图片</strong><p>{article.missingAssets?.slice(0, 3).join(' · ')}</p></div>
-                          <div className="asset-repair-actions">
-                            <button type="button" disabled={isOperationLocked} onClick={() => assetInputRef.current?.click()}>选择图片</button>
-                            <button type="button" disabled={isOperationLocked} onClick={() => assetDirectoryInputRef.current?.click()}>选择文件夹</button>
-                          </div>
-                        </div>
-                      )}
-
-                      {articleContent.resources.length > 0 ? (
-                        <div className="resource-grid" aria-label={`共 ${articleContent.resources.length} 张图片`}>
-                          {articleContent.resources.map((resource, index) => (
-                            <figure className={`article-resource-card ${resource.missingTarget ? 'missing' : ''}`} data-resource-kind={resource.kind} key={resource.id}>
-                              <button
-                                type="button"
-                                className="resource-card-locate"
-                                aria-label={`在右侧定位：${resource.name}`}
-                                disabled={resource.blockIndex === undefined || resource.blockIndex < 0}
-                                onClick={() => locateResourceInPreview(resource)}
-                              >
-                                <span className="resource-thumbnail">
-                                  {resource.missingTarget
-                                    ? <span className="resource-missing-thumbnail"><ImagePlus size={22} /><span>图片待处理</span></span>
-                                    : <img src={resource.src} alt={resource.name} />}
-                                </span>
-                                <span className="resource-card-copy">
-                                  <strong>{resource.name}</strong>
-                                  <span>{resource.missingTarget ? resource.missingTarget.reference : resource.src.startsWith('data:image/') ? '本地图片' : /^https?:\/\//i.test(resource.src) ? '外链图片' : '文档路径'}</span>
-                                </span>
-                                <small>{String(index + 1).padStart(2, '0')}</small>
-                              </button>
-                              {resource.missingTarget && (
-                                <div className="resource-card-actions">
-                                  <button type="button" onClick={() => requestMissingImageAction(resource.missingTarget!, 'relink')}>重新链接</button>
-                                  <button type="button" onClick={() => requestMissingImageAction(resource.missingTarget!, 'replace')}>替换</button>
-                                  <button type="button" className="delete" onClick={() => requestMissingImageAction(resource.missingTarget!, 'delete')}>删除</button>
-                                </div>
-                              )}
-                            </figure>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="resource-empty"><Images size={25} /><strong>正文里还没有图片</strong><span>在编辑工具栏中插入图片后，会自动出现在这里。</span></div>
-                      )}
-                    </section>
-                  )}
                     </div>
                   </section>
 
@@ -2339,6 +2412,13 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                             <PlatformPreviews
                               key={article.id}
                               activePlatform={activePlatform}
+                              syncScroll={syncScroll}
+                              onSyncScrollChange={enabled => {
+                                setSyncScroll(enabled)
+                                setActiveEditorLocation(null)
+                                setPreviewLocateRequest(null)
+                                try { window.localStorage.setItem('dispatch.sync-scroll.v1', String(enabled)) } catch { /* Session preference still works. */ }
+                              }}
                               title={article.title}
                               html={previewHtml}
                               sourceText={deferredArticleSourceText}
@@ -2372,6 +2452,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
       </main>
       </div>
       <div className="workbench-notices" aria-label="工作台通知">
+        {backupProgress && <div className="local-history-notice" role="status"><span>{backupProgress}</span><button type="button" onClick={() => backupControllerRef.current?.abort()}>取消备份操作</button></div>}
         {autosave.error && (
           <div className="local-history-notice error" role="alert">
             <span>自动保存失败：{autosave.error.message}。当前编辑仍保留，请重试或导出备份。</span>

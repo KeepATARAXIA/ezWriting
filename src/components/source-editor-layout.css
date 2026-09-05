@@ -160,6 +160,16 @@
   text-align: center;
 }
 
+/* Media widgets must size against the editor column, not their intrinsic width. */
+.source-editor-host .cm-content {
+  min-width: 0;
+  flex: 1 1 0;
+}
+
+.source-editor-host .cm-line {
+  overflow-wrap: anywhere;
+}
+
 .source-image-widget {
   text-align: left;
 }

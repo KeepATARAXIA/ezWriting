@@ -22,10 +22,16 @@ async function importFixture(page: Page, name: string): Promise<void> {
 }
 
 async function waitForLocalSave(page: Page): Promise<void> {
-  await expect(page.locator('.history-sync-state', { hasText: '已保存' }).first()).toBeVisible({ timeout: 10_000 })
+  await expect(page.getByLabel('本地保存状态')).toHaveText('已保存', { timeout: 10_000 })
+}
+
+async function openHistory(page: Page): Promise<void> {
+  const trigger = page.getByRole('button', { name: '打开历史记录', exact: true })
+  if (await trigger.isVisible()) await trigger.click()
 }
 
 async function openLocalDataActions(page: Page): Promise<void> {
+  await openHistory(page)
   const trigger = page.getByRole('button', { name: /本地数据/ })
   if (await trigger.getAttribute('aria-expanded') !== 'true') await trigger.click()
   await expect(page.locator('.history-data-actions')).toBeVisible()
@@ -57,9 +63,8 @@ test('switches between Markdown source and presentation editing without losing s
     buffer: Buffer.from(markdown),
   })
   await expect(page.getByLabel('文章标题')).toHaveValue('Markdown 显示切换')
-  await expect(page.getByRole('button', { name: '隐藏 Markdown 语法' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '显示 Markdown 语法' })).toHaveAttribute('aria-pressed', 'true')
 
-  await page.getByRole('button', { name: '隐藏 Markdown 语法' }).click()
   await page.locator('.cm-line').filter({ hasText: '点击这一段' }).click()
   await expect(page.locator('.source-editor')).toHaveClass(/markdown-presentation/)
   await expect(page.locator('.cm-md-heading-text')).toContainText('正文小标题')
@@ -180,10 +185,10 @@ test('keeps the preview position fixed when a preview target locates the source 
     if (!viewport || !target) return Number.POSITIVE_INFINITY
     const viewportBounds = viewport.getBoundingClientRect()
     const targetBounds = target.getBoundingClientRect()
-    return Math.abs(
-      targetBounds.top + targetBounds.height / 2
-      - (viewportBounds.top + viewport.clientHeight / 2),
-    )
+    // Near the top or bottom, centering is limited by the scroll range.
+    const desired = viewport.scrollTop + targetBounds.top + targetBounds.height / 2 - (viewportBounds.top + viewport.clientHeight / 2)
+    const reachable = Math.max(0, Math.min(desired, viewport.scrollHeight - viewport.clientHeight))
+    return Math.abs(viewport.scrollTop - reachable)
   }, text)
   const sourceCenterOffset = () => page.locator('.source-editor .cm-activeLine').evaluate(element => {
     const scroller = element.closest<HTMLElement>('.cm-scroller')!
@@ -251,6 +256,7 @@ test('keeps a deeply scrolled WeChat target visually fixed on its first click', 
   })
   await expect(page.getByLabel('文章标题')).toHaveValue('公众号深度滚动回归')
 
+  await page.locator('.preview-settings-toggle').click()
   await page.getByRole('tab', { name: '活力' }).click()
   await page.locator('.wechat-theme-card').filter({ hasText: '薄荷气泡' }).click()
   await expect(page.locator('[data-wechat-theme="mint-soda"]')).toBeVisible()
@@ -378,6 +384,7 @@ test('moves a complete local backup to a different browser origin', async ({ pag
   await page.locator('input[accept*=".ezwriting-backup"]').setInputFiles(backupPath!)
 
   await expect(page.getByLabel('文章标题')).toHaveValue('Obsidian Compatibility')
+  await openHistory(page)
   await expect(page.locator('.history-draft-title', { hasText: 'Obsidian Compatibility' })).toBeVisible()
 })
 
@@ -402,7 +409,7 @@ test('exports the Xiaohongshu card master at 1080 by 1440 pixels', async ({ page
 
 test('blocks publishing for a blank document', async ({ page }) => {
   await page.goto('/')
-  await page.getByRole('button', { name: '开始创作' }).click()
+  await page.getByRole('button', { name: '开始写稿' }).click()
   await expect(page.getByRole('button', { name: /打开发布面板/ })).toBeDisabled()
 })
 
@@ -496,10 +503,11 @@ test('flushes an immediate edit before delete and restores the latest version', 
   await waitForLocalSave(page)
 
   await page.getByLabel('文章标题').fill('删除前最后一版')
+  await openHistory(page)
   await page.locator('.history-draft-menu-button').first().click()
   await page.getByRole('menuitem', { name: '删除' }).click()
-  await page.getByRole('button', { name: '展开历史记录' }).click()
   await page.locator('.history-undo-notice').getByRole('button', { name: '撤销', exact: true }).click()
+  await openHistory(page)
   await page.locator('.history-draft-open').first().click()
 
   await expect(page.getByLabel('文章标题')).toHaveValue('删除前最后一版')

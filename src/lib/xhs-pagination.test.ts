@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { paginateForXhsCards } from './xhs-pagination'
+import { describe, expect, it, vi } from 'vitest'
+import { paginateForXhsCards, paginateForXhsCardsAsync } from './xhs-pagination'
 
 function parsePage(html: string): Document {
   return new DOMParser().parseFromString(html, 'text/html')
@@ -289,5 +289,29 @@ describe('paginateForXhsCards', () => {
 
     expect(paginateForXhsCards(html, { title: '回退验证' }))
       .toEqual(paginateForXhsCards(html, { title: '回退验证' }))
+  })
+})
+
+
+describe('cooperative pagination', () => {
+  it('matches every synchronous page and yields between layout measurements', async () => {
+    const html = Array.from({ length: 180 }, (_, index) => `<p>段落 ${index}：${'需要完整保留的正文。'.repeat(5)}</p>`).join('')
+    const fits = (page: string) => page.length < 750
+    let turns = 0
+    const timer = setInterval(() => { turns++ }, 0)
+    try {
+      const pages = await paginateForXhsCardsAsync(html, { title: '测试' }, fits)
+      expect(pages).toEqual(paginateForXhsCards(html, { title: '测试' }, fits))
+      expect(turns).toBeGreaterThan(0)
+    } finally { clearInterval(timer) }
+  })
+
+  it('cancels stale work before any further layout reads', async () => {
+    const controller = new AbortController()
+    const fits = vi.fn(() => { controller.abort(); return true })
+    await expect(paginateForXhsCardsAsync('<p>甲</p><p>乙</p><p>丙</p>'.repeat(100), {}, fits, controller.signal))
+      .rejects.toMatchObject({ name: 'AbortError' })
+    // A single step may check a heading and a content boundary; the next step never runs.
+    expect(fits.mock.calls.length).toBeLessThanOrEqual(2)
   })
 })

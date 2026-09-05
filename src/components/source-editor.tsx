@@ -1,3 +1,4 @@
+import { registerLocalImage, expandLocalImageReferences, localImageBlob } from '../lib/local-image-registry'
 import { useEffect, useRef, useState, type ChangeEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { basicSetup } from 'codemirror'
@@ -38,6 +39,7 @@ import {
   Video,
 } from 'lucide-react'
 import type { ArticleSourceLanguage } from '../domain/article'
+import { isGifSource, mediaPlaceholder, mountGifPreview, mountVideoPreview } from '../lib/media-preview'
 import { sourceBlockIndexAtOffset } from '../lib/article-source'
 import {
   isLocalVideoReference,
@@ -72,6 +74,7 @@ interface SourceEditorProps {
   readOnly?: boolean
   onChange: (value: string) => void
   onActiveBlockChange?: (location: SourceEditorActiveLocation | null) => void
+  syncScroll?: boolean
 }
 
 export interface SourceEditorStatus {
@@ -121,7 +124,7 @@ function ToolButton({
 function readFileAsDataUrl(file: Blob, errorMessage = '图片读取失败'): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
-    reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error(errorMessage))
+    reader.onload = () => typeof reader.result === 'string' ? resolve(registerLocalImage(reader.result)) : reject(new Error(errorMessage))
     reader.onerror = () => reject(reader.error || new Error(errorMessage))
     reader.readAsDataURL(file)
   })
@@ -137,13 +140,25 @@ async function registerVideoFile(file: File): Promise<string> {
 
 const MARKDOWN_IMAGE_SOURCE = /!\[([^\]\n]*)\]\(\s*(?:<([^>\n]+)>|([^\s)\n]+))(?:\s+(?:"((?:\\.|[^"\\\n])*)"|'((?:\\.|[^'\\\n])*)'))?\s*\)/g
 const HTML_MARK_SOURCE = /<mark\b[^>]*>([\s\S]*?)<\/mark\s*>/gi
-const HTML_EMBEDDED_MEDIA_SOURCE = /(<(?:img|video)\b[^>]*?\bsrc\s*=\s*)(["'])((?:data:(?:image|video)\/|dispatch-local-video:\/\/)[^"']+)\2/gi
+const HTML_EMBEDDED_MEDIA_SOURCE = /(<(?:img|video)\b[^>]*?\bsrc\s*=\s*)(["'])((?:data:(?:image|video)\/|dispatch-local-video:\/\/|blob:)[^"']+)\2/gi
 const VIDEO_ELEMENT_SOURCE = /<video\b[^>]*>[\s\S]*?<\/video>/gi
 const EMBEDDED_MEDIA_TOKEN = /dispatch-editor-(?:image|video):\/\/[a-z0-9-]+/gi
 const EMBEDDED_IMAGE_PREFIX = 'dispatch-editor-image://image-'
 const EMBEDDED_VIDEO_PREFIX = 'dispatch-editor-video://video-'
 const controlledValueUpdate = Annotation.define<boolean>()
 const externalFocusUpdate = Annotation.define<boolean>()
+const sourceFocusField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update: (value, transaction) => {
+    if (transaction.annotation(externalFocusUpdate)) {
+      const line = transaction.state.doc.lineAt(transaction.state.selection.main.head)
+      return Decoration.set([Decoration.line({ class: 'source-focus-line' }).range(line.from)])
+    }
+    if ((transaction.selection || transaction.docChanged) && !transaction.annotation(controlledValueUpdate)) return Decoration.none
+    return value.map(transaction.changes)
+  },
+  provide: field => EditorView.decorations.from(field),
+})
 const SOURCE_CHANGE_DEBOUNCE_MS = 240
 const IMAGE_SOURCE_CHANGE_DEBOUNCE_MS = 320
 export const SOURCE_EDITOR_MIN_UNDO_DEPTH = 100
@@ -312,7 +327,7 @@ function compactEmbeddedMedia(text: string, previous: Map<string, string>): { te
   const previousTokens = new Map(Array.from(previous, ([token, source]) => [source, token]))
   let compacted = text.replace(MARKDOWN_IMAGE_SOURCE, (syntax, _alt: string, angleSource: string, plainSource: string) => {
     const source = angleSource || plainSource || ''
-    if (!/^data:image\//i.test(source)) return syntax
+    if (!/^data:image\//i.test(source) && !localImageBlob(source)) return syntax
     const token = previousTokens.get(source) ?? addEmbeddedImage(workingSources, source)
     workingSources.set(token, source)
     return syntax.replace(source, token)
@@ -321,7 +336,7 @@ function compactEmbeddedMedia(text: string, previous: Map<string, string>): { te
     const video = /^data:video\//i.test(source) || isLocalVideoReference(source)
     if (video
       ? !(isSupportedVideoDataUri(source) || (isLocalVideoReference(source) && localVideoBlob(source)))
-      : !/^data:image\//i.test(source)) return syntax
+      : !/^data:image\//i.test(source) && !localImageBlob(source)) return syntax
     const token = previousTokens.get(source)
       ?? (video ? addEmbeddedVideo(workingSources, source) : addEmbeddedImage(workingSources, source))
     workingSources.set(token, source)
@@ -407,6 +422,8 @@ function videoHtmlSyntax(name: string, source: string): string {
   return `<video controls src="${source}" data-ez-video-name="${safeName}" aria-label="视频：${safeName}"></video>`
 }
 
+const mediaWidgetCleanup = new WeakMap<HTMLElement, () => void>()
+
 class MarkdownImageWidget extends WidgetType {
   constructor(
     readonly source: string,
@@ -442,7 +459,7 @@ class MarkdownImageWidget extends WidgetType {
     media.className = 'source-image-media'
     if (canPreviewImage(this.previewSource)) {
       const image = document.createElement('img')
-      image.src = this.previewSource
+      image.src = isGifSource(this.previewSource) ? mediaPlaceholder(this.previewSource) : this.previewSource
       image.alt = this.alt
       image.loading = 'lazy'
       image.decoding = 'async'
@@ -454,6 +471,9 @@ class MarkdownImageWidget extends WidgetType {
         view.requestMeasure()
       }, { once: true })
       media.append(image)
+      if (isGifSource(this.previewSource)) {
+        mediaWidgetCleanup.set(figure, mountGifPreview(image, this.previewSource, media, () => view.requestMeasure()))
+      }
     } else {
       figure.classList.add('missing')
       media.append(Object.assign(document.createElement('span'), { textContent: '图片待补齐' }))
@@ -633,6 +653,11 @@ class MarkdownImageWidget extends WidgetType {
     return figure
   }
 
+  destroy(dom: HTMLElement): void {
+    mediaWidgetCleanup.get(dom)?.()
+    mediaWidgetCleanup.delete(dom)
+  }
+
   ignoreEvent(): boolean {
     return true
   }
@@ -666,18 +691,7 @@ class EmbeddedVideoWidget extends WidgetType {
 
     const media = document.createElement('div')
     media.className = 'source-image-media source-video-media'
-    const video = document.createElement('video')
-    video.src = this.previewSource
-    video.controls = true
-    video.preload = 'metadata'
-    video.setAttribute('aria-label', `播放视频：${name}`)
-    video.addEventListener('loadedmetadata', () => view.requestMeasure(), { once: true })
-    video.addEventListener('error', () => {
-      figure.classList.add('missing')
-      media.replaceChildren(Object.assign(document.createElement('span'), { textContent: '视频无法播放' }))
-      view.requestMeasure()
-    }, { once: true })
-    media.append(video)
+    mediaWidgetCleanup.set(figure, mountVideoPreview(media, this.previewSource, name, () => view.requestMeasure()))
 
     const footer = document.createElement('figcaption')
     const label = document.createElement('span')
@@ -769,6 +783,11 @@ class EmbeddedVideoWidget extends WidgetType {
     footer.append(label, actions, input)
     figure.append(media, footer)
     return figure
+  }
+
+  destroy(dom: HTMLElement): void {
+    mediaWidgetCleanup.get(dom)?.()
+    mediaWidgetCleanup.delete(dom)
   }
 
   ignoreEvent(): boolean {
@@ -1094,7 +1113,7 @@ function markdownLinkAtOffset(text: string, offset: number): string | null {
   return null
 }
 
-export function SourceEditor({ value, language, status, focusRequest, readOnly = false, onChange, onActiveBlockChange }: SourceEditorProps) {
+export function SourceEditor({ value, language, status, focusRequest, readOnly = false, onChange, onActiveBlockChange, syncScroll = false }: SourceEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
@@ -1107,6 +1126,11 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
   const languageRef = useRef(language)
   const onChangeRef = useRef(onChange)
   const onActiveBlockChangeRef = useRef(onActiveBlockChange)
+  const syncScrollRef = useRef(syncScroll)
+  const userScrollUntilRef = useRef(0)
+  const viewportTimerRef = useRef<number | null>(null)
+  syncScrollRef.current = syncScroll
+  useEffect(() => () => { if (viewportTimerRef.current !== null) window.clearTimeout(viewportTimerRef.current) }, [])
   const readOnlyRef = useRef(readOnly)
   const lastFocusRequestRef = useRef(0)
   const changeTimerRef = useRef<number | null>(null)
@@ -1117,7 +1141,7 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
   const [selectionMenu, setSelectionMenu] = useState<SelectionMenuState | null>(null)
   const [historyAvailability, setHistoryAvailability] = useState({ undoCount: 0, redoCount: 0 })
   const [videoError, setVideoError] = useState<string | null>(null)
-  const [showMarkdownSyntax, setShowMarkdownSyntax] = useState(true)
+  const [showMarkdownSyntax, setShowMarkdownSyntax] = useState(false)
 
   languageRef.current = language
   onChangeRef.current = onChange
@@ -1516,6 +1540,7 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
         doc: compacted.text,
         extensions: [
           basicSetup,
+          EditorView.clipboardOutputFilter.of(text => expandLocalImageReferences(expandEmbeddedMedia(text, embeddedImagesRef.current))),
           history({ minDepth: SOURCE_EDITOR_MIN_UNDO_DEPTH }),
           imageSourceCompartment.of(embeddedImageFacet.of({ sources: compacted.sources })),
           imagePreviewField,
@@ -1563,6 +1588,7 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
             { key: 'Mod-Shift-8', run: () => { insertList(false); return true }, preventDefault: true },
           ])),
           EditorView.lineWrapping,
+          sourceFocusField,
           placeholder('从这里开始，用 Markdown 书写你的文章…'),
           EditorState.allowMultipleSelections.of(false),
           EditorView.contentAttributes.of({
@@ -1570,6 +1596,24 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
             spellcheck: 'true',
           }),
           EditorView.domEventHandlers({
+            wheel: () => { userScrollUntilRef.current = Date.now() + 1200; return false },
+            touchmove: () => { userScrollUntilRef.current = Date.now() + 1200; return false },
+            pointerdown: () => { userScrollUntilRef.current = Date.now() + 1200; return false },
+            pointermove: event => { if (event.buttons === 1) userScrollUntilRef.current = Date.now() + 1200; return false },
+            scroll: (_event, currentView) => {
+              if (!syncScrollRef.current || Date.now() > userScrollUntilRef.current) return false
+              if (viewportTimerRef.current !== null) window.clearTimeout(viewportTimerRef.current)
+              viewportTimerRef.current = window.setTimeout(() => {
+                viewportTimerRef.current = null
+                if (!syncScrollRef.current || viewRef.current !== currentView) return
+                const bounds = currentView.scrollDOM.getBoundingClientRect()
+                const position = currentView.posAtCoords({ x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 }, false)
+                if (position === null) return
+                const blockIndex = sourceBlockIndexAtOffset(currentView.state.doc.toString(), languageRef.current, position)
+                if (blockIndex !== null) onActiveBlockChangeRef.current?.({ blockIndex, line: currentView.state.doc.lineAt(position).number })
+              }, 100)
+              return false
+            },
             compositionstart: () => {
               compositionActiveRef.current = true
               if (compositionEndTimerRef.current !== null) window.clearTimeout(compositionEndTimerRef.current)
@@ -1650,6 +1694,7 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
             const isExternalFocusUpdate = update.transactions.some(
               transaction => transaction.annotation(externalFocusUpdate) === true,
             )
+            if (isExternalFocusUpdate) userScrollUntilRef.current = 0
             if (isExternalFocusUpdate && activeBlockTimerRef.current !== null) {
               window.clearTimeout(activeBlockTimerRef.current)
               activeBlockTimerRef.current = null
@@ -1670,7 +1715,7 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
             if (update.docChanged || update.selectionSet || update.geometryChanged) updateEditorUi(update.view)
           }),
           EditorView.theme({
-            '&': { height: '100%', fontSize: '15px', backgroundColor: '#fff' },
+            '&': { height: '100%', fontSize: '17px', backgroundColor: '#fff' },
             '.cm-scroller': { fontFamily: '"MiSans", "HarmonyOS Sans SC", "Microsoft YaHei UI", sans-serif', lineHeight: '1.9' },
             '.cm-gutters': { backgroundColor: 'transparent', borderRight: '0', color: '#c2c8ce' },
             '.cm-lineNumbers': {

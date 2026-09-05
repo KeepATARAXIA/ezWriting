@@ -1,5 +1,7 @@
+import { compactArticleMedia, expandLocalImageReferences, localImageBlob, retainLocalImageReferences } from '../lib/local-image-registry'
+import { createLocalBackup } from './local-backup'
 import 'fake-indexeddb/auto'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ArticleDraft } from '../domain/article'
 import { DEFAULT_ARTICLE_FORMATTING } from '../domain/formatting'
 import { createPersistedDraft, type PersistedDraft } from '../domain/saved-draft'
@@ -38,10 +40,10 @@ function persisted(id: string, overrides: Partial<PersistedDraft> = {}): Persist
   return { ...draft, ...overrides }
 }
 
-function createRepository(now: () => Date = () => new Date('2026-08-13T04:00:00.000Z')) {
+function createRepository(now: () => Date = () => new Date('2026-08-13T04:00:00.000Z'), runtimeImageReferences = false) {
   databaseSequence += 1
   const databaseName = `dispatch-workbench-test-${databaseSequence}`
-  const repository = new LocalDraftRepository({ databaseName, now })
+  const repository = new LocalDraftRepository({ databaseName, now, runtimeImageReferences })
   repositories.push(repository)
   databaseNames.push(databaseName)
   return { databaseName, repository }
@@ -80,6 +82,8 @@ function createLegacyDatabase(databaseName: string): Promise<void> {
 }
 
 afterEach(async () => {
+  retainLocalImageReferences([])
+  vi.restoreAllMocks()
   await Promise.all(repositories.splice(0).map(repository => repository.close()))
   await Promise.all(databaseNames.splice(0).map(databaseName => resetLocalDraftDatabase(databaseName)))
 })
@@ -189,6 +193,71 @@ describe('LocalDraftRepository', () => {
     expect(assets[0]).toMatchObject({ mimeType: 'image/png' })
     expect(assets[0].bytes.byteLength).toBeGreaterThan(0)
     expect(assets[0]).not.toHaveProperty('blob')
+  })
+
+  it('does not decode or rewrite unchanged images, including after reopening the draft', async () => {
+    const { repository } = createRepository()
+    const dataUri = 'data:image/png;base64,AQIDBA=='
+    const draft = persisted('cached-image', {
+      article: article('cached-image', { html: `<img src="${dataUri}"><img src="${dataUri}">` }),
+    })
+    const decode = vi.spyOn(globalThis, 'atob')
+    const put = vi.spyOn(IDBObjectStore.prototype, 'put')
+    await repository.saveDraft(draft)
+    expect(decode).toHaveBeenCalledTimes(1)
+    decode.mockClear()
+    put.mockClear()
+    await repository.saveDraft({ ...draft, article: { ...draft.article, title: '只改标题' } })
+    expect(decode).not.toHaveBeenCalled()
+    expect(put.mock.instances.filter(store => (store as IDBObjectStore).name === 'assets')).toHaveLength(0)
+
+    await repository.close()
+    const restored = await repository.getDraft(draft.id)
+    put.mockClear()
+    await repository.saveDraft(restored!)
+    expect(decode).not.toHaveBeenCalled()
+    expect(put.mock.instances.filter(store => (store as IDBObjectStore).name === 'assets')).toHaveLength(0)
+  })
+
+  it('writes cached assets again after removal and undo, and does not assume failed saves committed', async () => {
+    const { repository } = createRepository()
+    const draft = persisted('cached-retry', {
+      article: article('cached-retry', { html: '<img src="data:image/png;base64,AQIDBA==">' }),
+    })
+    await expect(repository.saveDraft(draft, { expectedUpdatedAt: 'stale' })).rejects.toBeInstanceOf(DraftConflictError)
+    await repository.saveDraft(draft)
+    await repository.saveDraft({ ...draft, article: article(draft.id) })
+    await repository.saveDraft(draft)
+    expect((await repository.getDraft(draft.id))?.article.html).toContain('data:image/png;base64,AQIDBA==')
+  })
+
+  it('keeps the previous draft intact if an asset write throws and can retry the cached media', async () => {
+    const { repository } = createRepository()
+    const previous = persisted('asset-write-failure')
+    await repository.saveDraft(previous)
+    const next = { ...previous, article: article(previous.id, { html: '<img src="data:image/png;base64,AQIDBA==">' }) }
+    const originalPut = IDBObjectStore.prototype.put
+    const put = vi.spyOn(IDBObjectStore.prototype, 'put').mockImplementation(function (this: IDBObjectStore, ...args) {
+      if (this.name === 'assets') throw new DOMException('空间不足', 'QuotaExceededError')
+      return originalPut.apply(this, args)
+    })
+    await expect(repository.saveDraft(next)).rejects.toMatchObject({ name: 'QuotaExceededError' })
+    put.mockRestore()
+    expect((await repository.getDraft(previous.id))?.article.html).toBe(previous.article.html)
+    await repository.saveDraft(next)
+    expect((await repository.getDraft(next.id))?.article.html).toBe(next.article.html)
+  })
+
+  it('recovers cached media removed by another repository without bypassing conflict checks', async () => {
+    const { databaseName, repository } = createRepository()
+    const other = new LocalDraftRepository({ databaseName })
+    repositories.push(other)
+    const draft = persisted('cross-tab-assets', { article: article('cross-tab-assets', { html: '<img src="data:image/png;base64,AQIDBA==">' }) })
+    const original = await repository.saveDraft(draft)
+    const removed = await other.saveDraft({ ...draft, article: article(draft.id) })
+    await expect(repository.saveDraft(draft, { expectedUpdatedAt: original.updatedAt })).rejects.toBeInstanceOf(DraftConflictError)
+    await repository.saveDraft(draft, { expectedUpdatedAt: removed.updatedAt })
+    expect((await other.getDraft(draft.id))?.article.html).toBe(draft.article.html)
   })
 
   it('uses stable asset identifiers and removes assets no longer referenced by a draft', async () => {
@@ -315,5 +384,43 @@ describe('LocalDraftRepository', () => {
     const assets = await requestResult(database.transaction('assets').objectStore('assets').getAll())
     database.close()
     expect(assets).toEqual([])
+  })
+})
+
+
+describe('runtime image persistence', () => {
+  it('rejects an expired runtime URL without overwriting the saved draft', async () => {
+    const { repository } = createRepository()
+    const original = await repository.saveDraft(persisted('expired-images'))
+    await expect(repository.saveDraft({ ...original, article: { ...original.article, html: '<img src="blob:expired-image">' } }))
+      .rejects.toThrow('本地图片引用已失效')
+    expect((await repository.getDraft(original.id))?.article.html).toBe(original.article.html)
+  })
+
+  it('saves short runtime references atomically and exports original bytes after reopen and undo', async () => {
+    const { repository } = createRepository(undefined, true)
+    const source = 'data:image/png;base64,aW1hZ2U='
+    const original = persisted('runtime-images')
+    original.article = compactArticleMedia({ ...original.article, html: `<p><img src="${source}"></p>`,
+      markdown: `![原图](${source})`, sourceText: `![原图](${source})`, sourceLanguage: 'markdown' })
+    const reference = original.article.html.match(/src="([^"]+)"/)![1]
+    const read = vi.spyOn(localImageBlob(reference)!, 'arrayBuffer')
+    let saved = await repository.saveDraft(original)
+    expect(read).toHaveBeenCalledTimes(1)
+    await repository.close()
+    const restored = (await repository.getDraft(original.id))!
+    expect(restored.article.html).toContain(reference)
+    read.mockClear()
+    const put = vi.spyOn(IDBObjectStore.prototype, 'put')
+    saved = await repository.saveDraft({ ...restored, article: { ...restored.article, title: '只改标题' } })
+    expect(read).not.toHaveBeenCalled()
+    expect(put.mock.instances.filter(store => (store as IDBObjectStore).name === 'assets')).toHaveLength(0)
+    const backup = await createLocalBackup(repository, new Date(), saved)
+    expect(backup.drafts[0].article.html).toContain(source)
+    expect(JSON.stringify(backup)).not.toContain('blob:')
+    const removed = await repository.saveDraft({ ...saved, article: { ...saved.article, html: '<p>删图</p>', markdown: '删图', sourceText: '删图' } })
+    await repository.saveDraft({ ...removed, article: saved.article })
+    const undone = (await repository.getDraft(original.id))!
+    expect(expandLocalImageReferences(undone.article.html)).toContain(source)
   })
 })

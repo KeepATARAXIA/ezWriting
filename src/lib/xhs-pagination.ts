@@ -423,12 +423,13 @@ function splitBlock(element: Element, textScale: number, blockIndex: number): El
   return splitLongParagraph(element, textScale)
 }
 
-function createChunks(html: string, textScale: number): { chunks: CardChunk[]; document: Document } {
+function* createChunks(html: string, textScale: number): Generator<void, { chunks: CardChunk[]; document: Document }> {
   const document = parseHtml(html)
   const blocks = Array.from(document.body.children)
   const chunks: CardChunk[] = []
 
-  blocks.forEach((block, blockIndex) => {
+  for (const [blockIndex, block] of blocks.entries()) {
+    yield
     if ((block.tagName === 'OL' || block.tagName === 'UL') && block.querySelector(':scope > li')) {
       const tag = block.tagName as ListTag
       const template = block.cloneNode(false) as Element
@@ -445,7 +446,7 @@ function createChunks(html: string, textScale: number): { chunks: CardChunk[]; d
           list: { groupId: blockIndex, item: itemClone, order: initialOrder + itemIndex, tag, template },
         })
       })
-      return
+      continue
     }
 
     splitBlock(block, textScale, blockIndex).forEach(fragment => {
@@ -456,7 +457,7 @@ function createChunks(html: string, textScale: number): { chunks: CardChunk[]; d
         hasProtectedContent: containsProtectedContent(fragment),
       })
     })
-  })
+  }
 
   return { chunks, document }
 }
@@ -494,12 +495,12 @@ function textPageBudget(index: number, options: XhsPaginationOptions): number {
   return index === 0 ? firstPageBodyHeight(options, contentHeight) : contentHeight
 }
 
-function paginateChunks(
+function* paginateChunks(
   chunks: CardChunk[],
   options: XhsPaginationOptions,
   document: Document,
   pageFits?: XhsPageFits,
-): CardChunk[][] {
+): Generator<void, CardChunk[][]> {
   const pages: CardChunk[][] = []
   let current: CardChunk[] = []
 
@@ -508,6 +509,7 @@ function paginateChunks(
     : pageHeight(candidate) <= standardPageBudget(pageIndex, options)
 
   for (let index = 0; index < chunks.length; index += 1) {
+    yield
     const chunk = chunks[index]
     const linkedChunks = chunk.isHeading && chunks[index + 1] ? [chunk, chunks[index + 1]] : [chunk]
     const wouldOverflowLinkedContent = current.length > 0 && !fits([...current, ...linkedChunks], pages.length)
@@ -525,13 +527,14 @@ function paginateChunks(
   return pages
 }
 
-function backfillMeasuredPages(
+function* backfillMeasuredPages(
   pages: CardChunk[][],
   document: Document,
   pageFits: XhsPageFits,
-): void {
+): Generator<void> {
   let pageIndex = 0
   while (pageIndex < pages.length - 1) {
+    yield
     const current = pages[pageIndex]
     const next = pages[pageIndex + 1]
     const moveCount = leadingContentUnitLength(next)
@@ -554,9 +557,10 @@ function leadingContentUnitLength(page: CardChunk[]): number {
   return length
 }
 
-function compactTextPages(pages: CardChunk[][], options: XhsPaginationOptions): void {
+function* compactTextPages(pages: CardChunk[][], options: XhsPaginationOptions): Generator<void> {
   let pageIndex = 0
   while (pageIndex < pages.length - 1) {
+    yield
     const current = pages[pageIndex]
     const next = pages[pageIndex + 1]
     if (!isTextOnlyPage(current)
@@ -617,17 +621,50 @@ function renderPage(chunks: CardChunk[], document: Document): string {
   return container.innerHTML
 }
 
-export function paginateForXhsCards(
+function* paginationSteps(
   html: string,
   options: XhsPaginationOptions = {},
   pageFits?: XhsPageFits,
-): string[] {
+): Generator<void, string[]> {
   const textScale = Number.isFinite(options.textScale) ? Math.min(1.35, Math.max(0.75, options.textScale!)) : 1
-  const { chunks, document } = createChunks(html, textScale)
+  const { chunks, document } = yield* createChunks(html, textScale)
   if (!chunks.length) return ['<p>暂无正文内容</p>']
 
-  const pages = paginateChunks(chunks, options, document, pageFits)
-  if (pageFits) backfillMeasuredPages(pages, document, pageFits)
-  else compactTextPages(pages, options)
-  return pages.map(page => renderPage(page, document))
+  const pages = yield* paginateChunks(chunks, options, document, pageFits)
+  if (pageFits) yield* backfillMeasuredPages(pages, document, pageFits)
+  else yield* compactTextPages(pages, options)
+  const rendered: string[] = []
+  for (const page of pages) { yield; rendered.push(renderPage(page, document)) }
+  return rendered
+}
+
+// Both entry points consume exactly the same algorithm, preserving page boundaries.
+export function paginateForXhsCards(html: string, options: XhsPaginationOptions = {}, pageFits?: XhsPageFits): string[] {
+  const steps = paginationSteps(html, options, pageFits)
+  let result = steps.next()
+  while (!result.done) result = steps.next()
+  return result.value
+}
+
+export async function paginateForXhsCardsAsync(
+  html: string,
+  options: XhsPaginationOptions = {},
+  pageFits?: XhsPageFits,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  const steps = paginationSteps(html, options, pageFits)
+  let deadline = performance.now() + 8
+  try {
+    while (true) {
+      if (signal?.aborted) throw new DOMException('分页已取消', 'AbortError')
+      const result = steps.next()
+      if (result.done) return result.value
+      if (performance.now() >= deadline) {
+        await new Promise<void>(resolve => setTimeout(resolve, 0))
+        deadline = performance.now() + 8
+      }
+    }
+  } finally {
+    steps.return([])
+  }
 }

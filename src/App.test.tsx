@@ -59,13 +59,12 @@ describe('App publishing engine onboarding', () => {
     expect(container.textContent).toContain('写一次，适配并发布到多个平台')
     expect(container.textContent).toContain('支持微信公众号、小红书、X 等平台的内容编辑、预览与分发')
     expect(container.querySelectorAll('.drop-actions .primary-button')).toHaveLength(1)
-    expect(container.querySelector('.drop-actions .primary-button')?.textContent).toContain('开始创作')
-    expect(container.querySelector('.home-import-zone .folder-button')?.textContent).toContain('选择文件')
+    expect(container.querySelector('.drop-actions .primary-button')?.textContent).toContain('开始写稿')
+    expect(container.querySelector('.drop-actions .folder-button')?.textContent).toContain('导入稿件')
     expect(container.querySelector('.home-import-zone .directory-link')?.textContent).toContain('选择文件夹')
     expect(container.querySelector('.home-import-copy')?.textContent).toContain('支持 Markdown、HTML、ZIP')
     expect(Array.from(container.querySelectorAll('.home-platform-list strong')).map(tag => tag.textContent)).toEqual(['公众号', '小红书', 'X'])
-    expect(Array.from(container.querySelectorAll('.home-workflow strong')).map(step => step.textContent)).toEqual(['创建或导入', '编辑与预览', '保存或发布'])
-    expect(container.querySelector('.home-workbench-stats')?.textContent).toContain('本地草稿0')
+    expect(Array.from(container.querySelectorAll('.home-content-flow li')).map(step => step.textContent)).toEqual(['写稿 / 导入', '编辑与平台预览', '导出 / 同步平台草稿'])
     expect(container.querySelector('.home-status-summary')?.textContent).toContain('已连接 1 个平台文件保存在本地')
     expect(container.querySelectorAll('.home-template-card')).toHaveLength(3)
     expect(Array.from(container.querySelectorAll('.home-template-copy strong')).map(template => template.textContent)).toEqual(['公众号长文', '小红书图文', 'X 长文'])
@@ -431,7 +430,7 @@ describe('App publishing engine onboarding', () => {
     })
 
     const publishTrigger = container.querySelector<HTMLButtonElement>('button[aria-label^="打开发布面板"]')!
-    expect(publishTrigger.textContent).toContain('发布')
+    expect(publishTrigger.textContent).toContain('同步草稿')
     expect(publishTrigger.textContent).toContain('0/1')
     await act(async () => publishTrigger.dispatchEvent(new MouseEvent('click', { bubbles: true })))
 
@@ -817,7 +816,8 @@ describe('App publishing engine onboarding', () => {
     const headingButton = container.querySelector<HTMLButtonElement>('button[aria-label="二级标题"]')!
     expect(headingButton).not.toBeNull()
     expect(container.querySelector('.wechat-content table')).not.toBeNull()
-    expect(container.querySelector('.wechat-layout')?.classList.contains('tool-rail-open')).toBe(true)
+    expect(container.querySelector('.wechat-layout')?.classList.contains('tool-rail-open')).toBe(false)
+    await act(async () => container.querySelector<HTMLButtonElement>('.preview-settings-toggle')?.click())
     const allWechatThemes = Array.from(container.querySelectorAll<HTMLButtonElement>('.wechat-theme-categories button'))
       .find(button => button.textContent === '全部')!
     await act(async () => allWechatThemes.dispatchEvent(new MouseEvent('click', { bubbles: true })))
@@ -882,7 +882,7 @@ describe('App publishing engine onboarding', () => {
 
     await vi.waitFor(() => {
       expect(container.textContent).not.toContain('还差 1 张本地图片')
-      expect(container.querySelector('.x-article img[src^="data:image/png;base64,"]')).not.toBeNull()
+      expect(container.querySelector('.x-article img[src^="blob:"]')).not.toBeNull()
     }, { timeout: 1000 })
     await act(async () => editTab.dispatchEvent(new MouseEvent('click', { bubbles: true })))
     expect(container.querySelector<HTMLInputElement>('[aria-label="文章标题"]')?.value).toBe('补图后保留标题')
@@ -931,7 +931,7 @@ describe('App publishing engine onboarding', () => {
     expect(container.textContent).not.toContain('1 张图片待处理')
     expect(container.querySelector('.resource-card-copy strong')?.textContent).toBe('流程图')
     await vi.waitFor(() => {
-      expect(container.querySelector('.wechat-content img[src^="data:image/png;base64,"]')).not.toBeNull()
+      expect(container.querySelector('.wechat-content img[src^="blob:"]')).not.toBeNull()
     }, { timeout: 1000 })
   })
 
@@ -996,6 +996,10 @@ describe('App publishing engine onboarding', () => {
     const cleanTemplate = Array.from(container.querySelectorAll<HTMLButtonElement>('.xhs-template-options button'))
       .find(button => button.getAttribute('aria-label')?.startsWith('简约基础：'))!
     await act(async () => cleanTemplate.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    for (let attempt = 0; attempt < 100 && container.querySelector('.preview-sync-status')?.textContent?.includes('正在生成'); attempt++) {
+      await act(async () => new Promise(resolve => setTimeout(resolve, 20)))
+    }
+    expect(container.querySelector('.preview-sync-status')?.textContent).toContain('自动分页')
 
     const visibleCard = container.querySelector<HTMLElement>('.xhs-stage .xhs-card-page')!
     expect(visibleCard.classList.contains('template-clean')).toBe(true)

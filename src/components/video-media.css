@@ -6,10 +6,10 @@
 .source-video-widget figcaption { flex-wrap: wrap; }
 .source-video-widget figcaption > span.source-video-error { flex: 1 1 100%; color: #b93838; font-size: 12px; line-height: 1.6; white-space: normal; overflow: visible; overflow-wrap: anywhere; }
 
-.wechat-content video,
-.mobile-wechat-content video,
-.x-article-content video,
-.mobile-x-content video {
+.wechat-content .ez-static-video,
+.mobile-wechat-content .ez-static-video,
+.x-article-content .ez-static-video,
+.mobile-x-content .ez-static-video {
   box-sizing: border-box;
   display: block;
   width: 100%;
@@ -22,13 +22,43 @@
   object-fit: contain;
 }
 
-.wechat-content video[data-ez-video-preview="static"],
-.mobile-wechat-content video[data-ez-video-preview="static"],
-.x-article-content video[data-ez-video-preview="static"],
-.mobile-x-content video[data-ez-video-preview="static"] {
-  pointer-events: none;
+.ez-static-video {
   user-select: none;
 }
+
+.ez-video-preview-frame { display: block; position: relative; margin: 1.4em 0; }
+.ez-video-preview-frame .ez-static-video { margin: 0; }
+.ez-video-preview-label {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  padding: 4px 9px;
+  border-radius: 5px;
+  background: #fff;
+  color: #46535f;
+  font: 500 11px/1.5 sans-serif;
+  pointer-events: none;
+}
+
+.source-image-media { position: relative; }
+.source-image-widget .source-image-media:has(.media-play-toggle) { min-height: 64px; }
+.source-video-media > img { width: 100%; height: 100%; object-fit: contain; }
+.source-video-media > img[hidden] { display: none; }
+.source-image-media .media-play-toggle {
+  position: absolute;
+  right: 16px;
+  top: 16px;
+  z-index: 1;
+  min-height: 32px;
+  padding: 5px 12px;
+  border: 1px solid #dce2e7;
+  border-radius: 6px;
+  background: #fff;
+  color: #1648ff;
+  font: 700 12px/1.5 sans-serif;
+  cursor: pointer;
+}
+.source-image-media .media-play-toggle:focus-visible { outline: 2px solid #1648ff; outline-offset: 3px; }
 
 .ez-video-platform-placeholder {
   box-sizing: border-box;

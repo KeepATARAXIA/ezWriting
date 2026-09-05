@@ -4,7 +4,7 @@ const SAMPLE_WEBM = 'GkXfo59ChoEBQveBAULygQRC84EIQoKEd2VibUKHgQJChYECGFOAZwEAAAA
 
 test('uploads, previews, saves, and restores a local video with static right-side previews', async ({ page }) => {
   await page.goto('/')
-  await page.getByRole('button', { name: '开始创作' }).click()
+  await page.getByRole('button', { name: '开始写稿' }).click()
 
   await page.locator('input[accept=".mp4,.webm,video/mp4,video/webm"]').setInputFiles({
     name: '产品演示.webm',
@@ -13,32 +13,39 @@ test('uploads, previews, saves, and restores a local video with static right-sid
   })
 
   const editorVideo = page.locator('.source-video-widget video')
-  const wechatVideo = page.locator('.wechat-content video')
+  const wechatVideo = page.locator('.wechat-content .ez-static-video')
+  await expect(editorVideo).toHaveCount(0)
+  await page.getByRole('button', { name: '播放视频：产品演示.webm', exact: true }).click()
   await expect(editorVideo).toBeVisible()
   await expect(wechatVideo).toBeVisible()
   await expect(wechatVideo).not.toHaveAttribute('controls', '')
   await expect(wechatVideo).toHaveAttribute('data-ez-video-preview', 'static')
-  await expect(wechatVideo).toHaveCSS('pointer-events', 'none')
+  await expect(page.locator('.wechat-content video')).toHaveCount(0)
   await expect(page.locator('.source-video-widget')).toContainText('产品演示.webm')
   await expect.poll(() => editorVideo.evaluate(video => {
     const media = video as HTMLVideoElement
     return media.duration > 0 && media.videoHeight === 90 && media.videoWidth === 160
   })).toBe(true)
-  await expect(page.locator('.history-sync-state', { hasText: '已保存' }).first()).toBeVisible()
+  await expect(page.getByLabel('本地保存状态')).toHaveText('已保存')
 
   await page.reload()
-  await expect(page.locator('.source-video-widget video')).toBeVisible()
-  await expect(page.locator('.wechat-content video')).toBeVisible()
-  await expect(page.locator('.wechat-content video')).not.toHaveAttribute('controls', '')
+  await expect(page.locator('.source-video-widget .media-play-toggle')).toBeVisible()
+  await expect(page.locator('.source-video-widget video')).toHaveCount(0)
+  await expect(page.locator('.wechat-content .ez-static-video')).toBeVisible()
+  await expect(page.locator('.wechat-content .ez-static-video')).toHaveAttribute('src', /^blob:/)
 
   await page.getByRole('tab', { name: '小红书' }).click()
   await expect(page.locator('.xhs-card-page [data-ez-video-placeholder]').first()).toContainText('发布时请在小红书原生上传')
   await expect(page.locator('.xhs-card-page video')).toHaveCount(0)
 
   await page.getByRole('tab', { name: 'X 长文' }).click()
-  await expect(page.locator('.x-article-content video')).toBeVisible()
-  await expect(page.locator('.x-article-content video')).not.toHaveAttribute('controls', '')
-  await expect(page.locator('.x-article-content video')).toHaveCSS('pointer-events', 'none')
+  await expect(page.locator('.x-article-content .ez-static-video')).toBeVisible()
+  await expect(page.locator('.x-article-content video')).toHaveCount(0)
+  await page.getByRole('button', { name: '播放视频：产品演示.webm', exact: true }).click()
+  await expect(page.locator('.source-video-widget video')).toBeVisible()
+  await page.getByRole('tab', { name: /^资源/ }).click()
+  await expect(page.locator('.source-video-widget video')).toHaveCount(1)
+  await expect(page.locator('.resource-sidebar video')).toHaveCount(0)
 })
 
 test('keeps the workbench responsive while saving and restoring a 10 MiB local video', async ({ context, page }) => {
@@ -46,8 +53,8 @@ test('keeps the workbench responsive while saving and restoring a 10 MiB local v
   page.on('pageerror', error => pageErrors.push(error.message))
 
   await page.goto('/')
-  await page.getByRole('button', { name: '开始创作' }).click()
-  await expect(page.locator('.history-sync-state', { hasText: '已保存' }).first()).toBeVisible()
+  await page.getByRole('button', { name: '开始写稿' }).click()
+  await expect(page.getByLabel('本地保存状态')).toHaveText('已保存')
   const cdp = await context.newCDPSession(page)
   await cdp.send('HeapProfiler.collectGarbage')
   const baselineHeapBytes = await page.evaluate(() => (
@@ -73,8 +80,8 @@ test('keeps the workbench responsive while saving and restoring a 10 MiB local v
   await expect(page.locator('.source-video-widget')).toBeVisible({ timeout: 20_000 })
   const widgetReadyAt = await page.evaluate(() => performance.now())
   expect(widgetReadyAt - uploadStartedAt).toBeLessThan(2_000)
-  await expect(page.locator('.history-sync-state', { hasText: '待保存' }).first()).toBeVisible({ timeout: 10_000 })
-  await expect(page.locator('.history-sync-state', { hasText: '已保存' }).first()).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByLabel('本地保存状态')).toHaveText('待保存', { timeout: 10_000 })
+  await expect(page.getByLabel('本地保存状态')).toHaveText('已保存', { timeout: 30_000 })
   await expect(page.locator('.app-shell')).toBeVisible()
   const appLongTasks = await page.evaluate(() => {
     return (window as unknown as { __ezLongTasks: Array<{ start: number; duration: number }> }).__ezLongTasks

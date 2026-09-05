@@ -1,3 +1,5 @@
+import * as xhsMeasurement from '../lib/xhs-pagination-measurement'
+import { getXhsTemplateStyle } from '../domain/xhs-template'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -394,9 +396,10 @@ describe('PlatformPreviews editor-to-preview locating', () => {
     expect(container.querySelectorAll('.wechat-theme-card .wechat-theme-select-target')).toHaveLength(
       container.querySelectorAll('.wechat-theme-card').length,
     )
-    expect(container.querySelector('.wechat-layout')?.classList.contains('tool-rail-open')).toBe(true)
+    expect(container.querySelector('.wechat-layout')?.classList.contains('tool-rail-open')).toBe(false)
+    await act(async () => container.querySelector<HTMLButtonElement>('.preview-settings-toggle')?.click())
     expect(container.querySelector('.wechat-viewport')?.nextElementSibling?.classList.contains('preview-tool-resizer')).toBe(true)
-    expect(container.querySelector('.preview-context-actions .preview-settings-toggle')?.textContent).toContain('设置')
+    expect(container.querySelector('.preview-context-actions .preview-settings-toggle')?.textContent).toContain('排版')
     expect(container.querySelector('.wechat-content [data-wechat-theme="literary"]')).not.toBeNull()
     expect(container.querySelector('#wechat-settings-layout-trigger')?.getAttribute('aria-expanded')).toBe('true')
     expect(container.querySelectorAll('#wechat-theme-panel .settings-accordion-trigger')).toHaveLength(4)
@@ -470,6 +473,7 @@ describe('PlatformPreviews editor-to-preview locating', () => {
 
   it('keeps right-side videos static while preserving a playable video in WeChat clipboard HTML', async () => {
     const reference = registerLocalVideo(new Blob(['clip'], { type: 'video/mp4' }))
+    const gif = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAAAAAAALAAAAAABAAEAAAIBRAA7'
     const write = vi.fn().mockResolvedValue(undefined)
     let clipboardPayload: Record<string, Blob> | undefined
     class ClipboardItemMock {
@@ -487,20 +491,18 @@ describe('PlatformPreviews editor-to-preview locating', () => {
       <PlatformPreviews
         activePlatform="wechat"
         title="Static video preview"
-        html={`<p>正文</p><video controls src="${reference}" data-ez-video-name="演示.mp4"></video>`}
+        html={`<p>正文</p><video controls src="${reference}" data-ez-video-name="演示.mp4"></video><p><img src="${gif}"></p>`}
         formatting={DEFAULT_ARTICLE_FORMATTING}
         previewDevice="desktop"
         onPreviewDeviceChange={vi.fn()}
       />,
     ))
 
-    const previewVideo = container.querySelector<HTMLVideoElement>('.wechat-content video')!
-    expect(previewVideo).not.toBeNull()
-    expect(previewVideo.controls).toBe(false)
-    expect(previewVideo.autoplay).toBe(false)
-    expect(previewVideo.getAttribute('role')).toBeNull()
-    expect(previewVideo.dataset.ezVideoPreview).toBe('static')
-    expect(previewVideo.getAttribute('aria-label')).toContain('请在左侧编辑区播放')
+    expect(container.querySelector('.wechat-content video')).toBeNull()
+    const poster = container.querySelector<HTMLImageElement>('.wechat-content .ez-static-video')!
+    expect(poster).not.toBeNull()
+    expect(poster.dataset.ezVideoPreview).toBe('static')
+    expect(poster.alt).toContain('在左侧编辑区播放')
 
     await act(async () => {
       container.querySelector<HTMLButtonElement>('button[aria-label="复制公众号格式"]')?.click()
@@ -518,6 +520,8 @@ describe('PlatformPreviews editor-to-preview locating', () => {
     expect(copiedHtml).toContain('src="data:video/mp4;base64,Y2xpcA=="')
     expect(copiedHtml).not.toContain('data-ez-video-preview')
     expect(copiedHtml).not.toContain('data-ez-video-placeholder')
+    expect(copiedHtml).toContain(`src="${gif}"`)
+    expect(copiedHtml).not.toContain('data-ez-gif-source')
   })
 
   it('focuses the left source immediately when a preview block is selected and has no floating edit button', async () => {
@@ -614,6 +618,8 @@ describe('PlatformPreviews editor-to-preview locating', () => {
       />,
     ))
 
+    expect(container.querySelector<HTMLElement>('#wechat-theme-panel')?.hidden).toBe(true)
+    await act(async () => container.querySelector<HTMLButtonElement>('.preview-settings-toggle')?.click())
     const wechatToggle = container.querySelector<HTMLButtonElement>('.preview-context-actions button[aria-label="收起公众号排版侧栏"]')!
     expect(wechatToggle.getAttribute('aria-expanded')).toBe('true')
     await act(async () => wechatToggle.click())
@@ -637,7 +643,8 @@ describe('PlatformPreviews editor-to-preview locating', () => {
       />,
     ))
 
-    expect(container.querySelector('.xhs-layout')?.classList.contains('tool-rail-open')).toBe(true)
+    expect(container.querySelector('.xhs-layout')?.classList.contains('tool-rail-open')).toBe(false)
+    await act(async () => container.querySelector<HTMLButtonElement>('.preview-settings-toggle')?.click())
     const xhsResizer = container.querySelector<HTMLElement>('[aria-label="调整小红书工具侧栏宽度"]')
     expect(xhsResizer?.getAttribute('role')).toBe('separator')
     expect(xhsResizer?.nextElementSibling?.id).toBe('xhs-tool-panel')
@@ -692,8 +699,8 @@ describe('PlatformPreviews editor-to-preview locating', () => {
     expect(container.querySelector('[aria-label="小红书输出信息"]')?.textContent).toContain('输出信息')
     expect(Array.from(container.querySelectorAll<HTMLButtonElement>('.xhs-card-footer-actions button')).map(button => button.textContent)).toEqual(['放大查看', '下载当前页'])
     expect(container.querySelector('.xhs-download-tools .xhs-card-footer-actions')).toBeNull()
-    expect(container.querySelector('.xhs-download-tools')?.classList.contains('preview-tool-rail-footer')).toBe(true)
-    expect(Array.from(container.querySelectorAll<HTMLButtonElement>('.xhs-download-tools button')).map(button => button.textContent)).toEqual(['下载全部图片'])
+    expect(container.querySelector('.xhs-download-tools')).toBeNull()
+    expect(container.querySelector('.preview-context-actions .primary-output')?.textContent).toBe('下载全部图片')
 
     const xhsViewSwitcher = container.querySelector<HTMLElement>('.preview-context-actions [aria-label="切换小红书预览方式"]')!
     expect(container.querySelector('#xhs-tool-panel [aria-label="切换小红书预览方式"]')).toBeNull()
@@ -756,7 +763,7 @@ describe('PlatformPreviews editor-to-preview locating', () => {
   })
 
   it('honors a saved X rail preference and keeps the three generic layouts only on X', async () => {
-    window.localStorage.setItem('dispatch.preview-tool-rail-open.v1', JSON.stringify({ wechat: true, xhs: true, x: true }))
+    window.localStorage.setItem('dispatch.preview-tool-rail-open.v2', JSON.stringify({ wechat: true, xhs: true, x: true }))
 
     await act(async () => root.render(
       <PlatformPreviews
@@ -825,6 +832,50 @@ describe('PlatformPreviews editor-to-preview locating', () => {
     expect(container.querySelector('.xhs-page-navigator')).toBeNull()
   })
 
+  it('reuses measured pages for palette changes but invalidates them for font geometry', async () => {
+    vi.spyOn(xhsMeasurement, 'waitForXhsPaginationAssets').mockResolvedValue()
+    const measure = vi.spyOn(xhsMeasurement, 'createXhsCardPageMeasurer').mockImplementation(() => ({ fits: () => true, dispose: vi.fn() }))
+    const palettes = getXhsTemplateStyle(DEFAULT_XHS_CARD_SETTINGS.template).palettes
+    const render = (paletteId: string, fontSize: 'medium' | 'large' = 'medium') => root.render(
+      <PlatformPreviews activePlatform="xhs" title="颜色缓存" html="<p>正文</p>"
+        formatting={{ ...DEFAULT_ARTICLE_FORMATTING, fontSize }}
+        xhsSettings={{ ...DEFAULT_XHS_CARD_SETTINGS, paletteId }} previewDevice="desktop" onPreviewDeviceChange={vi.fn()} />,
+    )
+    await act(async () => render(palettes[0].id))
+    await act(async () => new Promise(resolve => setTimeout(resolve, 30)))
+    expect(measure).toHaveBeenCalledTimes(1)
+    const pages = container.querySelector('.xhs-card-content')!.innerHTML
+    await act(async () => render(palettes[1].id))
+    await act(async () => new Promise(resolve => setTimeout(resolve, 30)))
+    expect(measure).toHaveBeenCalledTimes(1)
+    expect(container.querySelector('.xhs-card-content')!.innerHTML).toBe(pages)
+    expect(container.querySelector('.xhs-card-page')?.getAttribute('data-xhs-palette')).toBe(palettes[1].id)
+    await act(async () => render(palettes[1].id, 'large'))
+    await act(async () => new Promise(resolve => setTimeout(resolve, 30)))
+    expect(measure).toHaveBeenCalledTimes(2)
+  })
+
+  it('discards an older measurement that finishes after a newer article revision', async () => {
+    vi.spyOn(xhsMeasurement, 'waitForXhsPaginationAssets').mockResolvedValue()
+    const dispose = vi.fn()
+    vi.spyOn(xhsMeasurement, 'createXhsCardPageMeasurer').mockImplementation(() => ({ fits: () => true, dispose }))
+    let finishOld!: (pages: string[]) => void
+    const paginate = vi.spyOn(xhsPagination, 'paginateForXhsCardsAsync')
+      .mockImplementationOnce(() => new Promise(resolve => { finishOld = resolve }))
+      .mockResolvedValue(['<p>新修订结果</p>'])
+    const render = (html: string) => root.render(<PlatformPreviews activePlatform="xhs" title="修订测试" html={html}
+      formatting={DEFAULT_ARTICLE_FORMATTING} previewDevice="desktop" onPreviewDeviceChange={vi.fn()} />)
+    await act(async () => render('<p>旧正文</p>'))
+    await act(async () => new Promise(resolve => setTimeout(resolve, 30)))
+    expect(paginate).toHaveBeenCalledTimes(1)
+    await act(async () => render('<p>新正文</p>'))
+    await act(async () => new Promise(resolve => setTimeout(resolve, 30)))
+    expect(container.querySelector('.xhs-card-content')?.textContent).toBe('新修订结果')
+    await act(async () => finishOld(['<p>过期结果</p>']))
+    expect(container.querySelector('.xhs-card-content')?.textContent).toBe('新修订结果')
+    expect(dispose).toHaveBeenCalledTimes(2)
+  })
+
   it('defers long Xiaohongshu pagination until the browser is idle', async () => {
     const idleCallbacks: IdleRequestCallback[] = []
     vi.stubGlobal('requestIdleCallback', vi.fn((callback: IdleRequestCallback) => {
@@ -832,7 +883,7 @@ describe('PlatformPreviews editor-to-preview locating', () => {
       return idleCallbacks.length
     }))
     vi.stubGlobal('cancelIdleCallback', vi.fn())
-    const paginate = vi.spyOn(xhsPagination, 'paginateForXhsCards').mockReturnValue(['<p>分页完成</p>'])
+    const paginate = vi.spyOn(xhsPagination, 'paginateForXhsCardsAsync').mockResolvedValue(['<p>分页完成</p>'])
     const html = Array.from({ length: 600 }, (_, index) => `<p>第 ${index + 1} 段用于长文分页性能回归。</p>`).join('')
 
     await act(async () => root.render(
@@ -1027,6 +1078,9 @@ describe('PlatformPreviews editor-to-preview locating', () => {
     const previewButton = Array.from(container.querySelectorAll<HTMLButtonElement>('.xhs-card-footer-actions button'))
       .find(button => button.textContent?.includes('放大查看'))!
     await act(async () => {
+      await new Promise(resolve => window.setTimeout(resolve, 1300))
+    })
+    await act(async () => {
       previewButton.click()
       await vi.waitFor(() => expect(capture).toHaveBeenCalled(), { timeout: 500 })
     })
@@ -1141,6 +1195,9 @@ describe('PlatformPreviews editor-to-preview locating', () => {
 
     const previewButton = Array.from(container.querySelectorAll<HTMLButtonElement>('.xhs-card-footer-actions button'))
       .find(button => button.textContent?.includes('放大查看'))!
+    await act(async () => {
+      await new Promise(resolve => window.setTimeout(resolve, 1300))
+    })
     await act(async () => {
       previewButton.click()
       await vi.waitFor(() => expect(xhsExport.captureXhsCard).toHaveBeenCalled(), { timeout: 500 })

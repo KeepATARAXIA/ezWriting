@@ -64,6 +64,9 @@ export function DispatchControls({
   onTogglePlatform,
 }: DispatchControlsProps) {
   const drawerCloseRef = useRef<HTMLButtonElement>(null)
+  const platformAccounts = accounts.filter(account => !(account.raw && typeof account.raw === 'object' && 'type' in account.raw && account.raw.type === 'zip-download'))
+  const selectedPlatforms = platformAccounts.filter(account => selectedIds.includes(account.id)).length
+  const selectedDownloads = selectedIds.length - selectedPlatforms
   const isPublishing = workState === 'publishing'
   const terminalResults = results.filter(result => result.status === 'done' || result.status === 'failed')
   const hasFailures = results.some(result => result.status === 'failed')
@@ -76,7 +79,7 @@ export function DispatchControls({
       ? '恢复发布引擎'
       : bridgeState === 'checking'
         ? '正在连接发布引擎'
-        : '选择平台并发布'
+    : '同步平台草稿 · Beta'
 
   useEffect(() => {
     if (!isOpen) return
@@ -95,8 +98,8 @@ export function DispatchControls({
           <button
             type="button"
             className="publish-trigger"
-            aria-label={`打开发布面板，已选 ${selectedIds.length} 个，共 ${accounts.length} 个平台`}
-            title={hasArticle ? '选择平台并发布' : '请先导入稿件'}
+            aria-label={`打开发布面板，已选 ${selectedPlatforms} 个，共 ${platformAccounts.length} 个平台`}
+            title={hasArticle ? '实验性草稿同步 · Beta' : '请先导入稿件'}
             aria-expanded={isOpen}
             aria-haspopup="dialog"
             disabled={!hasArticle || interactionLocked}
@@ -105,8 +108,8 @@ export function DispatchControls({
             }}
           >
             {isPublishing ? <LoaderCircle className="spin" size={16} /> : <Send size={16} />}
-            <span>发布</span>
-            <strong>{selectedIds.length}/{accounts.length}</strong>
+            <span>同步草稿</span>
+            <strong>{selectedPlatforms}/{platformAccounts.length}</strong>
           </button>
         </div>
       )}
@@ -125,10 +128,14 @@ export function DispatchControls({
 
             <div className={`bridge-status ${bridgeState}`}>
               {bridgeState === 'checking' && <><LoaderCircle className="spin" size={17} /><span>正在连接发布引擎</span><small>保留当前稿件</small></>}
-              {bridgeState === 'connected' && <><PlugZap size={17} /><span>发布引擎已就绪</span><small>Wechatsync · {accounts.length} 平台</small></>}
+              {bridgeState === 'connected' && <><PlugZap size={17} /><span>发布引擎已就绪</span><small>Wechatsync · {platformAccounts.length} 平台</small></>}
               {bridgeState === 'missing' && <><CircleAlert size={17} /><span>需要一次安装</span><small>约 1 分钟</small></>}
               {bridgeState === 'error' && <><XCircle size={17} /><span>发布引擎连接异常</span><small>稿件未丢失</small></>}
             </div>
+
+            {(bridgeState !== 'connected' || platformAccounts.length === 0) && (
+              <p className="privacy-note">本地编辑、预览与导出不需要连接发布引擎。<button type="button" className="soft-button" onClick={() => onOpenChange(false)}>继续本地编辑</button></p>
+            )}
 
             {bridgeState === 'checking' ? (
               <div className="bridge-waiting" aria-live="polite"><span /><span /><span /></div>
@@ -173,7 +180,7 @@ export function DispatchControls({
                     <strong>选择发布平台</strong>
                     <small>将分别创建平台草稿</small>
                   </div>
-                  <span><b>{selectedIds.length}</b>/{accounts.length} 已选</span>
+                  <span><b>{selectedPlatforms}</b>/{platformAccounts.length} 平台{selectedDownloads > 0 ? ` · ${selectedDownloads} 项本地下载` : ''}</span>
                 </div>
                 <div className="platform-list">
                   {accounts.map(account => {
@@ -239,11 +246,11 @@ export function DispatchControls({
                 </div>
                 <div className={selectedIds.length > 0 ? 'ready' : ''}>
                   {selectedIds.length > 0 ? <Check size={12} /> : <span className="readiness-dot" />}
-                  <span>{selectedIds.length > 0 ? `已选择 ${selectedIds.length} 个平台` : hasConnectedAccounts ? '请选择至少一个平台' : '等待可用平台'}</span>
+                  <span>{selectedIds.length > 0 ? `已选择 ${selectedPlatforms} 个平台${selectedDownloads ? `与 ${selectedDownloads} 项本地下载` : ''}` : hasConnectedAccounts ? '请选择至少一个平台' : '等待可用平台'}</span>
                 </div>
               </div>
               <button type="button" className="publish-button" onClick={onPublish} disabled={!hasArticle || selectedIds.length === 0 || bridgeState !== 'connected' || interactionLocked}>
-                {isPublishing ? <><LoaderCircle className="spin" size={18} /> 正在同步草稿</> : <><Send size={18} /> 同步到 {selectedIds.length} 个平台</>}
+                {isPublishing ? <><LoaderCircle className="spin" size={18} /> 正在同步草稿</> : <><Send size={18} />{selectedDownloads ? `同步 ${selectedPlatforms} 个平台并下载 ${selectedDownloads} 项` : `同步到 ${selectedPlatforms} 个平台`}</>}
               </button>
               <p className="draft-policy">只创建草稿，不会自动公开发布</p>
             </div>

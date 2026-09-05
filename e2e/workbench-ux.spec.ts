@@ -30,8 +30,8 @@ test('preserves undo and redo when switching the editor to resources and back', 
   const scrollTop = await scroller.evaluate(element => element.scrollTop)
   for (let count = 0; count < 2; count += 1) {
     await page.locator('[aria-controls="article-resource-view"]').click()
-    await expect(page.locator('#article-edit-view')).toBeHidden()
-    await page.locator('[aria-controls="article-edit-view"]').click()
+    await expect(page.locator('#article-edit-view')).toBeVisible()
+    await page.getByRole('button', { name: '关闭素材' }).click()
     await expect.poll(async () => Math.abs(await scroller.evaluate(element => element.scrollTop) - scrollTop)).toBeLessThan(2)
   }
   const undo = page.getByRole('button', { name: '撤销', exact: true })
@@ -113,7 +113,7 @@ for (const width of [390, 320]) {
     await page.goto('/')
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
     await openArticle(page)
-    await page.getByRole('button', { name: '仅显示预览端', exact: true }).click()
+    await page.getByRole('navigation', { name: '手机工作区' }).getByRole('button', { name: '预览', exact: true }).click()
     const history = page.getByRole('button', { name: '打开历史记录', exact: true })
     const copy = page.locator('.wechat-copy-button')
     await expectUncovered(history)

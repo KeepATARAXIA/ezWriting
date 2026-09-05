@@ -1,3 +1,5 @@
+import { XhsOverviewPage } from './xhs-overview-page'
+import { expandLocalImageReferences } from '../lib/local-image-registry'
 import {
   useCallback,
   useEffect,
@@ -12,6 +14,7 @@ import {
   type ReactNode,
   type UIEvent,
 } from 'react'
+import { isGifSource, observeStaticPreviewMedia, prepareStaticPreviewMedia, restorePreviewGifSources } from '../lib/media-preview'
 import {
   BatteryFull,
   Bookmark,
@@ -23,7 +26,6 @@ import {
   Copy,
   Download,
   Heart,
-  Layers3,
   LayoutGrid,
   LoaderCircle,
   Maximize2,
@@ -65,7 +67,7 @@ import {
   type XhsTemplatePalette,
 } from '../domain/xhs-template'
 import { captureXhsCard, downloadBlob, safeDownloadName } from '../lib/xhs-export'
-import { paginateForXhsCards } from '../lib/xhs-pagination'
+import { paginateForXhsCards, paginateForXhsCardsAsync } from '../lib/xhs-pagination'
 import { createXhsCardPageMeasurer, waitForXhsPaginationAssets } from '../lib/xhs-pagination-measurement'
 import { renderMissingImagePlaceholders } from '../lib/missing-assets'
 import { expandLocalVideoReferences, materializeLocalVideoHtml } from '../lib/local-video-registry'
@@ -117,6 +119,8 @@ interface XhsImageSelectionBounds {
 }
 
 interface PlatformPreviewsProps {
+  syncScroll?: boolean
+  onSyncScrollChange?: (enabled: boolean) => void
   activePlatform: PreviewPlatform
   title: string
   html: string
@@ -363,7 +367,7 @@ const TOOL_RAIL_MIN_WIDTH = 240
 const TOOL_RAIL_MAX_WIDTH = 420
 const TOOL_RAIL_COLLAPSE_WIDTH = 180
 const TOOL_RAIL_WIDTH_KEY = 'dispatch.preview-tool-rail-width.v1'
-const TOOL_RAIL_OPEN_KEY = 'dispatch.preview-tool-rail-open.v1'
+const TOOL_RAIL_OPEN_KEY = 'dispatch.preview-tool-rail-open.v2'
 const XHS_FONT_SIZE_SCALE = { small: 0.9, medium: 1, large: 1.1 } as const
 const XHS_LINE_HEIGHT_SCALE = { compact: 0.92, comfortable: 1, airy: 1.1 } as const
 const XHS_FONT_SIZES = { small: '13.5px', medium: '15px', large: '16.5px' } as const
@@ -372,7 +376,6 @@ const XHS_PREVIEW_MIN_ZOOM = 25
 const XHS_PREVIEW_MAX_ZOOM = 300
 const XHS_PREVIEW_ZOOM_STEP = 25
 const XHS_SYNC_PAGINATION_HTML_LIMIT = 8_000
-const XHS_MEASURED_PAGINATION_PAGE_LIMIT = 24
 const XHS_PENDING_PAGE = '<p data-xhs-pagination-pending="true">正在生成卡片预览…</p>'
 const XHS_IMAGE_FULL_MIN_WIDTH = 35
 const XHS_IMAGE_SPLIT_MIN_WIDTH = 30
@@ -436,9 +439,9 @@ function readToolRailWidth(): number {
 function readToolRailOpen(): Record<PreviewPlatform, boolean> {
   try {
     const value = JSON.parse(window.localStorage.getItem(TOOL_RAIL_OPEN_KEY) || '{}') as Partial<Record<PreviewPlatform, boolean>>
-    return { wechat: value.wechat ?? true, xhs: value.xhs ?? true, x: value.x ?? false }
+    return { wechat: value.wechat === true, xhs: value.xhs === true, x: value.x === true }
   } catch {
-    return { wechat: true, xhs: true, x: false }
+    return { wechat: false, xhs: false, x: false }
   }
 }
 
@@ -450,23 +453,6 @@ function plainTextLength(html: string): number {
   const document = parseHtml(html)
   document.body.querySelectorAll('.missing-image-actions').forEach(element => element.remove())
   return Array.from(document.body.textContent || '').length
-}
-
-function makePreviewVideosStatic(document: Document): void {
-  document.body.querySelectorAll<HTMLVideoElement>('video').forEach(video => {
-    const name = video.dataset.ezVideoName?.trim() || '本地视频'
-    video.controls = false
-    video.autoplay = false
-    video.muted = true
-    video.playsInline = true
-    video.preload = 'auto'
-    video.tabIndex = -1
-    video.removeAttribute('controls')
-    video.removeAttribute('autoplay')
-    video.removeAttribute('role')
-    video.dataset.ezVideoPreview = 'static'
-    video.setAttribute('aria-label', `静态视频预览：${name}；请在左侧编辑区播放`)
-  })
 }
 
 function prepareCopiedVideos(document: Document): void {
@@ -547,9 +533,7 @@ function previewLineTargets(element: HTMLElement, expectedLineCount: number): HT
   return [element]
 }
 
-function samePages(left: string[], right: string[]): boolean {
-  return left.length === right.length && left.every((page, index) => page === right[index])
-}
+
 
 function copyRichHtmlWithSelection(html: string): void {
   const container = document.createElement('div')
@@ -625,7 +609,9 @@ function mapPreviewBlocks(
     image.loading = 'lazy'
     image.decoding = 'async'
   })
-  makePreviewVideosStatic(document)
+  // Xiaohongshu keeps its existing native-upload notice for video blocks.
+  if (target === 'xhs') applyPlatformCompatibilityToDocument(document, 'xhs')
+  prepareStaticPreviewMedia(document)
   return { html: document.body.innerHTML, blockCount: blockIndex }
 }
 
@@ -816,7 +802,7 @@ function FormattingAccordion({
   )
 }
 
-export function PlatformPreviews({ activePlatform, title, html, sourceText, sourceLanguage, formatting, renderFormatting, onFormattingChange, xhsSettings: controlledXhsSettings, onXhsSettingsChange, previewAccount, previewDevice, isUpdating = false, onPreviewDeviceChange, locateRequest, onEditTarget, onMissingImageAction }: PlatformPreviewsProps) {
+export function PlatformPreviews({ activePlatform, title, html, sourceText, sourceLanguage, formatting, renderFormatting, onFormattingChange, xhsSettings: controlledXhsSettings, onXhsSettingsChange, previewAccount, previewDevice, isUpdating = false, onPreviewDeviceChange, locateRequest, onEditTarget, onMissingImageAction, syncScroll = true, onSyncScrollChange }: PlatformPreviewsProps) {
   const previewFormatting = renderFormatting ?? formatting
   const [uncontrolledXhsSettings, setUncontrolledXhsSettings] = useState<XhsCardSettings>(DEFAULT_XHS_CARD_SETTINGS)
   const xhsSettings = controlledXhsSettings ?? uncontrolledXhsSettings
@@ -844,14 +830,32 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
     x: ['layout'],
   })
   const [wechatCopyState, setWechatCopyState] = useState<WechatCopyState>('idle')
+  const [xCopyState, setXCopyState] = useState<WechatCopyState>('idle')
+  useEffect(() => { setXCopyState('idle') }, [html, activePlatform])
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return
+    const viewport = window.matchMedia('(max-width: 700px)')
+    const sync = () => setToolRailOpen(viewport.matches ? { wechat: false, xhs: false, x: false } : readToolRailOpen())
+    sync()
+    viewport.addEventListener('change', sync)
+    return () => viewport.removeEventListener('change', sync)
+  }, [])
+  const mediaNotice = useMemo(() => {
+    const document = parseHtml(html)
+    const missing = document.querySelectorAll('img[data-missing-id], img:not([src]), img[src=""]').length
+    const gifs = Array.from(document.querySelectorAll('img')).filter(image => isGifSource(image.getAttribute('src') || '')).length
+    const videos = document.querySelectorAll('video').length
+    return [missing ? `${missing} 张图片待补齐` : '', gifs && activePlatform === 'xhs' ? `${gifs} 个 GIF 将输出为静态图片` : '', videos ? `${videos} 个视频需在目标平台手动上传` : ''].filter(Boolean).join(' · ')
+  }, [html, activePlatform])
   const [exporting, setExporting] = useState<number | 'all' | null>(null)
   const [exportError, setExportError] = useState<string | null>(null)
   const [previewingCard, setPreviewingCard] = useState<number | null>(null)
-  const [exportSheetActive, setExportSheetActive] = useState(false)
+  const [exportSnapshot, setExportSnapshot] = useState<{ pages: string[]; title: string; settings: XhsCardSettings; variables: Record<string, string> } | null>(null)
+  const exportSheetActive = exportSnapshot !== null
   const [xhsImagePreview, setXhsImagePreview] = useState<{ index: number; url: string } | null>(null)
   const [xhsImageZoom, setXhsImageZoom] = useState(100)
-  const [estimatedPagination, setEstimatedPagination] = useState<{ key: string; pages: string[] } | null>(null)
-  const [measuredPagination, setMeasuredPagination] = useState<{ key: string; pages: string[] } | null>(null)
+  const [estimatedPagination, setEstimatedPagination] = useState<{ key: object; pages: string[] } | null>(null)
+  const [measuredPagination, setMeasuredPagination] = useState<{ key: object; pages: string[] } | null>(null)
 
   useEffect(() => {
     setXhsTemplateCategory(xhsTemplateCategoryFor(xhsSettings.template))
@@ -895,24 +899,14 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
     textScale: XHS_FONT_SIZE_SCALE[previewFormatting.fontSize] * XHS_LINE_HEIGHT_SCALE[previewFormatting.lineHeight],
     showFooter: xhsSettings.showFooter,
   }), [previewFormatting.fontSize, previewFormatting.lineHeight, title, xhsSettings.showFooter])
-  const paginationKey = useMemo(() => [
-    preparedXhsLayout.html,
-    title,
-    previewFormatting.fontSize,
-    previewFormatting.lineHeight,
-    xhsSettings.template,
-    xhsSettings.paletteId,
-    xhsSettings.fontMode,
-    String(xhsSettings.showFooter),
-    xhsSettings.footerText,
-  ].join('\u0001'), [
+  // An identity for the content/geometric revision, never a concatenated copy of HTML.
+  const paginationKey = useMemo(() => ({}), [
     previewFormatting.fontSize,
     previewFormatting.lineHeight,
     preparedXhsLayout.html,
     title,
     xhsSettings.footerText,
     xhsSettings.fontMode,
-    xhsSettings.paletteId,
     xhsSettings.showFooter,
     xhsSettings.template,
   ])
@@ -928,6 +922,7 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
     ? estimatedPagination?.key === paginationKey ? estimatedPagination.pages : []
     : synchronousEstimatedPages
   const paginationPending = activePlatform === 'xhs' && estimatedCardPages.length === 0
+  const paginationSettling = activePlatform === 'xhs' && (paginationPending || measuredPagination?.key !== paginationKey)
   const cardPages = activePlatform === 'xhs' && measuredPagination?.key === paginationKey
     ? measuredPagination.pages
     : estimatedCardPages.length ? estimatedCardPages : [XHS_PENDING_PAGE]
@@ -942,6 +937,9 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
       ? preparedXhsLayout.html
       : mappedPreview.html
   const workbenchRef = useRef<HTMLElement>(null)
+  useEffect(() => {
+    if (workbenchRef.current) return observeStaticPreviewMedia(workbenchRef.current)
+  }, [])
   const previewStageRef = useRef<HTMLDivElement>(null)
   const xhsLayoutRef = useRef<HTMLDivElement>(null)
   const xhsImageSelectionOverlayRef = useRef<HTMLDivElement>(null)
@@ -1053,6 +1051,15 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
     '--xhs-body-font-size': XHS_FONT_SIZES[previewFormatting.fontSize],
     '--xhs-body-line-height': XHS_LINE_HEIGHTS[previewFormatting.lineHeight],
   }), [activeXhsFont.bodyFamily, activeXhsPalette.accent, previewFormatting.fontSize, previewFormatting.lineHeight, xhsSettings.fontMode, xhsSettings.paletteId, xhsSettings.template])
+
+  const xhsGeometryVariables = useMemo(() => ({
+    ...xhsTemplateVariables(xhsSettings.template, getXhsDefaultPaletteId(xhsSettings.template), xhsSettings.fontMode),
+    '--article-font-family': activeXhsFont.bodyFamily,
+    '--article-font-size': ARTICLE_FONT_SIZES[previewFormatting.fontSize],
+    '--article-line-height': ARTICLE_LINE_HEIGHTS[previewFormatting.lineHeight],
+    '--xhs-body-font-size': XHS_FONT_SIZES[previewFormatting.fontSize],
+    '--xhs-body-line-height': XHS_LINE_HEIGHTS[previewFormatting.lineHeight],
+  }), [activeXhsFont.bodyFamily, previewFormatting.fontSize, previewFormatting.lineHeight, xhsSettings.fontMode, xhsSettings.template])
 
   const selectedXhsImage = preparedXhsLayout.images.find(image => image.key === selectedXhsImageKey) ?? null
 
@@ -1238,7 +1245,7 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
     if (wechatCopyTimerRef.current !== null) window.clearTimeout(wechatCopyTimerRef.current)
     try {
       const copyHtml = await expandLocalVideoReferences(
-        applyWechatTheme(html, previewWechatSettings, previewFormatting),
+        expandLocalImageReferences(applyWechatTheme(html, previewWechatSettings, previewFormatting)),
       )
       const copyDocument = parseHtml(copyHtml)
       applyPlatformCompatibilityToDocument(copyDocument, 'wechat', { replaceVideos: false })
@@ -1251,6 +1258,18 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
       }, 2200)
     } catch {
       setWechatCopyState('error')
+    }
+  }
+
+  const copyXContent = async () => {
+    setXCopyState('copying')
+    try {
+      const copyDocument = parseHtml(expandLocalImageReferences(html))
+      applyPlatformCompatibilityToDocument(copyDocument, 'x')
+      await copyRichHtml(copyDocument.body.innerHTML)
+      setXCopyState('success')
+    } catch {
+      setXCopyState('error')
     }
   }
 
@@ -1271,6 +1290,7 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
 
   const toggleToolRail = (platform: PreviewPlatform) => {
     persistToolRailOpen({ ...toolRailOpen, [platform]: !toolRailOpen[platform] })
+    if (toolRailOpen[platform]) window.requestAnimationFrame(() => workbenchRef.current?.querySelector<HTMLButtonElement>('.preview-settings-toggle')?.focus())
   }
 
   const toggleFormattingSection = (platform: PreviewPlatform, section: FormattingSection) => {
@@ -1376,78 +1396,53 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
 
   useEffect(() => {
     if (!shouldDeferEstimatedPagination) return
-    let cancelled = false
+    const controller = new AbortController()
     const cancelScheduledWork = scheduleIdleWork(() => {
-      const pages = paginateForXhsCards(preparedXhsLayout.html, xhsPaginationOptions)
-      if (cancelled) return
-      setEstimatedPagination(current => current?.key === paginationKey && samePages(current.pages, pages)
-        ? current
-        : { key: paginationKey, pages })
+      void paginateForXhsCardsAsync(preparedXhsLayout.html, xhsPaginationOptions, undefined, controller.signal)
+        .then(pages => {
+          if (!controller.signal.aborted) setEstimatedPagination({ key: paginationKey, pages })
+        }).catch(error => {
+          if (!controller.signal.aborted) setExportError(`分页失败：${(error as Error).message}`)
+        })
     })
-
-    return () => {
-      cancelled = true
-      cancelScheduledWork()
-    }
+    return () => { controller.abort(); cancelScheduledWork() }
   }, [paginationKey, preparedXhsLayout.html, shouldDeferEstimatedPagination, xhsPaginationOptions])
 
   useEffect(() => {
-    if (activePlatform !== 'xhs'
-      || paginationPending
-      || estimatedCardPages.length > XHS_MEASURED_PAGINATION_PAGE_LIMIT) return
-
-    let cancelled = false
+    if (activePlatform !== 'xhs' || paginationPending) return
+    const controller = new AbortController()
     let cancelScheduledWork: (() => void) | null = null
-
-    const measure = () => {
-      if (cancelled) return
+    const measure = async () => {
+      if (controller.signal.aborted) return
       const measurer = createXhsCardPageMeasurer({
         title,
         template: xhsSettings.template,
         showFooter: xhsSettings.showFooter,
         footerText: xhsSettings.footerText,
-        variables: xhsMeasurementVariables,
+        variables: xhsGeometryVariables,
       })
-      if (!measurer) return
-
-      try {
-        const pages = paginateForXhsCards(preparedXhsLayout.html, xhsPaginationOptions, measurer.fits)
-        if (cancelled) return
-        setMeasuredPagination(current => current?.key === paginationKey && samePages(current.pages, pages)
-          ? current
-          : { key: paginationKey, pages })
-      } finally {
-        measurer.dispose()
+      if (!measurer) {
+        setMeasuredPagination({ key: paginationKey, pages: estimatedCardPages })
+        return
       }
+      try {
+        const pages = await paginateForXhsCardsAsync(preparedXhsLayout.html, xhsPaginationOptions, measurer.fits, controller.signal)
+        if (!controller.signal.aborted) setMeasuredPagination({ key: paginationKey, pages })
+      } catch (error) {
+        if (!controller.signal.aborted) setExportError(`分页失败：${(error as Error).message}`)
+      } finally { measurer.dispose() }
     }
-
-    void waitForXhsPaginationAssets(preparedXhsLayout.html).then(() => {
-      if (cancelled) return
-      cancelScheduledWork = scheduleIdleWork(measure, 500)
+    void waitForXhsPaginationAssets(preparedXhsLayout.html, controller.signal).then(() => {
+      if (!controller.signal.aborted) cancelScheduledWork = scheduleIdleWork(() => { void measure() }, 500)
     })
-
-    return () => {
-      cancelled = true
-      cancelScheduledWork?.()
-    }
-  }, [
-    activePlatform,
-    estimatedCardPages.length,
-    paginationPending,
-    paginationKey,
-    preparedXhsLayout.html,
-    title,
-    xhsMeasurementVariables,
-    xhsPaginationOptions,
-    xhsSettings.footerText,
-    xhsSettings.showFooter,
-    xhsSettings.template,
-  ])
+    return () => { controller.abort(); cancelScheduledWork?.() }
+  }, [activePlatform, estimatedCardPages, paginationPending, paginationKey, preparedXhsLayout.html,
+    title, xhsGeometryVariables, xhsPaginationOptions, xhsSettings.footerText, xhsSettings.showFooter, xhsSettings.template])
 
   useEffect(() => {
     setActiveCard(current => Math.max(0, Math.min(current, cardPages.length - 1)))
-    exportCardRefs.current.length = cardPages.length
-  }, [cardPages.length])
+    exportCardRefs.current.length = exportSnapshot?.pages.length ?? cardPages.length
+  }, [cardPages.length, exportSnapshot?.pages.length])
 
   useLayoutEffect(() => {
     cancelEditorDrivenPreviewLocate()
@@ -1858,13 +1853,14 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
   }
 
   const prepareExportSheet = async () => {
-    setExportSheetActive(true)
+    if (isUpdating || paginationSettling) throw new Error('正文和分页仍在更新，请稍后再导出。')
+    setExportSnapshot({ pages: cardPages, title, settings: xhsSettings, variables: xhsMeasurementVariables })
     await new Promise<void>(resolve => window.requestAnimationFrame(() => resolve()))
   }
 
   const releaseExportSheet = () => {
     exportCardRefs.current = []
-    setExportSheetActive(false)
+    setExportSnapshot(null)
   }
 
   const downloadCard = async (index: number) => {
@@ -2010,31 +2006,35 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
   ) : null
 
   const renderXhsCard = (pageHtml: string, index: number, options: { interactive?: boolean; exportRef?: boolean } = {}) => {
+    const cardSettings = options.exportRef && exportSnapshot ? exportSnapshot.settings : xhsSettings
+    const cardTitle = options.exportRef && exportSnapshot ? exportSnapshot.title : title
+    const cardCount = options.exportRef && exportSnapshot ? exportSnapshot.pages.length : cardPages.length
+    const cardVariables = options.exportRef && exportSnapshot ? exportSnapshot.variables : xhsMeasurementVariables
     const card = <section
       key={options.exportRef ? index : undefined}
-      className={`xhs-card-page template-${xhsSettings.template}${index === 0 ? ' is-cover' : ''}`}
-      data-xhs-palette={xhsSettings.paletteId}
-      data-xhs-font={xhsSettings.fontMode}
-      style={xhsMeasurementVariables as CSSProperties}
-      aria-label={options.interactive ? `第 ${index + 1} 张，共 ${cardPages.length} 张` : undefined}
+      className={`xhs-card-page template-${cardSettings.template}${index === 0 ? ' is-cover' : ''}`}
+      data-xhs-palette={cardSettings.paletteId}
+      data-xhs-font={cardSettings.fontMode}
+      style={cardVariables as CSSProperties}
+      aria-label={options.interactive ? `第 ${index + 1} 张，共 ${cardCount} 张` : undefined}
       data-xhs-page={options.interactive ? index : undefined}
       ref={options.exportRef ? element => { exportCardRefs.current[index] = element } : undefined}
     >
-      {xhsSettings.showPageNumber && <span className="xhs-card-index">{String(index + 1).padStart(2, '0')}</span>}
+      {cardSettings.showPageNumber && <span className="xhs-card-index">{String(index + 1).padStart(2, '0')}</span>}
       {index === 0 && <h1
         data-edit-target={options.interactive ? 'title' : undefined}
         role={options.interactive ? 'button' : undefined}
         tabIndex={options.interactive ? 0 : undefined}
         onClick={options.interactive ? () => selectTarget({ kind: 'title' }) : undefined}
         onKeyDown={options.interactive ? event => selectStandaloneTargetWithKeyboard(event, 'title') : undefined}
-      >{title || '未命名文章'}</h1>}
+      >{cardTitle || '未命名文章'}</h1>}
       <div
         className="xhs-card-content"
         onClick={options.interactive ? handleBodyClick : undefined}
         onKeyDown={options.interactive ? handleBodyKeyDown : undefined}
-        dangerouslySetInnerHTML={{ __html: pageHtml }}
+        dangerouslySetInnerHTML={{ __html: options.exportRef ? restorePreviewGifSources(pageHtml) : pageHtml }}
       />
-      {xhsSettings.showFooter && <footer><span>{xhsSettings.footerText || ' '}</span><span>{index + 1} / {cardPages.length}</span></footer>}
+      {cardSettings.showFooter && <footer><span>{cardSettings.footerText || ' '}</span><span>{index + 1} / {cardCount}</span></footer>}
     </section>
     return options.exportRef
       ? card
@@ -2047,11 +2047,11 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
       <figcaption>
         <span>图片 {String(index + 1).padStart(2, '0')}</span>
         <span className="xhs-card-footer-actions">
-          <button type="button" onClick={() => void openCardPreview(index)} disabled={previewingCard !== null} aria-label={`放大查看第 ${index + 1} 张卡片`}>
+          <button type="button" onClick={() => void openCardPreview(index)} disabled={previewingCard !== null || exporting !== null || paginationSettling || isUpdating} aria-label={`放大查看第 ${index + 1} 张卡片`}>
             {previewingCard === index ? <LoaderCircle className="spin" size={14} /> : <Maximize2 size={14} />}
             <span>放大查看</span>
           </button>
-          <button type="button" onClick={() => void downloadCard(index)} disabled={exporting !== null} aria-label={`下载第 ${index + 1} 张卡片`}>
+          <button type="button" onClick={() => void downloadCard(index)} disabled={exporting !== null || previewingCard !== null || paginationSettling || isUpdating} aria-label={`下载第 ${index + 1} 张卡片`}>
             {exporting === index ? <LoaderCircle className="spin" size={14} /> : <Download size={14} />}
             <span>下载当前页</span>
           </button>
@@ -2108,13 +2108,14 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
       style={previewVariables}
     >
       <header className="preview-contextbar">
-        <span className={`preview-sync-status ${isUpdating || paginationPending ? 'updating' : ''}`} aria-live="polite"><i />{isUpdating ? '正在同步最新编辑…' : activePlatform === 'wechat' ? '正文实时映射' : activePlatform === 'xhs' ? paginationPending ? '正在生成卡片预览…' : `${cardPages.length} 张卡片 · 自动分页` : `Premium Article · ${characterCount} 字`}</span>
+        <span className={`preview-sync-status ${isUpdating || paginationSettling ? 'updating' : ''}`} aria-live="polite"><i />{isUpdating ? '正在同步最新编辑…' : activePlatform === 'wechat' ? '正文实时映射' : activePlatform === 'xhs' ? paginationSettling ? '正在生成卡片预览…' : `${cardPages.length} 张卡片 · 自动分页` : `Premium Article · ${characterCount} 字`}</span>
         <div className="preview-context-actions">
+          {onSyncScrollChange && <button type="button" className="preview-tool-toggle" role="switch" aria-checked={syncScroll} aria-label="同步滚动" title="开启后左侧滚动和光标移动会定位预览；点击预览始终可定位原文" onClick={() => onSyncScrollChange(!syncScroll)}>同步滚动 · {syncScroll ? '开' : '关'}</button>}
           {activePlatform === 'wechat' && (
             <button
               type="button"
               className={`preview-tool-toggle wechat-copy-button ${wechatCopyState}`}
-              disabled={wechatCopyState === 'copying'}
+              disabled={wechatCopyState === 'copying' || isUpdating}
               aria-label={wechatCopyState === 'success'
                 ? '公众号格式已复制'
                 : wechatCopyState === 'error'
@@ -2130,6 +2131,8 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
               {wechatCopyState === 'copying' ? '复制中' : wechatCopyState === 'success' ? '已复制' : wechatCopyState === 'error' ? '重试复制' : '复制公众号格式'}
             </button>
           )}
+          {activePlatform === 'x' && <button type="button" className="preview-tool-toggle primary-output" disabled={xCopyState === 'copying' || isUpdating} onClick={() => void copyXContent()} aria-label="复制 X 长文格式"><Copy size={14} />{xCopyState === 'copying' ? '复制中' : xCopyState === 'success' ? '已复制' : xCopyState === 'error' ? '重试复制' : '复制长文格式'}</button>}
+          {activePlatform === 'xhs' && <button type="button" className="preview-tool-toggle primary-output" onClick={() => void downloadAllCards()} disabled={exporting !== null || previewingCard !== null || paginationSettling || isUpdating}>{exporting === 'all' ? <LoaderCircle className="spin" size={15} /> : <Download size={15} />}<span>下载全部图片</span></button>}
           {activePlatform === 'xhs' && (
             <div className="xhs-view-modes xhs-context-view-modes" role="group" aria-label="切换小红书预览方式">
               <button type="button" className={xhsPreviewMode === 'single' ? 'active' : ''} aria-pressed={xhsPreviewMode === 'single'} aria-label="单页预览" onClick={() => changeXhsPreviewMode('single')}><Square size={15} /><span>单页</span></button>
@@ -2147,7 +2150,7 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
             onClick={() => toggleToolRail(activePlatform)}
           >
             {activeToolRailOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
-            <span>设置</span>
+            <span>排版</span>
           </button>
           <div className="device-preview-switcher" role="group" aria-label="切换预览设备">
             <button type="button" className={previewDevice === 'desktop' ? 'active' : ''} aria-pressed={previewDevice === 'desktop'} onClick={() => onPreviewDeviceChange('desktop')}><Monitor size={14} />电脑预览</button>
@@ -2155,6 +2158,16 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
           </div>
         </div>
       </header>
+
+      {activeToolRailOpen && <fieldset className="source-style-policy">
+        <legend>原文样式</legend>
+        <label><input type="radio" name="source-style-policy" checked={formatting.sourceStyle !== 'theme'} onChange={() => onFormattingChange?.({ ...formatting, sourceStyle: 'preserve' })} />保留原文样式</label>
+        <label><input type="radio" name="source-style-policy" checked={formatting.sourceStyle === 'theme'} onChange={() => onFormattingChange?.({ ...formatting, sourceStyle: 'theme' })} />统一应用主题</label>
+        <small>{formatting.sourceStyle === 'theme' ? '统一文字与边框等装饰；公众号使用所选主题配色。图片本身不变，原稿可随时恢复。' : '保留原文明确指定的字体、颜色与边框，其余应用排版设置。切换同时影响预览和导出。'}</small>
+      </fieldset>}
+
+      {mediaNotice && <div className="output-readiness" role="status" aria-label="输出前提醒">{mediaNotice}</div>}
+      {activePlatform === 'xhs' && exportError && <div className="xhs-export-error" role="alert">{exportError}</div>}
 
       <div ref={previewStageRef} className="preview-platform-stage" aria-hidden={previewDevice === 'mobile' || undefined} inert={previewDevice === 'mobile' || undefined}>
         {activePlatform === 'wechat' && (
@@ -2194,6 +2207,7 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
               <aside id="wechat-theme-panel" className="wechat-theme-rail preview-tool-rail" aria-label="公众号排版设置" hidden={!toolRailOpen.wechat}>
                 <header className="wechat-theme-heading preview-tool-rail-heading">
                   <span><strong>公众号主题</strong><small>{WECHAT_THEMES.length} 套排版 · 点击后应用</small></span>
+                  <button type="button" className="settings-close" aria-label="关闭公众号设置" onClick={() => toggleToolRail('wechat')}><CloseIcon size={18} /></button>
                 </header>
                 <FormattingAccordion
                   idPrefix="wechat-settings"
@@ -2294,7 +2308,9 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
 
                 {xhsPreviewMode === 'all' && (
                   <div className="xhs-overview" aria-label="全部小红书卡片预览">
-                    {cardPages.map((page, index) => renderXhsCardWithActions(page, index, 'overview'))}
+                    {cardPages.map((page, index) => <XhsOverviewPage key={index} index={index} active={index === activeCard}>
+                      {renderXhsCardWithActions(page, index, 'overview')}
+                    </XhsOverviewPage>)}
                   </div>
                 )}
               </div>
@@ -2395,6 +2411,7 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
               <aside id="xhs-tool-panel" className="xhs-tool-rail preview-tool-rail" aria-label="小红书预览工具" hidden={!toolRailOpen.xhs}>
                 <header className="preview-tool-rail-heading xhs-tool-rail-heading">
                   <span><strong>小红书工具</strong><small>预览、排版与图片导出</small></span>
+                  <button type="button" className="settings-close" aria-label="关闭小红书设置" onClick={() => toggleToolRail('xhs')}><CloseIcon size={18} /></button>
                 </header>
                 <FormattingAccordion
                   idPrefix="xhs-settings"
@@ -2479,11 +2496,6 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
                   <label className="xhs-footer-input">左下角文字<input value={xhsSettings.footerText} disabled={!xhsSettings.showFooter} maxLength={24} onChange={event => updateXhsSettings({ ...xhsSettings, footerText: event.target.value })} /></label>
                 </details>
 
-                <section className="xhs-tool-section xhs-download-tools preview-tool-rail-footer">
-                  <div className="xhs-tool-heading"><strong>下载图片</strong><small>PNG / ZIP</small></div>
-                  <button type="button" className="xhs-rail-action primary" onClick={() => void downloadAllCards()} disabled={exporting !== null}>{exporting === 'all' ? <LoaderCircle className="spin" size={15} /> : <Layers3 size={15} />}<span>下载全部图片</span></button>
-                  {exportError && <div className="xhs-export-error" role="alert">{exportError}</div>}
-                </section>
               </aside>
             </div>
           </article>
@@ -2528,6 +2540,7 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
               <aside id="x-formatting-panel" className="x-formatting-rail preview-tool-rail" aria-label="X 长文排版设置" hidden={!toolRailOpen.x}>
                 <header className="preview-tool-rail-heading">
                   <span><strong>X 长文排版</strong><small>设置只在选中后生效</small></span>
+                  <button type="button" className="settings-close" aria-label="关闭 X 设置" onClick={() => toggleToolRail('x')}><CloseIcon size={18} /></button>
                 </header>
                 <FormattingAccordion
                   idPrefix="x-settings"
@@ -2637,7 +2650,7 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
 
       {activePlatform === 'xhs' && exportSheetActive && (
         <div className="xhs-export-sheet" aria-hidden="true">
-          {cardPages.map((page, index) => <div className="xhs-export-page" key={index}>{renderXhsCard(page, index, { exportRef: true })}</div>)}
+          {exportSnapshot.pages.map((page, index) => <div className="xhs-export-page" key={index}>{renderXhsCard(page, index, { exportRef: true })}</div>)}
         </div>
       )}
     </section>

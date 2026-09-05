@@ -1,0 +1,3 @@
+.xhs-overview-slot { min-width: 0; }
+.xhs-overview-slot > .xhs-overview-item { content-visibility: visible; contain-intrinsic-size: none; }
+.xhs-page-placeholder { background: #edf1f5; border: 1px solid #dfe5eb; }

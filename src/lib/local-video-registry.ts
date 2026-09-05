@@ -3,14 +3,17 @@ export const LOCAL_VIDEO_PROTOCOL = 'dispatch-local-video://'
 interface LocalVideoEntry {
   blob: Blob
   objectUrl: string | null
+  source?: string
 }
 
 const entries = new Map<string, LocalVideoEntry>()
+const dataSources = new Map<string, string>()
 let fallbackSequence = 0
 
 function removeEntry(reference: string): void {
   const entry = entries.get(reference)
   if (entry?.objectUrl && typeof URL?.revokeObjectURL === 'function') URL.revokeObjectURL(entry.objectUrl)
+  if (entry?.source) dataSources.delete(entry.source)
   entries.delete(reference)
 }
 
@@ -45,6 +48,25 @@ export function registerLocalVideo(blob: Blob, preferredId?: string): string {
 
 export function localVideoBlob(reference: string): Blob | null {
   return isLocalVideoReference(reference) ? entries.get(reference)?.blob ?? null : null
+}
+
+export function compactLocalVideoData(value: string): string {
+  if (!/data:video\//i.test(value)) return value
+  return value.replace(/(<video\b[^>]*?\bsrc\s*=\s*)(["'])(data:video\/(?:mp4|webm);base64,[a-z0-9+/=\s]+)\2/gi,
+    (syntax, prefix: string, quote: string, source: string) => {
+      let reference = dataSources.get(source)
+      if (!reference) {
+        const comma = source.indexOf(',')
+        let binary: string
+        try { binary = atob(source.slice(comma + 1).replace(/\s/g, '')) } catch { return syntax }
+        const bytes = new Uint8Array(binary.length)
+        for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index)
+        reference = registerLocalVideo(new Blob([bytes], { type: source.slice(5, source.indexOf(';')).toLowerCase() }))
+        entries.get(reference)!.source = source
+        dataSources.set(source, reference)
+      }
+      return `${prefix}${quote}${reference}${quote}`
+    })
 }
 
 export function localVideoPreviewUrl(reference: string): string | null {

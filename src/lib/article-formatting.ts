@@ -6,6 +6,7 @@ import {
   type ArticleFormatting,
 } from '../domain/formatting'
 import { MARKDOWN_CALLOUT_DEFINITIONS, normalizeMarkdownCalloutType } from './markdown-compatibility'
+import { prepareSourceStyles, restoreSourceStyles } from './source-style-policy'
 
 const HEADING_SIZES = {
   H1: '32px',
@@ -20,6 +21,7 @@ const CODE_FONT = '"Cascadia Code", "SFMono-Regular", Consolas, "Liberation Mono
 
 export function applyArticleFormatting(html: string, formatting: ArticleFormatting): string {
   const document = new DOMParser().parseFromString(html, 'text/html')
+  prepareSourceStyles(document, formatting.sourceStyle)
   const accent = ARTICLE_ACCENT_COLORS[formatting.accent]
   const bodyFont = ARTICLE_FONT_FAMILIES[formatting.font]
   const headingFont = formatting.theme === 'editorial'
@@ -280,5 +282,6 @@ export function applyArticleFormatting(html: string, formatting: ArticleFormatti
     })
   })
 
+  if (formatting.sourceStyle === 'preserve') restoreSourceStyles(document, true)
   return document.body.innerHTML
 }

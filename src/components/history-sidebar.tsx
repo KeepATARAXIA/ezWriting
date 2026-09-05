@@ -150,13 +150,14 @@ export function HistorySidebar({
 }: HistorySidebarProps) {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null)
   const [dataActionsExpanded, setDataActionsExpanded] = useState(false)
+  const [query, setQuery] = useState('')
   const menuButtonRefs = useRef(new Map<string, HTMLButtonElement>())
   const menuRefs = useRef(new Map<string, HTMLDivElement>())
   const draftButtonRefs = useRef(new Map<string, HTMLButtonElement>())
 
   const visibleDrafts = useMemo(() => drafts
-    .filter(draft => !draft.deletedAt)
-    .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()), [drafts])
+    .filter(draft => !draft.deletedAt && displayTitle(draft.title).toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
+    .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()), [drafts, query])
 
   const groupedDrafts = useMemo(() => {
     const groups: Record<HistoryGroupKey, DraftSummary[]> = {
@@ -269,6 +270,7 @@ export function HistorySidebar({
           <div>
             <h2 id="history-sidebar-title">历史记录</h2>
             <p>自动保存在当前浏览器</p>
+            <input className="history-search" type="search" aria-label="搜索历史稿件" placeholder="搜索稿件标题" value={query} onChange={event => setQuery(event.target.value)} />
           </div>
           <button
             type="button"
@@ -290,8 +292,8 @@ export function HistorySidebar({
           {visibleDrafts.length === 0 ? (
             <div className="history-empty-state">
               <History size={22} aria-hidden="true" />
-              <strong>还没有历史稿件</strong>
-              <p>新建或导入稿件后，会自动保存在这里。</p>
+              <strong>{query.trim() ? '没有匹配的稿件' : '还没有历史稿件'}</strong>
+              <p>{query.trim() ? '换一个关键词，或清空搜索查看全部。' : '新建或导入稿件后，会自动保存在这里。'}</p>
             </div>
           ) : (
             HISTORY_GROUPS.map(group => {

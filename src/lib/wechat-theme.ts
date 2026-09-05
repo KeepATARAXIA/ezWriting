@@ -14,6 +14,7 @@ import {
   ARTICLE_LINE_HEIGHTS,
   type ArticleFormatting,
 } from '../domain/formatting'
+import { restoreSourceStyles } from './source-style-policy'
 
 export const WECHAT_THEME_IDS = [
   'literary',
@@ -365,12 +366,12 @@ function applyCodeBlockStyles(
 export function applyWechatTheme(
   html: string,
   rawSettings?: Partial<WechatThemeSettings> | null,
-  sharedFormatting?: Pick<ArticleFormatting, 'theme' | 'font' | 'fontSize' | 'lineHeight' | 'accent'>,
+  sharedFormatting?: Pick<ArticleFormatting, 'theme' | 'font' | 'fontSize' | 'lineHeight' | 'accent' | 'sourceStyle'>,
 ): string {
   const settings = normalizeWechatThemeSettings(rawSettings)
   const theme = getWechatTheme(settings.themeId)
   const styles = buildStyles(theme, {
-    accent: sharedFormatting ? ARTICLE_ACCENT_COLORS[sharedFormatting.accent] : settings.accentByTheme[theme.id],
+    accent: sharedFormatting?.sourceStyle === 'theme' ? settings.accentByTheme[theme.id] : sharedFormatting ? ARTICLE_ACCENT_COLORS[sharedFormatting.accent] : settings.accentByTheme[theme.id],
     slotColors: settings.slotColorsByTheme[theme.id] ?? {},
     fontFamily: sharedFormatting?.font ?? settings.fontFamily,
     fontSize: sharedFormatting ? Number.parseInt(ARTICLE_FONT_SIZES[sharedFormatting.fontSize], 10) : settings.fontSize,
@@ -483,5 +484,6 @@ export function applyWechatTheme(
     }
   }
 
+  if (sharedFormatting?.sourceStyle === 'preserve') restoreSourceStyles(document)
   return container.outerHTML
 }

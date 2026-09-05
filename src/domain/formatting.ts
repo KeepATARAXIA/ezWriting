@@ -7,6 +7,7 @@ export type ArticleLineHeight = 'compact' | 'comfortable' | 'airy'
 export type ArticleAccent = 'blue' | 'green' | 'orange' | 'purple'
 
 export interface ArticleFormatting {
+  sourceStyle?: 'preserve' | 'theme'
   theme: ArticleTheme
   font: ArticleFont
   fontSize: ArticleFontSize
@@ -16,6 +17,7 @@ export interface ArticleFormatting {
 }
 
 export const DEFAULT_ARTICLE_FORMATTING: ArticleFormatting = {
+  sourceStyle: 'preserve',
   theme: 'clean',
   font: 'serif',
   fontSize: 'medium',

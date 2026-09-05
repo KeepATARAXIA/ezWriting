@@ -1,3 +1,4 @@
+import { expandLocalImageReferences, localImageReferences, retainLocalImageReferences } from '../lib/local-image-registry'
 import type { ArticleDraft, ArticleSourceLanguage, SourceKind } from '../domain/article'
 import { DEFAULT_ARTICLE_FORMATTING, type ArticleFormatting } from '../domain/formatting'
 import {
@@ -11,7 +12,7 @@ import { annotateLocalImagesAsMissing } from '../lib/article-source'
 import { expandLocalVideoReferences, retainLocalVideoReferences } from '../lib/local-video-registry'
 import { sanitizeContentHtml } from '../lib/markdown-compatibility'
 import { normalizeWechatThemeSettings } from '../lib/wechat-theme'
-import type { DraftRepository } from './draft-repository'
+import type { DraftBackupAsset, DraftRepository } from './draft-repository'
 import { LAST_ACTIVE_DRAFT_SETTING } from './local-storage'
 
 export { LAST_ACTIVE_DRAFT_SETTING, requestPersistentLocalStorage } from './local-storage'
@@ -23,10 +24,16 @@ export const MAX_LOCAL_BACKUP_BYTES = 128 * 1024 * 1024
 
 export interface LocalBackupPayload {
   format: typeof LOCAL_BACKUP_FORMAT
-  version: typeof LOCAL_BACKUP_VERSION
+  version: 1 | 2
   exportedAt: string
   activeDraftId: string | null
   drafts: PersistedDraft[]
+  assets?: Map<string, DraftBackupAsset>
+}
+
+export interface BackupOperationOptions {
+  signal?: AbortSignal
+  onProgress?: (message: string) => void
 }
 
 export interface LocalBackupImportResult {
@@ -67,6 +74,7 @@ function formatting(value: unknown): ArticleFormatting {
   const candidate = isRecord(value) ? value : {}
   return {
     theme: candidate.theme === 'editorial' || candidate.theme === 'wechat' ? candidate.theme : 'clean',
+    sourceStyle: candidate.sourceStyle === 'theme' ? 'theme' : 'preserve',
     font: candidate.font === 'sans' ? 'sans' : 'serif',
     fontSize: candidate.fontSize === 'small' || candidate.fontSize === 'large' ? candidate.fontSize : 'medium',
     lineHeight: candidate.lineHeight === 'compact' || candidate.lineHeight === 'airy' ? candidate.lineHeight : 'comfortable',
@@ -82,7 +90,7 @@ function xhsSettings(value: unknown): XhsCardSettings {
 function article(value: unknown, draftId: string, importedAt: string): ArticleDraft {
   if (!isRecord(value)) throw new Error('备份中存在无效稿件。')
   const html = stringValue(value.html)
-  if (!html) throw new Error('备份中存在缺少正文的稿件。')
+  if (typeof value.html !== 'string') throw new Error('备份中存在缺少正文的稿件。')
   const language = sourceLanguage(value.sourceLanguage)
   const sanitized = sanitizeContentHtml(html)
   const annotated = annotateLocalImagesAsMissing(sanitized)
@@ -112,7 +120,7 @@ function sourceInfo(value: unknown): PersistedDraft['sourceInfo'] {
   return { name, size: Math.max(0, size), assetCount: Math.max(0, Math.floor(assetCount)) }
 }
 
-function normalizeDraft(value: unknown, fallbackTimestamp: string): PersistedDraft {
+export function normalizeBackupDraft(value: unknown, fallbackTimestamp: string): PersistedDraft {
   if (!isRecord(value)) throw new Error('备份中存在无效稿件。')
   const id = stringValue(value.id)
   if (!/^[a-zA-Z0-9_-]{8,100}$/.test(id)) throw new Error('备份中存在无效稿件标识。')
@@ -140,6 +148,7 @@ export async function createLocalBackup(
   now = new Date(),
   draftOverride?: PersistedDraft,
 ): Promise<LocalBackupPayload> {
+  const retainedImages = localImageReferences()
   const [summaries, storedActiveDraftId] = await Promise.all([
     repository.listDrafts({ includeDeleted: true }),
     repository.getSetting<string>(LAST_ACTIVE_DRAFT_SETTING),
@@ -154,14 +163,14 @@ export async function createLocalBackup(
     .filter(draft => draft.id === activeDraftId)
     .flatMap(draft => [draft.article.html, draft.article.markdown || '', draft.article.sourceText || ''])
   drafts = await Promise.all(drafts.map(async draft => {
-    const html = await expandLocalVideoReferences(draft.article.html)
+    const html = await expandLocalVideoReferences(expandLocalImageReferences(draft.article.html))
     const markdown = typeof draft.article.markdown === 'string'
-      ? await expandLocalVideoReferences(draft.article.markdown)
+      ? await expandLocalVideoReferences(expandLocalImageReferences(draft.article.markdown))
       : undefined
     const sourceText = typeof draft.article.sourceText === 'string'
       ? draft.article.sourceText === draft.article.markdown && markdown !== undefined
         ? markdown
-        : await expandLocalVideoReferences(draft.article.sourceText)
+        : await expandLocalVideoReferences(expandLocalImageReferences(draft.article.sourceText))
       : undefined
     return {
       ...draft,
@@ -172,7 +181,7 @@ export async function createLocalBackup(
         sourceText,
       },
     }
-  })).finally(() => retainLocalVideoReferences(retainedVideoValues))
+  })).finally(() => { retainLocalVideoReferences(retainedVideoValues); retainLocalImageReferences(retainedImages) })
   return {
     format: LOCAL_BACKUP_FORMAT,
     version: LOCAL_BACKUP_VERSION,
@@ -183,10 +192,22 @@ export async function createLocalBackup(
 }
 
 export function serializeLocalBackup(payload: LocalBackupPayload): Blob {
-  return new Blob([JSON.stringify(payload)], { type: 'application/json;charset=utf-8' })
+  if (payload.version !== 1) throw new Error('媒体资产包必须使用 ZIP 导出。')
+  const blob = new Blob([JSON.stringify(payload)], { type: 'application/json;charset=utf-8' })
+  if (blob.size > MAX_LOCAL_BACKUP_BYTES) throw new Error('旧 JSON 备份超过 128 MB，请使用去重媒体资产包导出。')
+  return blob
 }
 
-export async function parseLocalBackup(file: File): Promise<LocalBackupPayload> {
+export async function createLocalBackupArchive(repository: DraftRepository, now = new Date(), draftOverride?: PersistedDraft, options: BackupOperationOptions = {}) {
+  return (await import('./local-backup-archive')).createBackupArchive(repository, now, draftOverride, options)
+}
+
+export async function parseLocalBackup(file: File, options: BackupOperationOptions = {}): Promise<LocalBackupPayload> {
+  options.signal?.throwIfAborted()
+  const signature = new Uint8Array(await file.slice(0, 4).arrayBuffer())
+  if (signature[0] === 0x50 && signature[1] === 0x4b) {
+    return (await import('./local-backup-archive')).parseBackupArchive(file, options)
+  }
   if (file.size > MAX_LOCAL_BACKUP_BYTES) throw new Error('本地备份不能超过 128 MB。')
   let raw: unknown
   try {
@@ -199,7 +220,8 @@ export async function parseLocalBackup(file: File): Promise<LocalBackupPayload> 
   if (!Array.isArray(raw.drafts)) throw new Error('备份文件缺少稿件数据。')
   if (raw.drafts.length > 1_000) throw new Error('单个备份最多包含 1000 篇稿件。')
   const exportedAt = timestamp(raw.exportedAt, new Date().toISOString())
-  const drafts = raw.drafts.map(value => normalizeDraft(value, exportedAt))
+  options.signal?.throwIfAborted()
+  const drafts = raw.drafts.map(value => normalizeBackupDraft(value, exportedAt))
   const ids = new Set<string>()
   for (const draft of drafts) {
     if (ids.has(draft.id)) throw new Error('备份中包含重复稿件。')
@@ -209,11 +231,15 @@ export async function parseLocalBackup(file: File): Promise<LocalBackupPayload> 
   return { format: LOCAL_BACKUP_FORMAT, version: LOCAL_BACKUP_VERSION, exportedAt, activeDraftId, drafts }
 }
 
-export async function importLocalBackup(repository: DraftRepository, payload: LocalBackupPayload): Promise<LocalBackupImportResult> {
+export async function importLocalBackup(repository: DraftRepository, payload: LocalBackupPayload, options: BackupOperationOptions = {}): Promise<LocalBackupImportResult> {
   if (typeof repository.importDraftsAtomically !== 'function') {
     throw new Error('当前稿件仓库不支持原子整库导入，已停止且未写入任何稿件。')
   }
+  options.signal?.throwIfAborted()
+  options.onProgress?.('正在写入稿件与媒体，可取消并整笔回滚…')
   await repository.importDraftsAtomically(payload.drafts, {
+    assets: payload.assets,
+    signal: options.signal,
     settingMutations: payload.activeDraftId
       ? [{ type: 'put', key: LAST_ACTIVE_DRAFT_SETTING, value: payload.activeDraftId }]
       : [{ type: 'delete', key: LAST_ACTIVE_DRAFT_SETTING }],

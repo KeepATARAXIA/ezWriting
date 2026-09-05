@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 
 test('keeps editor, archive, YAML, and backup code off the homepage path', async ({ page }) => {
   await page.goto('/')
-  await expect(page.getByRole('button', { name: '开始创作' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '开始写稿' })).toBeVisible()
 
   const resources = await page.evaluate(() => performance.getEntriesByType('resource').map(entry => {
     const timing = entry as PerformanceResourceTiming

@@ -61,7 +61,17 @@ describe('SourceEditor local video', () => {
     expect(saved).toMatch(/<video controls src="dispatch-local-video:\/\/[a-z0-9-]+"/i)
     expect(saved).not.toContain('data:video/')
     expect(saved).toContain('data-ez-video-name="产品演示.mp4"')
-    expect(container.querySelector<HTMLVideoElement>('.source-video-widget video')?.src).toMatch(/^(?:blob:|dispatch-local-video:)/)
+    expect(container.querySelector('.source-video-widget video')).toBeNull()
+    const playButton = container.querySelector<HTMLButtonElement>('.source-video-widget .media-play-toggle')!
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue()
+    vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined)
+    vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => undefined)
+    await act(async () => playButton.click())
+    const player = container.querySelector<HTMLVideoElement>('.source-video-widget video')!
+    expect(player.src).toMatch(/^(?:blob:|dispatch-local-video:)/)
+    await act(async () => playButton.click())
+    expect(container.querySelector('.source-video-widget video')).toBeNull()
+    expect(player.hasAttribute('src')).toBe(false)
     expect(container.querySelector('.source-video-widget')?.textContent).toContain('产品演示.mp4')
     expect(container.querySelector('.cm-content')?.textContent).not.toContain('data:video/mp4')
     await vi.waitFor(() => expect(onActiveBlockChange).toHaveBeenCalledTimes(1), { timeout: 500 })
