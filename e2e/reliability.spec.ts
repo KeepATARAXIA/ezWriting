@@ -100,7 +100,9 @@ test('switches between Markdown source and presentation editing without losing s
     linkedImageDestination,
   ])
 
-  await page.locator('.cm-md-strong').filter({ hasText: '重点内容' }).click()
+  const formattedText = page.locator('.cm-md-strong').filter({ hasText: '重点内容' })
+  await formattedText.hover()
+  await formattedText.click()
   await expect(page.locator('.source-editor .cm-activeLine')).toContainText('**重点内容**')
   await page.getByRole('button', { name: '显示 Markdown 语法' }).click()
   await expect(page.locator('.source-editor .cm-content')).toContainText('## 正文小标题')
