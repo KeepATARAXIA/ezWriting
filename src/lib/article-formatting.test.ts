@@ -25,7 +25,7 @@ describe('applyArticleFormatting', () => {
     )
     const document = new DOMParser().parseFromString(html, 'text/html')
 
-    expect(document.querySelector<HTMLElement>('p')?.style.fontWeight).toBe('400')
+    expect(document.querySelector<HTMLElement>('p')?.style.fontWeight).toBe('')
     expect(document.querySelector<HTMLElement>('strong')?.style.fontWeight).toBe('800')
     expect(document.querySelector<HTMLElement>('b')?.style.fontWeight).toBe('800')
   })

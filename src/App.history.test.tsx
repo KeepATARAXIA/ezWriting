@@ -1,3 +1,4 @@
+import { createBlankInWorkbench, editWorkbenchTitle } from './test-utils/workbench'
 import 'fake-indexeddb/auto'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -51,13 +52,13 @@ describe('App local draft history', () => {
     await repository.listDrafts()
     await repository.getSetting('last-active-draft-id')
     await act(async () => root.render(<App draftRepository={repository} />))
-    await act(async () => new Promise(resolve => window.setTimeout(resolve, 30)))
+    await act(async () => { await vi.dynamicImportSettled(); await new Promise(resolve => window.setTimeout(resolve, 50)) })
   }
 
   async function openLocalDataActions() {
     const expandHistory = container.querySelector<HTMLButtonElement>('[aria-label="展开历史记录"]')
     if (expandHistory) await act(async () => expandHistory.click())
-    const trigger = container.querySelector<HTMLButtonElement>('.history-data-trigger')!
+    const trigger = container.querySelector<HTMLButtonElement>('[aria-label="设置"]')!
     if (trigger.getAttribute('aria-expanded') !== 'true') {
       await act(async () => trigger.click())
     }
@@ -67,15 +68,12 @@ describe('App local draft history', () => {
     await renderApp()
     const createButton = container.querySelector<HTMLButtonElement>('.drop-actions .primary-button')!
     expect(createButton, container.textContent || '').not.toBeNull()
-    await act(async () => {
-      createButton.click()
-      await new Promise(resolve => window.setTimeout(resolve, 30))
-    })
+    await createBlankInWorkbench(container)
 
-    const titleInput = container.querySelector<HTMLInputElement>('[aria-label="文章标题"]')!
     await act(async () => {
-      Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set?.call(titleInput, '本地历史测试稿')
-      titleInput.dispatchEvent(new Event('input', { bubbles: true }))
+      editWorkbenchTitle(container, '本地历史测试稿')
+    })
+    await act(async () => {
       await new Promise(resolve => window.setTimeout(resolve, 760))
     })
 
@@ -91,7 +89,7 @@ describe('App local draft history', () => {
     root = createRoot(container)
     await renderApp()
 
-    expect(container.querySelector<HTMLInputElement>('[aria-label="文章标题"]')?.value).toBe('本地历史测试稿')
+    expect(container.querySelector('.topbar-document-title')?.textContent).toBe('本地历史测试稿')
     expect(container.querySelector('.history-draft-title')?.textContent).toBe('本地历史测试稿')
 
     const menuButton = container.querySelector<HTMLButtonElement>('.history-draft-menu-button')!
@@ -116,20 +114,20 @@ describe('App local draft history', () => {
 
   it('preserves source undo, redo and selection across the resources view', async () => {
     await renderApp()
-    await act(async () => container.querySelector<HTMLButtonElement>('.drop-actions .primary-button')?.click())
+    await createBlankInWorkbench(container)
     await act(async () => {
       await vi.waitFor(() => expect(container.querySelector('.cm-editor')).not.toBeNull())
     })
     const sourceView = () => EditorView.findFromDOM(container.querySelector<HTMLElement>('.cm-editor')!)!
     await act(async () => {
-      sourceView().dispatch({ changes: { from: 0, insert: '保留这段编辑' }, selection: { anchor: 2, head: 5 } })
+      sourceView().dispatch({ changes: { from: 0, to: sourceView().state.doc.length, insert: '保留这段编辑' }, selection: { anchor: 2, head: 5 } })
       await new Promise(resolve => window.setTimeout(resolve, 100))
     })
     for (let attempt = 0; attempt < 2; attempt += 1) {
       await act(async () => container.querySelector<HTMLButtonElement>('[aria-controls="article-resource-view"]')?.click())
-      expect(container.querySelector<HTMLElement>('#article-edit-view')?.hidden).toBe(false)
-      expect(container.querySelector('.resource-sidebar')).not.toBeNull()
-      await act(async () => container.querySelector<HTMLButtonElement>('[aria-controls="article-edit-view"]')?.click())
+      expect(container.querySelector<HTMLElement>('#article-edit-view')?.hidden).toBe(true)
+      expect(container.querySelector('.resource-panel')).not.toBeNull()
+      await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="正文"]')?.click())
       expect(sourceView().state.doc.toString()).toBe('保留这段编辑')
       expect(sourceView().state.selection.main.from).toBe(2)
       expect(sourceView().state.selection.main.to).toBe(5)
@@ -137,7 +135,7 @@ describe('App local draft history', () => {
     const undo = container.querySelector<HTMLButtonElement>('.source-toolbar [aria-label="撤销"]')!
     expect(undo.disabled).toBe(false)
     await act(async () => undo.click())
-    expect(sourceView().state.doc.toString()).toBe('')
+    expect(sourceView().state.doc.toString()).toBe('# \n\n')
     await act(async () => container.querySelector<HTMLButtonElement>('.source-toolbar [aria-label="重做"]')?.click())
     expect(sourceView().state.doc.toString()).toBe('保留这段编辑')
   })
@@ -163,7 +161,7 @@ describe('App local draft history', () => {
     await renderApp()
     await act(async () => {
       await vi.waitFor(() => {
-        expect(container.querySelector('.cm-content')?.textContent).toContain('**问题选择：** 判断哪个问题值得解决；')
+        expect(EditorView.findFromDOM(container.querySelector<HTMLElement>('.cm-editor')!)?.state.doc.toString()).toContain('**问题选择：** 判断哪个问题值得解决；')
         expect(container.querySelector('.wechat-content strong')?.textContent).toBe('问题选择：')
       })
       await new Promise(resolve => window.setTimeout(resolve, 760))
@@ -179,7 +177,7 @@ describe('App local draft history', () => {
     await renderApp()
     expect(container.textContent).not.toContain('导出备份')
     await openLocalDataActions()
-    expect(container.textContent).toContain('本地数据')
+    expect(container.querySelector('[aria-label="设置"]')).not.toBeNull()
     expect(container.textContent).toContain('导出备份')
     expect(container.textContent).toContain('导入备份')
     expect(container.textContent).not.toContain('登录 / 注册')
@@ -188,15 +186,10 @@ describe('App local draft history', () => {
 
   it('flushes the latest active edit before delete so undo restores that edit', async () => {
     await renderApp()
-    await act(async () => {
-      container.querySelector<HTMLButtonElement>('.drop-actions .primary-button')?.click()
-      await new Promise(resolve => window.setTimeout(resolve, 40))
-    })
+    await createBlankInWorkbench(container)
     const draftId = (await repository.listDrafts())[0].id
-    const titleInput = container.querySelector<HTMLInputElement>('[aria-label="文章标题"]')!
     await act(async () => {
-      Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set?.call(titleInput, '删除前最后一版')
-      titleInput.dispatchEvent(new Event('input', { bubbles: true }))
+      editWorkbenchTitle(container, '删除前最后一版')
     })
 
     await act(async () => container.querySelector<HTMLButtonElement>('.history-draft-menu-button')?.click())
@@ -215,10 +208,7 @@ describe('App local draft history', () => {
 
   it('deduplicates simultaneous backup exports', async () => {
     await renderApp()
-    await act(async () => {
-      container.querySelector<HTMLButtonElement>('.drop-actions .primary-button')?.click()
-      await new Promise(resolve => window.setTimeout(resolve, 40))
-    })
+    await createBlankInWorkbench(container)
     await openLocalDataActions()
     const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
     const exportButton = Array.from(container.querySelectorAll<HTMLButtonElement>('.history-backup-actions button'))
@@ -235,10 +225,7 @@ describe('App local draft history', () => {
 
   it('shows emergency-backup success even when autosave is still failing', async () => {
     await renderApp()
-    await act(async () => {
-      container.querySelector<HTMLButtonElement>('.drop-actions .primary-button')?.click()
-      await new Promise(resolve => window.setTimeout(resolve, 40))
-    })
+    await createBlankInWorkbench(container)
     vi.spyOn(repository, 'saveDraft').mockRejectedValue(new DOMException('Storage quota exceeded', 'QuotaExceededError'))
     const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
     let backupBlob: Blob | undefined
@@ -246,10 +233,8 @@ describe('App local draft history', () => {
       backupBlob = blob as Blob
       return 'blob:emergency-backup'
     })
-    const titleInput = container.querySelector<HTMLInputElement>('[aria-label="文章标题"]')!
     await act(async () => {
-      Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set?.call(titleInput, '配额失败时的当前编辑')
-      titleInput.dispatchEvent(new Event('input', { bubbles: true }))
+      editWorkbenchTitle(container, '配额失败时的当前编辑')
     })
 
     await openLocalDataActions()
@@ -270,10 +255,7 @@ describe('App local draft history', () => {
 
   it('keeps a later save failure visible alongside backup success and allows retry', async () => {
     await renderApp()
-    await act(async () => {
-      container.querySelector<HTMLButtonElement>('.drop-actions .primary-button')?.click()
-      await new Promise(resolve => window.setTimeout(resolve, 40))
-    })
+    await createBlankInWorkbench(container)
     await openLocalDataActions()
     vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
     await act(async () => {
@@ -283,9 +265,7 @@ describe('App local draft history', () => {
     expect(container.textContent).toContain('已请求下载 1 篇稿件')
     const save = vi.spyOn(repository, 'saveDraft').mockRejectedValue(new DOMException('Storage quota exceeded', 'QuotaExceededError'))
     await act(async () => {
-      const title = container.querySelector<HTMLTextAreaElement>('[aria-label="文章标题"]')!
-      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set?.call(title, '保存失败后重试的稿件')
-      title.dispatchEvent(new Event('input', { bubbles: true }))
+      editWorkbenchTitle(container, '保存失败后重试的稿件')
     })
     await act(async () => {
       await new Promise(resolve => window.setTimeout(resolve, 800))
@@ -306,10 +286,7 @@ describe('App local draft history', () => {
 
   it('cancels the old autosave generation after an atomic backup import', async () => {
     await renderApp()
-    await act(async () => {
-      container.querySelector<HTMLButtonElement>('.drop-actions .primary-button')?.click()
-      await new Promise(resolve => window.setTimeout(resolve, 40))
-    })
+    await createBlankInWorkbench(container)
     const stored = await repository.getDraft((await repository.listDrafts())[0].id)
     expect(stored).not.toBeNull()
     const backupDraft = {
@@ -326,10 +303,8 @@ describe('App local draft history', () => {
     })], 'atomic.ezwriting-backup.json', { type: 'application/json' })
     vi.spyOn(window, 'confirm').mockReturnValue(true)
 
-    const titleInput = container.querySelector<HTMLInputElement>('[aria-label="文章标题"]')!
     await act(async () => {
-      Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set?.call(titleInput, '不应在导入后反写的旧编辑')
-      titleInput.dispatchEvent(new Event('input', { bubbles: true }))
+      editWorkbenchTitle(container, '不应在导入后反写的旧编辑')
     })
     const backupInput = container.querySelector<HTMLInputElement>('input[accept*=".ezwriting-backup"]')!
     Object.defineProperty(backupInput, 'files', { configurable: true, value: [backup] })
@@ -338,20 +313,17 @@ describe('App local draft history', () => {
       await new Promise(resolve => window.setTimeout(resolve, 900))
     })
 
-    expect(container.querySelector<HTMLInputElement>('[aria-label="文章标题"]')?.value).toBe('备份中的最终版本')
+    expect(container.querySelector('.topbar-document-title')?.textContent).toBe('备份中的最终版本')
     expect((await repository.getDraft(backupDraft.id))?.article.title).toBe('备份中的最终版本')
   })
 
   it('rejects a stale save from a second tab instead of overwriting the newer draft', async () => {
     await renderApp()
+    await createBlankInWorkbench(container)
     await act(async () => {
-      container.querySelector<HTMLButtonElement>('.drop-actions .primary-button')?.click()
-      await new Promise(resolve => window.setTimeout(resolve, 40))
+      editWorkbenchTitle(container, '共享初始稿')
     })
-    const firstTitle = container.querySelector<HTMLInputElement>('[aria-label="文章标题"]')!
     await act(async () => {
-      Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set?.call(firstTitle, '共享初始稿')
-      firstTitle.dispatchEvent(new Event('input', { bubbles: true }))
       await new Promise(resolve => window.setTimeout(resolve, 760))
     })
     const draftId = (await repository.listDrafts())[0].id
@@ -368,15 +340,16 @@ describe('App local draft history', () => {
       })
 
       await act(async () => {
-        Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set?.call(firstTitle, '标签页 A 的新版本')
-        firstTitle.dispatchEvent(new Event('input', { bubbles: true }))
+        editWorkbenchTitle(container, '标签页 A 的新版本')
+    })
+    await act(async () => {
         await new Promise(resolve => window.setTimeout(resolve, 760))
       })
 
-      const secondTitle = secondContainer.querySelector<HTMLInputElement>('[aria-label="文章标题"]')!
-      await act(async () => {
-        Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set?.call(secondTitle, '标签页 B 的旧快照修改')
-        secondTitle.dispatchEvent(new Event('input', { bubbles: true }))
+        await act(async () => {
+        editWorkbenchTitle(secondContainer, '标签页 B 的旧快照修改')
+    })
+    await act(async () => {
         await new Promise(resolve => window.setTimeout(resolve, 760))
       })
 
@@ -391,10 +364,7 @@ describe('App local draft history', () => {
 
   it('reports a post-import display failure without claiming the committed backup was cancelled', async () => {
     await renderApp()
-    await act(async () => {
-      container.querySelector<HTMLButtonElement>('.drop-actions .primary-button')?.click()
-      await new Promise(resolve => window.setTimeout(resolve, 40))
-    })
+    await createBlankInWorkbench(container)
     const stored = (await repository.getDraft((await repository.listDrafts())[0].id))!
     const backupDraft = { ...stored, article: { ...stored.article, title: '已提交的恢复稿' } }
     const backup = new File([JSON.stringify({ format: LOCAL_BACKUP_FORMAT, version: LOCAL_BACKUP_VERSION,

@@ -7,9 +7,6 @@ import {
 } from 'react'
 import {
   CheckCircle2,
-  ChevronDown,
-  FileDown,
-  Download,
   FileText,
   HardDrive,
   History,
@@ -17,9 +14,7 @@ import {
   LoaderCircle,
   MoreHorizontal,
   PanelLeftClose,
-  PanelLeftOpen,
   Trash2,
-  Upload,
 } from 'lucide-react'
 import type { DraftKind, DraftSummary } from '../domain/saved-draft'
 
@@ -34,12 +29,7 @@ export interface HistorySidebarProps {
   onSelectDraft: (id: string) => void
   onChangeKind: (id: string, kind: DraftKind) => void
   onDeleteDraft: (id: string) => void
-  onExportBackup?: () => void
-  onImportBackup?: () => void
-  onExportDiagnostics?: () => void
-  backupStatus?: 'idle' | 'exporting' | 'importing'
   interactionLocked?: boolean
-  storagePersistent?: boolean | null
   now?: Date
   className?: string
 }
@@ -139,17 +129,11 @@ export function HistorySidebar({
   onSelectDraft,
   onChangeKind,
   onDeleteDraft,
-  onExportBackup,
-  onImportBackup,
-  onExportDiagnostics,
-  backupStatus = 'idle',
   interactionLocked = false,
-  storagePersistent = null,
   now = new Date(),
   className = '',
 }: HistorySidebarProps) {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null)
-  const [dataActionsExpanded, setDataActionsExpanded] = useState(false)
   const [query, setQuery] = useState('')
   const menuButtonRefs = useRef(new Map<string, HTMLButtonElement>())
   const menuRefs = useRef(new Map<string, HTMLDivElement>())
@@ -173,7 +157,6 @@ export function HistorySidebar({
   useEffect(() => {
     if (!isExpanded) {
       setOpenMenuId(null)
-      setDataActionsExpanded(false)
     }
   }, [isExpanded])
 
@@ -234,31 +217,10 @@ export function HistorySidebar({
     items[targetIndex]?.focus()
   }
 
-  const draftCount = drafts.filter(draft => !draft.deletedAt).length
   const rootClassName = ['history-sidebar', isExpanded ? 'expanded' : 'collapsed', className].filter(Boolean).join(' ')
 
   return (
     <aside className={rootClassName} aria-label="稿件历史">
-      {!isExpanded && (
-        <div className="history-sidebar-rail" aria-label="已收起的历史记录侧栏">
-          <button
-            type="button"
-            className="history-rail-button history-expand-button"
-            aria-label="展开历史记录"
-            aria-controls="history-sidebar-panel"
-            aria-expanded="false"
-            title="展开历史记录"
-            onClick={onToggleExpanded}
-          >
-            <PanelLeftOpen size={18} aria-hidden="true" />
-          </button>
-          <div className="history-rail-count" aria-label={`本机共有 ${draftCount} 篇稿件`} title={`${draftCount} 篇稿件`}>
-            <History size={16} aria-hidden="true" />
-            <span aria-hidden="true">{draftCount > 99 ? '99+' : draftCount}</span>
-          </div>
-        </div>
-      )}
-
       <div
         id="history-sidebar-panel"
         className="history-sidebar-panel"
@@ -424,44 +386,6 @@ export function HistorySidebar({
             })
           )}
         </div>
-
-        <footer className={`history-account-footer ${dataActionsExpanded ? 'expanded' : ''}`}>
-          <button
-            type="button"
-            className="history-data-trigger"
-            aria-expanded={dataActionsExpanded}
-            aria-controls="history-data-actions"
-            onClick={() => setDataActionsExpanded(current => !current)}
-          >
-            <span className="history-storage-icon"><HardDrive size={17} aria-hidden="true" /></span>
-            <span>
-              <strong>本地数据</strong>
-              <small>{storagePersistent === true ? '已启用持久化存储' : '已自动保存在此浏览器'}</small>
-            </span>
-            <span className="history-data-state" aria-hidden="true">
-              {storagePersistent === true && <CheckCircle2 size={15} />}
-              <ChevronDown size={16} />
-            </span>
-          </button>
-          {dataActionsExpanded && (
-            <div id="history-data-actions" className="history-data-actions">
-              <div className="history-backup-actions">
-                <button type="button" disabled={interactionLocked || backupStatus !== 'idle'} onClick={onExportBackup}>
-                  {backupStatus === 'exporting' ? <LoaderCircle className="spin" size={14} /> : <Download size={14} />}
-                  {backupStatus === 'exporting' ? '导出中' : '导出备份'}
-                </button>
-                <button type="button" disabled={interactionLocked || backupStatus !== 'idle'} onClick={onImportBackup}>
-                  {backupStatus === 'importing' ? <LoaderCircle className="spin" size={14} /> : <Upload size={14} />}
-                  {backupStatus === 'importing' ? '导入中' : '导入备份'}
-                </button>
-                <button type="button" disabled={interactionLocked} style={{ gridColumn: '1 / -1' }} onClick={onExportDiagnostics}>
-                  <FileDown size={14} /> 导出诊断报告
-                </button>
-              </div>
-              <p><HardDrive size={12} aria-hidden="true" /> 换域名或清理网站数据前，请先导出备份。</p>
-            </div>
-          )}
-        </footer>
       </div>
     </aside>
   )

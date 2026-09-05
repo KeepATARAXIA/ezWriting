@@ -20,6 +20,8 @@ test('preserves original GIF bytes across short references, clipboard, undo, and
   const reference = await image.getAttribute('data-ez-gif-source')
   await page.locator('.wechat-copy-button').click()
   await expect.poll(() => page.evaluate(() => (window as unknown as { __copiedHtml: string }).__copiedHtml)).toContain(gif)
+  await page.locator('.source-image-widget').hover({ position: { x: 20, y: 20 } })
+  await expect(page.locator('.source-image-actions')).toHaveCSS('opacity', '1')
   await page.locator('.source-image-widget button.delete').click()
   await expect(page.locator('.wechat-content img[data-ez-gif-source]')).toHaveCount(0)
   await page.getByRole('button', { name: '撤销', exact: true }).click()

@@ -31,7 +31,7 @@ test('keeps long Xiaohongshu pagination responsive under 4x CPU slowdown', async
     mimeType: 'text/markdown',
     buffer: Buffer.from(markdown),
   })
-  await expect(page.getByLabel('文章标题')).toHaveValue('小红书长文性能回归')
+  await expect(page.locator('.topbar-document-title')).toHaveText('小红书长文性能回归')
   await page.evaluate(() => {
     const metrics = window as unknown as {
       __ezXhsClickAt?: number

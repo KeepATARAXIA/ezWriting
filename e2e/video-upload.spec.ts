@@ -5,6 +5,8 @@ const SAMPLE_WEBM = 'GkXfo59ChoEBQveBAULygQRC84EIQoKEd2VibUKHgQJChYECGFOAZwEAAAA
 test('uploads, previews, saves, and restores a local video with static right-side previews', async ({ page }) => {
   await page.goto('/')
   await page.getByRole('button', { name: '开始写稿' }).click()
+  await page.getByRole('button', { name: '空白文档', exact: true }).click()
+  await page.locator('.cm-content').press('Control+End')
 
   await page.locator('input[accept=".mp4,.webm,video/mp4,video/webm"]').setInputFiles({
     name: '产品演示.webm',
@@ -43,9 +45,9 @@ test('uploads, previews, saves, and restores a local video with static right-sid
   await expect(page.locator('.x-article-content video')).toHaveCount(0)
   await page.getByRole('button', { name: '播放视频：产品演示.webm', exact: true }).click()
   await expect(page.locator('.source-video-widget video')).toBeVisible()
-  await page.getByRole('tab', { name: /^资源/ }).click()
-  await expect(page.locator('.source-video-widget video')).toHaveCount(1)
-  await expect(page.locator('.resource-sidebar video')).toHaveCount(0)
+  await page.getByRole('button', { name: '文档素材', exact: true }).click()
+  await expect(page.locator('.source-video-widget video')).toHaveCount(0)
+  await expect(page.locator('.resource-panel video')).toHaveCount(0)
 })
 
 test('keeps the workbench responsive while saving and restoring a 10 MiB local video', async ({ context, page }) => {
@@ -54,6 +56,8 @@ test('keeps the workbench responsive while saving and restoring a 10 MiB local v
 
   await page.goto('/')
   await page.getByRole('button', { name: '开始写稿' }).click()
+  await page.getByRole('button', { name: '空白文档', exact: true }).click()
+  await page.locator('.cm-content').press('Control+End')
   await expect(page.getByLabel('本地保存状态')).toHaveText('已保存')
   const cdp = await context.newCDPSession(page)
   await cdp.send('HeapProfiler.collectGarbage')

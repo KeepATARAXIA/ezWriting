@@ -30,6 +30,34 @@ afterEach(() => {
 })
 
 describe('media preview lifecycle', () => {
+  it('skips a black opening frame before sharing the video poster', async () => {
+    const createElement = document.createElement.bind(document)
+    const decoders: HTMLVideoElement[] = []
+    vi.spyOn(document, 'createElement').mockImplementation((tag, options) => {
+      const element = createElement(tag, options)
+      if (element instanceof HTMLVideoElement) decoders.push(element)
+      return element
+    })
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      drawImage: vi.fn(),
+      getImageData: () => ({ data: new Uint8ClampedArray([0, decoders[0].currentTime > 0 ? 160 : 0, 0, 255]) }),
+    } as unknown as CanvasRenderingContext2D)
+    vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation(callback => callback(new Blob(['poster'])))
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:video-poster')
+    const container = document.createElement('div')
+    cleanups.push(mountVideoPreview(container, 'blob:black-intro-video', '片头演示'))
+    visibility.get(container)!(true)
+    const decoder = decoders[0]
+    Object.defineProperties(decoder, { videoWidth: { value: 160 }, videoHeight: { value: 90 }, duration: { value: 2 } })
+    decoder.dispatchEvent(new Event('loadeddata'))
+    expect(decoder.currentTime).toBeGreaterThan(0)
+    expect(container.querySelector('img')?.src).not.toBe('blob:video-poster')
+    decoder.dispatchEvent(new Event('seeked'))
+    await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
+    expect(container.querySelector('img')?.src).toBe('blob:video-poster')
+    expect(decoder.hasAttribute('src')).toBe(false)
+  })
+
   it('keeps original GIF identity and export bytes while removing live preview players', () => {
     const html = `<p><img src="${gif}" alt="动图"></p><video src="blob:video" data-source-block="1"></video>`
     const originalKey = prepareXhsImageLayout(html, {}).images[0].key

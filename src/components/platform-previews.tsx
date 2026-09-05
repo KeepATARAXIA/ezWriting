@@ -1,3 +1,5 @@
+import { createPortal } from 'react-dom'
+import { PreviewHtml } from './preview-html'
 import { XhsOverviewPage } from './xhs-overview-page'
 import { expandLocalImageReferences } from '../lib/local-image-registry'
 import {
@@ -14,7 +16,7 @@ import {
   type ReactNode,
   type UIEvent,
 } from 'react'
-import { isGifSource, observeStaticPreviewMedia, prepareStaticPreviewMedia, restorePreviewGifSources } from '../lib/media-preview'
+import { observeStaticPreviewMedia, prepareStaticPreviewMedia, restorePreviewGifSources } from '../lib/media-preview'
 import {
   BatteryFull,
   Bookmark,
@@ -25,6 +27,7 @@ import {
   Columns2,
   Copy,
   Download,
+  Archive,
   Heart,
   LayoutGrid,
   LoaderCircle,
@@ -84,6 +87,7 @@ import {
 } from '../lib/wechat-theme'
 import type { ArticleSourceLanguage, MissingImageAction, MissingImageTarget, PlatformAccount } from '../domain/article'
 import { sourceLinesByBlock } from '../lib/article-source'
+import { paragraphBreakTargets } from './preview-line-targets'
 import { applyPlatformCompatibilityToDocument, type PlatformContentTarget } from '../lib/platform-compatibility'
 import { prepareXhsImageLayout, type XhsPreparedImage } from '../lib/xhs-image-layout'
 import xhsLogo from '../../SVG/小红书.svg'
@@ -102,7 +106,7 @@ export interface PreviewLocateRequest {
 
 type XhsPreviewMode = 'single' | 'spread' | 'all'
 type WechatCopyState = 'idle' | 'copying' | 'success' | 'error'
-type FormattingSection = 'layout' | 'font' | 'spacing' | 'color'
+type FormattingSection = 'layout' | 'style'
 
 interface XhsImagePopoverPosition {
   key: string
@@ -119,8 +123,8 @@ interface XhsImageSelectionBounds {
 }
 
 interface PlatformPreviewsProps {
-  syncScroll?: boolean
-  onSyncScrollChange?: (enabled: boolean) => void
+  toolbarTarget?: HTMLElement | null
+  onNotice?: (notice: string) => void
   activePlatform: PreviewPlatform
   title: string
   html: string
@@ -214,7 +218,6 @@ const XHS_TEMPLATE_CATEGORIES: XhsTemplateCategory[] = [
   },
 ]
 
-const XHS_TEMPLATE_OPTIONS = XHS_TEMPLATE_CATEGORIES.flatMap(category => category.templates)
 function WechatThemeGraphic({
   motif,
   index,
@@ -362,12 +365,11 @@ function xhsTemplateCategoryFor(template: XhsCardTemplate): XhsTemplateCategoryI
   return XHS_TEMPLATE_CATEGORIES.find(category => category.templates.some(option => option.value === template))?.id ?? 'information'
 }
 
-const TOOL_RAIL_DEFAULT_WIDTH = 280
+const TOOL_RAIL_DEFAULT_WIDTH = 310
 const TOOL_RAIL_MIN_WIDTH = 240
 const TOOL_RAIL_MAX_WIDTH = 420
 const TOOL_RAIL_COLLAPSE_WIDTH = 180
-const TOOL_RAIL_WIDTH_KEY = 'dispatch.preview-tool-rail-width.v1'
-const TOOL_RAIL_OPEN_KEY = 'dispatch.preview-tool-rail-open.v2'
+const TOOL_RAIL_WIDTH_KEY = 'dispatch.preview-tool-rail-width.v2'
 const XHS_FONT_SIZE_SCALE = { small: 0.9, medium: 1, large: 1.1 } as const
 const XHS_LINE_HEIGHT_SCALE = { compact: 0.92, comfortable: 1, airy: 1.1 } as const
 const XHS_FONT_SIZES = { small: '13.5px', medium: '15px', large: '16.5px' } as const
@@ -429,19 +431,12 @@ function createXhsPageRanges(total: number): XhsPageRange[] {
 
 function readToolRailWidth(): number {
   try {
-    const value = Number(window.localStorage.getItem(TOOL_RAIL_WIDTH_KEY))
+    const saved = window.localStorage.getItem(TOOL_RAIL_WIDTH_KEY)
+    if (saved === null) return TOOL_RAIL_DEFAULT_WIDTH
+    const value = Number(saved)
     return Number.isFinite(value) ? Math.min(TOOL_RAIL_MAX_WIDTH, Math.max(TOOL_RAIL_MIN_WIDTH, value)) : TOOL_RAIL_DEFAULT_WIDTH
   } catch {
     return TOOL_RAIL_DEFAULT_WIDTH
-  }
-}
-
-function readToolRailOpen(): Record<PreviewPlatform, boolean> {
-  try {
-    const value = JSON.parse(window.localStorage.getItem(TOOL_RAIL_OPEN_KEY) || '{}') as Partial<Record<PreviewPlatform, boolean>>
-    return { wechat: value.wechat === true, xhs: value.xhs === true, x: value.x === true }
-  } catch {
-    return { wechat: false, xhs: false, x: false }
   }
 }
 
@@ -510,6 +505,8 @@ function mixedParagraphLineTargets(element: HTMLElement, expectedLineCount: numb
 }
 
 function previewLineTargets(element: HTMLElement, expectedLineCount: number): HTMLElement[] {
+  const paragraphTargets = paragraphBreakTargets(element, expectedLineCount)
+  if (paragraphTargets) return paragraphTargets
   if (element.matches('ul, ol')) {
     return Array.from(element.querySelectorAll<HTMLElement>(':scope > li'))
   }
@@ -705,44 +702,32 @@ function SpacingControls({
 function AccentControls({
   formatting,
   onChange,
+  selectedColor = ARTICLE_ACCENT_COLORS[formatting.accent],
 }: {
   formatting: ArticleFormatting
   onChange?: (formatting: ArticleFormatting) => void
+  selectedColor?: string
 }) {
   return (
     <div className="article-formatting-controls article-color-controls">
       <section className="x-formatting-section">
         <strong>强调色</strong>
         <div className="x-accent-options" role="radiogroup" aria-label="选择文章强调色">
-          {(Object.keys(ARTICLE_ACCENT_COLORS) as Array<keyof typeof ARTICLE_ACCENT_COLORS>).map(value => <button type="button" role="radio" aria-label={value} aria-checked={formatting.accent === value} className={formatting.accent === value ? 'selected' : ''} key={value} style={{ background: ARTICLE_ACCENT_COLORS[value] }} onClick={() => onChange?.({ ...formatting, accent: value })} />)}
+          {(Object.keys(ARTICLE_ACCENT_COLORS) as Array<keyof typeof ARTICLE_ACCENT_COLORS>).map(value => <button type="button" role="radio" aria-label={value} aria-checked={selectedColor === ARTICLE_ACCENT_COLORS[value]} className={selectedColor === ARTICLE_ACCENT_COLORS[value] ? 'selected' : ''} key={value} style={{ background: ARTICLE_ACCENT_COLORS[value] }} onClick={() => onChange?.({ ...formatting, accent: value })} />)}
         </div>
       </section>
     </div>
   )
 }
 
-const FORMATTING_SECTION_META: Array<{
-  value: FormattingSection
-  label: string
-  detail: string
-}> = [
-  { value: 'layout', label: '排版', detail: '主题与视觉结构' },
-  { value: 'font', label: '字体', detail: '字体与字号' },
-  { value: 'spacing', label: '间距', detail: '正文行距' },
-  { value: 'color', label: '颜色', detail: '强调色与主题配色' },
+const FORMATTING_SECTION_META: Array<{ value: FormattingSection; label: string }> = [
+  { value: 'layout', label: '主题' },
+  { value: 'style', label: '样式' },
 ]
 
-function FormattingAccordion({
-  idPrefix,
-  label,
-  openSections,
-  onSectionToggle,
-  formatting,
-  onFormattingChange,
-  layoutContent,
-  fontContent,
-  colorControls,
-  colorContent,
+function FormattingPanel({
+  idPrefix, label, openSections, onSectionToggle, formatting, onFormattingChange,
+  layoutContent, fontContent, colorControls, colorContent, outputContent,
 }: {
   idPrefix: string
   label: string
@@ -754,55 +739,57 @@ function FormattingAccordion({
   fontContent?: ReactNode
   colorControls?: ReactNode
   colorContent?: ReactNode
+  outputContent?: ReactNode
 }) {
   const contentBySection: Record<FormattingSection, ReactNode> = {
     layout: layoutContent,
-    font: fontContent ?? <FontControls formatting={formatting} onChange={onFormattingChange} />,
-    spacing: <SpacingControls formatting={formatting} onChange={onFormattingChange} />,
-    color: (
-      <>
-        {colorControls ?? <AccentControls formatting={formatting} onChange={onFormattingChange} />}
-        {colorContent}
-      </>
-    ),
+    style: <>
+      {fontContent ?? <FontControls formatting={formatting} onChange={onFormattingChange} />}
+      <SpacingControls formatting={formatting} onChange={onFormattingChange} />
+      {colorControls ?? <AccentControls formatting={formatting} onChange={onFormattingChange} />}
+      {colorContent}
+      {outputContent}
+    </>,
   }
-
+  const activeSection = openSections[0] ?? 'layout'
   return (
-    <div className="settings-accordion" aria-label={label}>
-      {FORMATTING_SECTION_META.map(section => {
-        const expanded = openSections.includes(section.value)
-        const triggerId = `${idPrefix}-${section.value}-trigger`
-        const panelId = `${idPrefix}-${section.value}-panel`
-        return (
-          <section className={`settings-accordion-item section-${section.value}${expanded ? ' expanded' : ''}`} key={section.value}>
-            <button
-              id={triggerId}
-              type="button"
-              className="settings-accordion-trigger"
-              aria-expanded={expanded}
-              aria-controls={panelId}
-              onClick={() => onSectionToggle(section.value)}
-            >
-              <span className="settings-accordion-copy"><strong>{section.label}</strong><small>{section.detail}</small></span>
-              <ChevronDown className="settings-accordion-chevron" size={15} aria-hidden="true" />
-            </button>
-            <div
-              id={panelId}
-              className="settings-accordion-panel"
-              role="region"
-              aria-labelledby={triggerId}
-              hidden={!expanded}
-            >
-              {contentBySection[section.value]}
-            </div>
-          </section>
-        )
-      })}
+    <div className="inspector-settings">
+      <div className="inspector-tabs" role="tablist" aria-label={label}>
+        {FORMATTING_SECTION_META.map((section, index) => (
+          <button
+            key={section.value}
+            id={`${idPrefix}-${section.value}-trigger`}
+            type="button"
+            role="tab"
+            aria-selected={activeSection === section.value}
+            aria-controls={`${idPrefix}-${section.value}-panel`}
+            tabIndex={activeSection === section.value ? 0 : -1}
+            onClick={() => onSectionToggle(section.value)}
+            onKeyDown={event => {
+              let next = index
+              if (event.key === 'ArrowRight') next = (index + 1) % FORMATTING_SECTION_META.length
+              else if (event.key === 'ArrowLeft') next = (index + FORMATTING_SECTION_META.length - 1) % FORMATTING_SECTION_META.length
+              else if (event.key === 'Home') next = 0
+              else if (event.key === 'End') next = FORMATTING_SECTION_META.length - 1
+              else return
+              event.preventDefault()
+              onSectionToggle(FORMATTING_SECTION_META[next].value)
+              event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus()
+            }}
+          >{section.label}</button>
+        ))}
+      </div>
+      {FORMATTING_SECTION_META.map(section => (
+        <div key={section.value} id={`${idPrefix}-${section.value}-panel`} className="inspector-tab-panel"
+          role="tabpanel" aria-labelledby={`${idPrefix}-${section.value}-trigger`} hidden={activeSection !== section.value}>
+          {contentBySection[section.value]}
+        </div>
+      ))}
     </div>
   )
 }
 
-export function PlatformPreviews({ activePlatform, title, html, sourceText, sourceLanguage, formatting, renderFormatting, onFormattingChange, xhsSettings: controlledXhsSettings, onXhsSettingsChange, previewAccount, previewDevice, isUpdating = false, onPreviewDeviceChange, locateRequest, onEditTarget, onMissingImageAction, syncScroll = true, onSyncScrollChange }: PlatformPreviewsProps) {
+export function PlatformPreviews({ toolbarTarget, activePlatform, title, html, sourceText, sourceLanguage, formatting, renderFormatting, onFormattingChange, xhsSettings: controlledXhsSettings, onXhsSettingsChange, previewAccount, previewDevice, isUpdating = false, onPreviewDeviceChange, locateRequest, onEditTarget, onMissingImageAction, onNotice }: PlatformPreviewsProps) {
   const previewFormatting = renderFormatting ?? formatting
   const [uncontrolledXhsSettings, setUncontrolledXhsSettings] = useState<XhsCardSettings>(DEFAULT_XHS_CARD_SETTINGS)
   const xhsSettings = controlledXhsSettings ?? uncontrolledXhsSettings
@@ -823,7 +810,7 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
   const [wechatThemeCategory, setWechatThemeCategory] = useState<WechatThemeCategory>('简约')
   const [toolRailWidth, setToolRailWidth] = useState(readToolRailWidth)
   const [toolRailLayout, setToolRailLayout] = useState<{ max: number; value: number } | null>(null)
-  const [toolRailOpen, setToolRailOpen] = useState(readToolRailOpen)
+  const [toolRailOpen, setToolRailOpen] = useState<Record<PreviewPlatform, boolean>>({ wechat: false, xhs: false, x: false })
   const [openFormattingSections, setOpenFormattingSections] = useState<Record<PreviewPlatform, FormattingSection[]>>({
     wechat: ['layout'],
     xhs: ['layout'],
@@ -832,21 +819,6 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
   const [wechatCopyState, setWechatCopyState] = useState<WechatCopyState>('idle')
   const [xCopyState, setXCopyState] = useState<WechatCopyState>('idle')
   useEffect(() => { setXCopyState('idle') }, [html, activePlatform])
-  useEffect(() => {
-    if (typeof window.matchMedia !== 'function') return
-    const viewport = window.matchMedia('(max-width: 700px)')
-    const sync = () => setToolRailOpen(viewport.matches ? { wechat: false, xhs: false, x: false } : readToolRailOpen())
-    sync()
-    viewport.addEventListener('change', sync)
-    return () => viewport.removeEventListener('change', sync)
-  }, [])
-  const mediaNotice = useMemo(() => {
-    const document = parseHtml(html)
-    const missing = document.querySelectorAll('img[data-missing-id], img:not([src]), img[src=""]').length
-    const gifs = Array.from(document.querySelectorAll('img')).filter(image => isGifSource(image.getAttribute('src') || '')).length
-    const videos = document.querySelectorAll('video').length
-    return [missing ? `${missing} 张图片待补齐` : '', gifs && activePlatform === 'xhs' ? `${gifs} 个 GIF 将输出为静态图片` : '', videos ? `${videos} 个视频需在目标平台手动上传` : ''].filter(Boolean).join(' · ')
-  }, [html, activePlatform])
   const [exporting, setExporting] = useState<number | 'all' | null>(null)
   const [exportError, setExportError] = useState<string | null>(null)
   const [previewingCard, setPreviewingCard] = useState<number | null>(null)
@@ -950,6 +922,7 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
   const xhsPageTriggerRef = useRef<HTMLButtonElement>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
   const mobilePreviewButtonRef = useRef<HTMLButtonElement>(null)
+  const settingsButtonRef = useRef<HTMLButtonElement>(null)
   const mobileDialogRef = useRef<HTMLDivElement>(null)
   const mobileCloseButtonRef = useRef<HTMLButtonElement>(null)
   const exportCardRefs = useRef<Array<HTMLElement | null>>([])
@@ -1279,30 +1252,28 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
     setSelectedTarget(null)
   }, [])
 
-  const persistToolRailOpen = (next: Record<PreviewPlatform, boolean>) => {
-    setToolRailOpen(next)
-    try {
-      window.localStorage.setItem(TOOL_RAIL_OPEN_KEY, JSON.stringify(next))
-    } catch {
-      // The rail remains usable when localStorage is unavailable.
-    }
+  const toggleToolRail = (platform: PreviewPlatform) => {
+    setToolRailOpen(current => ({ ...current, [platform]: !current[platform] }))
+    if (toolRailOpen[platform]) window.requestAnimationFrame(() => settingsButtonRef.current?.focus())
   }
 
-  const toggleToolRail = (platform: PreviewPlatform) => {
-    persistToolRailOpen({ ...toolRailOpen, [platform]: !toolRailOpen[platform] })
-    if (toolRailOpen[platform]) window.requestAnimationFrame(() => workbenchRef.current?.querySelector<HTMLButtonElement>('.preview-settings-toggle')?.focus())
-  }
+  useEffect(() => {
+    if (!toolRailOpen[activePlatform] || previewDevice === 'mobile') return
+    const frame = window.requestAnimationFrame(() => {
+      workbenchRef.current?.querySelector<HTMLButtonElement>('.preview-tool-rail:not([hidden]) .settings-close')?.focus()
+    })
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return
+      event.preventDefault()
+      setToolRailOpen(current => ({ ...current, [activePlatform]: false }))
+      settingsButtonRef.current?.focus()
+    }
+    document.addEventListener('keydown', closeOnEscape)
+    return () => { window.cancelAnimationFrame(frame); document.removeEventListener('keydown', closeOnEscape) }
+  }, [activePlatform, toolRailOpen, previewDevice])
 
   const toggleFormattingSection = (platform: PreviewPlatform, section: FormattingSection) => {
-    setOpenFormattingSections(current => {
-      const platformSections = current[platform]
-      return {
-        ...current,
-        [platform]: platformSections.includes(section)
-          ? platformSections.filter(value => value !== section)
-          : [...platformSections, section],
-      }
-    })
+    setOpenFormattingSections(current => ({ ...current, [platform]: [section] }))
   }
 
   const resizeToolRail = (clientX: number) => {
@@ -1333,7 +1304,8 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
     if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
     document.body.classList.remove('is-resizing-tool-rail')
     if (resizeState.rawWidth < TOOL_RAIL_COLLAPSE_WIDTH) {
-      persistToolRailOpen({ ...toolRailOpen, [activePlatform]: false })
+      setToolRailOpen({ ...toolRailOpen, [activePlatform]: false })
+      settingsButtonRef.current?.focus()
       return
     }
     const persistedWidth = Math.min(toolRailLayout?.max ?? TOOL_RAIL_MAX_WIDTH, Math.max(TOOL_RAIL_MIN_WIDTH, resizeState.rawWidth))
@@ -1348,7 +1320,8 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
   const adjustToolRailWithKeyboard = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'Home') {
       event.preventDefault()
-      persistToolRailOpen({ ...toolRailOpen, [activePlatform]: false })
+      setToolRailOpen({ ...toolRailOpen, [activePlatform]: false })
+      settingsButtonRef.current?.focus()
       return
     }
     let next = toolRailLayout?.value ?? toolRailWidth
@@ -1382,8 +1355,8 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
         setToolRailLayout(null)
         return
       }
-      // Reserve the readable preview and its 10px divider, matching the CSS grid.
-      const max = Math.max(TOOL_RAIL_MIN_WIDTH, Math.min(TOOL_RAIL_MAX_WIDTH, Math.floor(width - 450)))
+      // Keep a small exposed preview edge beside the overlay drawer.
+      const max = Math.max(TOOL_RAIL_MIN_WIDTH, Math.min(TOOL_RAIL_MAX_WIDTH, Math.floor(width - 34)))
       const value = Math.round(rail.getBoundingClientRect().width)
       setToolRailLayout(current => current?.max === max && current.value === value ? current : { max, value })
     }
@@ -2028,11 +2001,11 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
         onClick={options.interactive ? () => selectTarget({ kind: 'title' }) : undefined}
         onKeyDown={options.interactive ? event => selectStandaloneTargetWithKeyboard(event, 'title') : undefined}
       >{cardTitle || '未命名文章'}</h1>}
-      <div
+      <PreviewHtml
         className="xhs-card-content"
         onClick={options.interactive ? handleBodyClick : undefined}
         onKeyDown={options.interactive ? handleBodyKeyDown : undefined}
-        dangerouslySetInnerHTML={{ __html: options.exportRef ? restorePreviewGifSources(pageHtml) : pageHtml }}
+        html={options.exportRef ? restorePreviewGifSources(pageHtml) : pageHtml}
       />
       {cardSettings.showFooter && <footer><span>{cardSettings.footerText || ' '}</span><span>{index + 1} / {cardCount}</span></footer>}
     </section>
@@ -2049,11 +2022,11 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
         <span className="xhs-card-footer-actions">
           <button type="button" onClick={() => void openCardPreview(index)} disabled={previewingCard !== null || exporting !== null || paginationSettling || isUpdating} aria-label={`放大查看第 ${index + 1} 张卡片`}>
             {previewingCard === index ? <LoaderCircle className="spin" size={14} /> : <Maximize2 size={14} />}
-            <span>放大查看</span>
+
           </button>
           <button type="button" onClick={() => void downloadCard(index)} disabled={exporting !== null || previewingCard !== null || paginationSettling || isUpdating} aria-label={`下载第 ${index + 1} 张卡片`}>
             {exporting === index ? <LoaderCircle className="spin" size={14} /> : <Download size={14} />}
-            <span>下载当前页</span>
+
           </button>
         </span>
       </figcaption>
@@ -2100,6 +2073,49 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
   const activeToolRailOpen = toolRailOpen[activePlatform]
   const activeToolRailName = `${activePlatform === 'x' ? ' ' : ''}${activeToolRailLabel[activePlatform]}`
 
+  useEffect(() => {
+    if (exportError) onNotice?.(exportError)
+  }, [exportError, onNotice])
+  useEffect(() => {
+    if (wechatCopyState === 'success') onNotice?.('公众号格式已复制，可粘贴到平台编辑器。')
+    if (wechatCopyState === 'error') onNotice?.('复制失败，请重试复制公众号格式。')
+  }, [wechatCopyState, onNotice])
+  useEffect(() => {
+    if (xCopyState === 'success') onNotice?.('X 长文格式已复制。')
+    if (xCopyState === 'error') onNotice?.('复制失败，请重试复制 X 长文格式。')
+  }, [xCopyState, onNotice])
+  const previewToolbar = (
+    <div className="preview-contextbar" aria-label="预览操作">
+      <span className={`preview-sync-status sr-only${isUpdating || paginationSettling ? ' updating' : ''}`} role="status">{isUpdating ? '正在同步最新编辑…' : activePlatform === 'xhs' ? paginationSettling ? '正在生成卡片预览…' : `${cardPages.length} 张卡片 · 自动分页` : activePlatform === 'x' ? `${characterCount} 字` : '预览已更新'}</span>
+      <div className="preview-context-actions">
+        <div className="device-preview-switcher" role="group" aria-label="切换预览设备">
+          <button type="button" className={previewDevice === 'desktop' ? 'active' : ''} aria-label="电脑预览" title="电脑预览" aria-pressed={previewDevice === 'desktop'} onClick={() => onPreviewDeviceChange('desktop')}><Monitor size={18} /></button>
+          <button ref={mobilePreviewButtonRef} type="button" className={previewDevice === 'mobile' ? 'active' : ''} aria-label="手机预览" title="手机预览" aria-pressed={previewDevice === 'mobile'} onClick={() => onPreviewDeviceChange('mobile')}><Smartphone size={18} /></button>
+        </div>
+        {activePlatform === 'xhs' && <div className="xhs-view-modes xhs-context-view-modes" role="group" aria-label="切换小红书预览方式">
+          <button type="button" className={xhsPreviewMode === 'single' ? 'active' : ''} aria-pressed={xhsPreviewMode === 'single'} aria-label="单页预览" title="单页预览" onClick={() => changeXhsPreviewMode('single')}><Square size={18} /></button>
+          <button type="button" className={xhsPreviewMode === 'spread' ? 'active' : ''} aria-pressed={xhsPreviewMode === 'spread'} aria-label="双页预览" title="双页预览" onClick={() => changeXhsPreviewMode('spread')}><Columns2 size={18} /></button>
+          <button type="button" className={xhsPreviewMode === 'all' ? 'active' : ''} aria-pressed={xhsPreviewMode === 'all'} aria-label="整体预览" title="整体预览" onClick={() => changeXhsPreviewMode('all')}><LayoutGrid size={18} /></button>
+        </div>}
+        <span className="tool-divider" aria-hidden="true" />
+        {activePlatform === 'wechat' && <button type="button" className={`preview-tool-toggle wechat-copy-button ${wechatCopyState}`} disabled={wechatCopyState === 'copying' || isUpdating}
+          aria-label={wechatCopyState === 'success' ? '公众号格式已复制' : wechatCopyState === 'error' ? '复制失败，点击重试' : '复制公众号格式'} title="复制公众号格式" onClick={() => void copyWechatContent()}>
+          {wechatCopyState === 'copying' ? <LoaderCircle className="spin" size={18} /> : wechatCopyState === 'success' ? <Check size={18} /> : <Copy size={18} />}
+        </button>}
+        {activePlatform === 'x' && <button type="button" className="preview-tool-toggle primary-output" disabled={xCopyState === 'copying' || isUpdating} onClick={() => void copyXContent()} aria-label="复制 X 长文格式" title="复制 X 长文格式">{xCopyState === 'copying' ? <LoaderCircle className="spin" size={18} /> : xCopyState === 'success' ? <Check size={18} /> : <Copy size={18} />}</button>}
+        {activePlatform === 'xhs' && <>
+          <button type="button" className="preview-tool-toggle" aria-label="下载当前图片" title="下载当前图片" onClick={() => void downloadCard(activeCard)} disabled={exporting !== null || previewingCard !== null || paginationSettling || isUpdating}>{typeof exporting === 'number' ? <LoaderCircle className="spin" size={18} /> : <Download size={18} />}</button>
+          <button type="button" className="preview-tool-toggle" aria-label="下载全部图片" title="打包下载全部图片" onClick={() => void downloadAllCards()} disabled={exporting !== null || previewingCard !== null || paginationSettling || isUpdating}>{exporting === 'all' ? <LoaderCircle className="spin" size={18} /> : <Archive size={18} />}</button>
+        </>}
+        <button ref={settingsButtonRef} type="button" className={`preview-tool-toggle preview-settings-toggle${activeToolRailOpen ? ' active' : ''}`}
+          aria-label={`${activeToolRailOpen ? '收起' : '展开'}${activeToolRailName}侧栏`} aria-controls={activeToolRailPanelId[activePlatform]} aria-expanded={activeToolRailOpen}
+          title={`${activeToolRailOpen ? '收起' : '展开'}${activeToolRailName}侧栏`} onClick={() => toggleToolRail(activePlatform)}>
+          {activeToolRailOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
+        </button>
+      </div>
+    </div>
+  )
+
   return (
     <section
       ref={workbenchRef}
@@ -2107,67 +2123,9 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
       aria-label="平台内容预览"
       style={previewVariables}
     >
-      <header className="preview-contextbar">
-        <span className={`preview-sync-status ${isUpdating || paginationSettling ? 'updating' : ''}`} aria-live="polite"><i />{isUpdating ? '正在同步最新编辑…' : activePlatform === 'wechat' ? '正文实时映射' : activePlatform === 'xhs' ? paginationSettling ? '正在生成卡片预览…' : `${cardPages.length} 张卡片 · 自动分页` : `Premium Article · ${characterCount} 字`}</span>
-        <div className="preview-context-actions">
-          {onSyncScrollChange && <button type="button" className="preview-tool-toggle" role="switch" aria-checked={syncScroll} aria-label="同步滚动" title="开启后左侧滚动和光标移动会定位预览；点击预览始终可定位原文" onClick={() => onSyncScrollChange(!syncScroll)}>同步滚动 · {syncScroll ? '开' : '关'}</button>}
-          {activePlatform === 'wechat' && (
-            <button
-              type="button"
-              className={`preview-tool-toggle wechat-copy-button ${wechatCopyState}`}
-              disabled={wechatCopyState === 'copying' || isUpdating}
-              aria-label={wechatCopyState === 'success'
-                ? '公众号格式已复制'
-                : wechatCopyState === 'error'
-                  ? '复制失败，点击重试'
-                  : '复制公众号格式'}
-              onClick={() => void copyWechatContent()}
-            >
-              {wechatCopyState === 'copying'
-                ? <LoaderCircle className="spin" size={14} />
-                : wechatCopyState === 'success'
-                  ? <Check size={14} />
-                  : <Copy size={14} />}
-              {wechatCopyState === 'copying' ? '复制中' : wechatCopyState === 'success' ? '已复制' : wechatCopyState === 'error' ? '重试复制' : '复制公众号格式'}
-            </button>
-          )}
-          {activePlatform === 'x' && <button type="button" className="preview-tool-toggle primary-output" disabled={xCopyState === 'copying' || isUpdating} onClick={() => void copyXContent()} aria-label="复制 X 长文格式"><Copy size={14} />{xCopyState === 'copying' ? '复制中' : xCopyState === 'success' ? '已复制' : xCopyState === 'error' ? '重试复制' : '复制长文格式'}</button>}
-          {activePlatform === 'xhs' && <button type="button" className="preview-tool-toggle primary-output" onClick={() => void downloadAllCards()} disabled={exporting !== null || previewingCard !== null || paginationSettling || isUpdating}>{exporting === 'all' ? <LoaderCircle className="spin" size={15} /> : <Download size={15} />}<span>下载全部图片</span></button>}
-          {activePlatform === 'xhs' && (
-            <div className="xhs-view-modes xhs-context-view-modes" role="group" aria-label="切换小红书预览方式">
-              <button type="button" className={xhsPreviewMode === 'single' ? 'active' : ''} aria-pressed={xhsPreviewMode === 'single'} aria-label="单页预览" onClick={() => changeXhsPreviewMode('single')}><Square size={15} /><span>单页</span></button>
-              <button type="button" className={xhsPreviewMode === 'spread' ? 'active' : ''} aria-pressed={xhsPreviewMode === 'spread'} aria-label="双页预览" onClick={() => changeXhsPreviewMode('spread')}><Columns2 size={15} /><span>双页</span></button>
-              <button type="button" className={xhsPreviewMode === 'all' ? 'active' : ''} aria-pressed={xhsPreviewMode === 'all'} aria-label="整体预览" onClick={() => changeXhsPreviewMode('all')}><LayoutGrid size={15} /><span>整体</span></button>
-            </div>
-          )}
-          <button
-            type="button"
-            className={`preview-tool-toggle preview-settings-toggle${activeToolRailOpen ? ' active' : ''}`}
-            aria-label={`${activeToolRailOpen ? '收起' : '展开'}${activeToolRailName}侧栏`}
-            aria-controls={activeToolRailPanelId[activePlatform]}
-            aria-expanded={activeToolRailOpen}
-            title={`${activeToolRailOpen ? '收起' : '展开'}${activeToolRailName}侧栏`}
-            onClick={() => toggleToolRail(activePlatform)}
-          >
-            {activeToolRailOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
-            <span>排版</span>
-          </button>
-          <div className="device-preview-switcher" role="group" aria-label="切换预览设备">
-            <button type="button" className={previewDevice === 'desktop' ? 'active' : ''} aria-pressed={previewDevice === 'desktop'} onClick={() => onPreviewDeviceChange('desktop')}><Monitor size={14} />电脑预览</button>
-            <button ref={mobilePreviewButtonRef} type="button" className={previewDevice === 'mobile' ? 'active' : ''} aria-pressed={previewDevice === 'mobile'} onClick={() => onPreviewDeviceChange('mobile')}><Smartphone size={14} />手机预览</button>
-          </div>
-        </div>
-      </header>
+      {toolbarTarget ? createPortal(previewToolbar, toolbarTarget) : previewToolbar}
 
-      {activeToolRailOpen && <fieldset className="source-style-policy">
-        <legend>原文样式</legend>
-        <label><input type="radio" name="source-style-policy" checked={formatting.sourceStyle !== 'theme'} onChange={() => onFormattingChange?.({ ...formatting, sourceStyle: 'preserve' })} />保留原文样式</label>
-        <label><input type="radio" name="source-style-policy" checked={formatting.sourceStyle === 'theme'} onChange={() => onFormattingChange?.({ ...formatting, sourceStyle: 'theme' })} />统一应用主题</label>
-        <small>{formatting.sourceStyle === 'theme' ? '统一文字与边框等装饰；公众号使用所选主题配色。图片本身不变，原稿可随时恢复。' : '保留原文明确指定的字体、颜色与边框，其余应用排版设置。切换同时影响预览和导出。'}</small>
-      </fieldset>}
-
-      {mediaNotice && <div className="output-readiness" role="status" aria-label="输出前提醒">{mediaNotice}</div>}
-      {activePlatform === 'xhs' && exportError && <div className="xhs-export-error" role="alert">{exportError}</div>}
+      {!onNotice && activePlatform === 'xhs' && exportError && <div className="xhs-export-error" role="alert">{exportError}</div>}
 
       <div ref={previewStageRef} className="preview-platform-stage" aria-hidden={previewDevice === 'mobile' || undefined} inert={previewDevice === 'mobile' || undefined}>
         {activePlatform === 'wechat' && (
@@ -2183,7 +2141,7 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
                     onKeyDown={event => selectStandaloneTargetWithKeyboard(event, 'title')}
                   >{title || '未命名文章'}</h1>
                   <p className="wechat-meta">Dispatch Preview　·　公众号草稿</p>
-                  <div className="wechat-content" onClick={handleBodyClick} onKeyDown={handleBodyKeyDown} dangerouslySetInnerHTML={{ __html: mappedWechatPreview.html }} />
+                  <PreviewHtml className="wechat-content" onClick={handleBodyClick} onKeyDown={handleBodyKeyDown} html={mappedWechatPreview.html} />
                 </div>
               </div>
               {toolRailOpen.wechat && (
@@ -2204,12 +2162,12 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
                   onKeyDown={adjustToolRailWithKeyboard}
                 ><span /></div>
               )}
-              <aside id="wechat-theme-panel" className="wechat-theme-rail preview-tool-rail" aria-label="公众号排版设置" hidden={!toolRailOpen.wechat}>
+              <aside id="wechat-theme-panel" className="wechat-theme-rail preview-tool-rail" role="dialog" aria-label="公众号排版设置" hidden={!toolRailOpen.wechat}>
                 <header className="wechat-theme-heading preview-tool-rail-heading">
-                  <span><strong>公众号主题</strong><small>{WECHAT_THEMES.length} 套排版 · 点击后应用</small></span>
-                  <button type="button" className="settings-close" aria-label="关闭公众号设置" onClick={() => toggleToolRail('wechat')}><CloseIcon size={18} /></button>
+                  <span><strong>公众号主题</strong></span>
+                  <button type="button" className="settings-close" aria-label="关闭公众号设置" title="收起主题面板" onClick={() => toggleToolRail('wechat')}><PanelRightClose size={17} /></button>
                 </header>
-                <FormattingAccordion
+                <FormattingPanel
                   idPrefix="wechat-settings"
                   label="公众号设置模块"
                   openSections={openFormattingSections.wechat}
@@ -2218,10 +2176,6 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
                   onFormattingChange={onFormattingChange}
                   layoutContent={(
                     <section className="wechat-theme-layout" aria-label="公众号主题排版">
-                      <div className="template-library-summary wechat-template-library-summary">
-                        <span className="template-library-index">W</span>
-                        <span><strong>图形主题库</strong><small>色彩 · 标题 · 引用 · 节奏</small></span>
-                      </div>
                       <div className="wechat-theme-categories" role="tablist" aria-label="筛选公众号主题">
                         {WECHAT_THEME_CATEGORIES.map(category => (
                           <button
@@ -2249,21 +2203,23 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
                               className="wechat-theme-select-target"
                               aria-label={`应用${theme.name}主题：${theme.description}`}
                               aria-pressed={wechatSettings.themeId === theme.id}
+                              title={`${theme.name} · ${theme.description}`}
                               onClick={() => selectWechatTheme(theme.id)}
                             />
                             <WechatThemeGraphic motif={theme.mock} index={themeIndex} />
                             <footer className="wechat-theme-card-copy">
-                              <span className="wechat-theme-card-heading">
-                                <span><strong>{theme.name}</strong><small>{theme.tag}</small></span>
-                                <b>{getWechatThemeCategory(theme.id)}</b>
-                              </span>
-                              <span className="wechat-theme-card-status" aria-hidden="true">{wechatSettings.themeId === theme.id ? '✓ 已选' : '应用'}</span>
+                              <strong>{theme.name}</strong>
+                              {wechatSettings.themeId === theme.id && <Check size={13} aria-hidden="true" />}
                             </footer>
                           </article>
                         ))}
                       </div>
                     </section>
                   )}
+                  colorControls={<AccentControls formatting={formatting} selectedColor={wechatSettings.accentByTheme[wechatSettings.themeId] ?? activeWechatTheme.primary} onChange={next => onFormattingChange?.({
+                    ...next,
+                    wechat: { ...wechatSettings, accentByTheme: { ...wechatSettings.accentByTheme, [wechatSettings.themeId]: ARTICLE_ACCENT_COLORS[next.accent] } },
+                  })} />}
                   colorContent={(
                     <section className="wechat-theme-settings" aria-label={`${activeWechatTheme.name} 配色`}>
                       <div className="wechat-theme-setting-title"><span><strong>{activeWechatTheme.name}</strong><small>{activeWechatTheme.description}</small></span><button type="button" onClick={resetWechatThemeColors}>重置配色</button></div>
@@ -2408,12 +2364,12 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
                   onKeyDown={adjustToolRailWithKeyboard}
                 ><span /></div>
               )}
-              <aside id="xhs-tool-panel" className="xhs-tool-rail preview-tool-rail" aria-label="小红书预览工具" hidden={!toolRailOpen.xhs}>
+              <aside id="xhs-tool-panel" className="xhs-tool-rail preview-tool-rail" role="dialog" aria-label="小红书预览工具" hidden={!toolRailOpen.xhs}>
                 <header className="preview-tool-rail-heading xhs-tool-rail-heading">
-                  <span><strong>小红书工具</strong><small>预览、排版与图片导出</small></span>
-                  <button type="button" className="settings-close" aria-label="关闭小红书设置" onClick={() => toggleToolRail('xhs')}><CloseIcon size={18} /></button>
+                  <span><strong>小红书主题</strong></span>
+                  <button type="button" className="settings-close" aria-label="关闭小红书设置" onClick={() => toggleToolRail('xhs')}><PanelRightClose size={17} /></button>
                 </header>
-                <FormattingAccordion
+                <FormattingPanel
                   idPrefix="xhs-settings"
                   label="小红书设置模块"
                   openSections={openFormattingSections.xhs}
@@ -2424,11 +2380,6 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
                   colorControls={<XhsPaletteControls template={xhsSettings.template} paletteId={xhsSettings.paletteId} onChange={applyXhsPalette} />}
                   layoutContent={(
                     <section className="xhs-template-tools" aria-label="小红书视觉模板">
-                      <div className="template-library-summary xhs-template-library-summary">
-                        <span className="template-library-index">R</span>
-                        <span><strong>长文页型图谱</strong><small>封面 · 正文 · 图片</small></span>
-                        <b>{XHS_TEMPLATE_OPTIONS.length} 套</b>
-                      </div>
                       <div className="xhs-template-category-nav" role="tablist" aria-label="选择模板分类">
                         {XHS_TEMPLATE_CATEGORIES.map(category => (
                           <button
@@ -2443,23 +2394,18 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
                           >{category.label}</button>
                         ))}
                       </div>
-                      <p className="xhs-template-category-description" aria-live="polite">{activeXhsTemplateCategory.detail}</p>
                       <div
                         id="xhs-template-category-panel"
                         role="tabpanel"
                         aria-labelledby={`xhs-template-category-${activeXhsTemplateCategory.id}`}
                       >
                         <div className="xhs-template-gallery" role="radiogroup" aria-label={`选择${activeXhsTemplateCategory.label}模板`}>
-                          {activeXhsTemplateCategory.templates.map((option, optionIndex) => (
+                          {activeXhsTemplateCategory.templates.map(option => (
                             <section
                               className={`xhs-template-showcase${xhsSettings.template === option.value ? ' selected' : ''}`}
                               aria-labelledby={`xhs-template-${option.value}`}
                               key={option.value}
                             >
-                              <header>
-                                <span><strong id={`xhs-template-${option.value}`}>{option.label}</strong><small>{option.detail}</small></span>
-                                <b>{String(optionIndex + 1).padStart(2, '0')}</b>
-                              </header>
                               <div className="xhs-template-options">
                                 <button
                                   type="button"
@@ -2476,8 +2422,8 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
                                 />
                               </div>
                               <footer className="xhs-template-card-meta">
-                                <span className="xhs-template-use-case"><b>适合</b>{option.useCase}</span>
-                                <span className="xhs-template-card-status" aria-hidden="true">{xhsSettings.template === option.value ? '✓ 已选' : '应用'}</span>
+                                <strong id={`xhs-template-${option.value}`}>{option.label}</strong>
+                                {xhsSettings.template === option.value && <Check size={13} aria-hidden="true" />}
                               </footer>
                             </section>
                           ))}
@@ -2485,17 +2431,17 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
                       </div>
                     </section>
                   )}
+                  outputContent={(
+                    <section className="inspector-output-settings" aria-label="小红书输出信息">
+                      <strong>输出信息</strong>
+                      <div className="xhs-decoration-options">
+                        <label><input type="checkbox" checked={xhsSettings.showPageNumber} onChange={event => updateXhsSettings({ ...xhsSettings, showPageNumber: event.target.checked })} /> 显示右上页码</label>
+                        <label><input type="checkbox" checked={xhsSettings.showFooter} onChange={event => updateXhsSettings({ ...xhsSettings, showFooter: event.target.checked })} /> 显示底部信息</label>
+                      </div>
+                      <label className="xhs-footer-input">左下角文字<input value={xhsSettings.footerText} disabled={!xhsSettings.showFooter} maxLength={24} onChange={event => updateXhsSettings({ ...xhsSettings, footerText: event.target.value })} /></label>
+                    </section>
+                  )}
                 />
-
-                <details className="xhs-tool-section xhs-settings-disclosure xhs-metadata-tools xhs-output-tools" aria-label="小红书输出信息">
-                  <summary><span><strong>输出信息</strong><small>页码 · 署名</small></span><ChevronDown size={15} aria-hidden="true" /></summary>
-                  <div className="xhs-decoration-options">
-                    <label><input type="checkbox" checked={xhsSettings.showPageNumber} onChange={event => updateXhsSettings({ ...xhsSettings, showPageNumber: event.target.checked })} /> 显示右上页码</label>
-                    <label><input type="checkbox" checked={xhsSettings.showFooter} onChange={event => updateXhsSettings({ ...xhsSettings, showFooter: event.target.checked })} /> 显示底部信息</label>
-                  </div>
-                  <label className="xhs-footer-input">左下角文字<input value={xhsSettings.footerText} disabled={!xhsSettings.showFooter} maxLength={24} onChange={event => updateXhsSettings({ ...xhsSettings, footerText: event.target.value })} /></label>
-                </details>
-
               </aside>
             </div>
           </article>
@@ -2515,7 +2461,7 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
                       onKeyDown={event => selectStandaloneTargetWithKeyboard(event, 'title')}
                     >{title || '未命名文章'}</h1>
                     <div className="x-article-author"><span className="x-article-avatar">{profileAvatar}</span><span><strong>{profileName}</strong><small>{profileHandle}</small></span></div>
-                    <div className="x-article-content" onClick={handleBodyClick} onKeyDown={handleBodyKeyDown} dangerouslySetInnerHTML={{ __html: mappedPreview.html }} />
+                    <PreviewHtml className="x-article-content" onClick={handleBodyClick} onKeyDown={handleBodyKeyDown} html={mappedPreview.html} />
                   </div>
                 </div>
               </div>
@@ -2537,12 +2483,12 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
                   onKeyDown={adjustToolRailWithKeyboard}
                 ><span /></div>
               )}
-              <aside id="x-formatting-panel" className="x-formatting-rail preview-tool-rail" aria-label="X 长文排版设置" hidden={!toolRailOpen.x}>
+              <aside id="x-formatting-panel" className="x-formatting-rail preview-tool-rail" role="dialog" aria-label="X 长文排版设置" hidden={!toolRailOpen.x}>
                 <header className="preview-tool-rail-heading">
-                  <span><strong>X 长文排版</strong><small>设置只在选中后生效</small></span>
-                  <button type="button" className="settings-close" aria-label="关闭 X 设置" onClick={() => toggleToolRail('x')}><CloseIcon size={18} /></button>
+                  <span><strong>X 长文主题</strong></span>
+                  <button type="button" className="settings-close" aria-label="关闭 X 设置" onClick={() => toggleToolRail('x')}><PanelRightClose size={17} /></button>
                 </header>
-                <FormattingAccordion
+                <FormattingPanel
                   idPrefix="x-settings"
                   label="X 长文设置模块"
                   openSections={openFormattingSections.x}
@@ -2579,7 +2525,7 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
                     <div className="mobile-article-scroll">
                       <h1>{title || '未命名文章'}</h1>
                       <p className="mobile-wechat-meta">{profileName} · 公众号草稿</p>
-                      <div className="mobile-wechat-content" dangerouslySetInnerHTML={{ __html: mappedWechatPreview.html }} />
+                      <PreviewHtml className="mobile-wechat-content" html={mappedWechatPreview.html} />
                     </div>
                   </div>
                 )}
@@ -2611,7 +2557,7 @@ export function PlatformPreviews({ activePlatform, title, html, sourceText, sour
                     <div className="mobile-x-scroll">
                       <h1>{title || '未命名文章'}</h1>
                       <div className="mobile-x-author"><span>{profileAvatar}</span><strong>{profileName}</strong><small>{profileHandle}</small></div>
-                      <div className="mobile-x-content" dangerouslySetInnerHTML={{ __html: mappedPreview.html }} />
+                      <PreviewHtml className="mobile-x-content" html={mappedPreview.html} />
                     </div>
                   </div>
                 )}

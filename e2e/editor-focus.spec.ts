@@ -18,19 +18,15 @@ test('defaults to two panes and keeps resources resizable without replacing the 
   await expect(page.locator('.preview-settings-toggle')).toHaveAttribute('aria-expanded', 'false')
   await expect(page.locator('.cm-editor')).toHaveCSS('font-size', '17px')
   await page.screenshot({ path: testInfo.outputPath('default-1920.png') })
-  await page.getByRole('tab', { name: /^资源/ }).click()
-  await expect(page.getByLabel('素材侧栏', { exact: true })).toBeVisible()
-  await expect(page.locator('.cm-editor')).toBeVisible()
-  const resize = page.getByRole('separator', { name: '调整素材侧栏宽度' })
-  await resize.press('End')
-  await expect(resize).toHaveAttribute('aria-valuenow', '440')
-  expect((await page.getByLabel('素材侧栏', { exact: true }).boundingBox())!.width).toBe(440)
+  await page.getByRole('button', { name: '文档素材', exact: true }).click()
+  await expect(page.locator('.paper-panel .resource-panel')).toBeVisible()
+  await expect(page.locator('.cm-editor')).toBeHidden()
   expect((await page.locator('.paper-panel').boundingBox())!.width).toBeGreaterThanOrEqual(280)
   await page.screenshot({ path: testInfo.outputPath('resources-1920.png') })
-  await page.getByRole('button', { name: '关闭素材' }).click()
+  await page.getByRole('button', { name: '正文', exact: true }).click()
   await page.locator('.preview-settings-toggle').click()
   await page.reload()
-  await expect(page.locator('.preview-settings-toggle')).toHaveAttribute('aria-expanded', 'true')
+  await expect(page.locator('.preview-settings-toggle')).toHaveAttribute('aria-expanded', 'false')
 })
 
 test('follows user scrolling only when enabled and retains click-to-source positioning', async ({ page }) => {
@@ -40,7 +36,9 @@ test('follows user scrolling only when enabled and retains click-to-source posit
   await left.hover()
   await page.mouse.wheel(0, 1600)
   await expect.poll(() => right.evaluate(node => node.scrollTop)).toBeGreaterThan(300)
-  await page.getByRole('switch', { name: '同步滚动' }).click()
+  await page.getByRole('button', { name: '设置', exact: true }).click()
+  await page.getByRole('switch', { name: '同步滚动' }).uncheck()
+  await page.keyboard.press('Escape')
   const before = await right.evaluate(node => node.scrollTop)
   await left.hover()
   await page.mouse.wheel(0, 1800)
@@ -52,14 +50,15 @@ test('follows user scrolling only when enabled and retains click-to-source posit
   await expect(page.locator('.source-editor .cm-content')).toBeFocused()
   await expect(page.locator('.source-focus-line')).toBeVisible()
   await page.reload()
-  await expect(page.getByRole('switch', { name: '同步滚动' })).toHaveAttribute('aria-checked', 'false')
+  await page.getByRole('button', { name: '设置', exact: true }).click()
+  await expect(page.getByRole('switch', { name: '同步滚动' })).not.toBeChecked()
 })
 
 test('retries failed images and replaces them in the original article', async ({ page }) => {
   let ready = false
   await page.route('https://assets.test/image.png', route => ready ? route.fulfill({ contentType: 'image/png', body: png }) : route.abort())
   await importContent(page, '# 素材修复\n\n![外链图](https://assets.test/image.png)')
-  await page.getByRole('tab', { name: /^资源/ }).click()
+  await page.getByRole('button', { name: '文档素材', exact: true }).click()
   const resource = page.locator('.article-resource-card')
   await expect(resource).toContainText('图片加载失败')
   ready = true
@@ -70,21 +69,24 @@ test('retries failed images and replaces them in the original article', async ({
   await resource.getByRole('button', { name: '替换', exact: true }).click()
   await (await chooser).setFiles({ name: 'replacement.png', mimeType: 'image/png', buffer: png })
   await expect(resource).toContainText('replacement.png')
-  await page.getByRole('button', { name: '关闭素材' }).click()
+  await page.getByRole('button', { name: '正文', exact: true }).click()
   await expect(page.locator('.wechat-content img')).toHaveAttribute('src', /^blob:/)
 })
 
-test('preserves or unifies source colors consistently in preview, copy and restored drafts', async ({ page }, testInfo) => {
+test('applies panel colors directly in preview, copy and restored drafts without changing the source', async ({ page }, testInfo) => {
   await page.addInitScript(() => {
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { write: async (items: ClipboardItem[]) => {
       Object.assign(window, { __focusCopy: await (await items[0].getType('text/html')).text() })
     } } })
   })
   await importContent(page, '<h1>主题覆盖验证</h1><p>普通正文 <strong><span style="color:#00aa55">原文绿色强调</span></strong></p><img src="data:image/png;base64,' + png.toString('base64') + '" style="border:2px solid #00aa55" alt="配图">', true)
+  await page.getByRole('button', { name: '显示 Markdown 语法', exact: true }).click()
+  const originalSource = await page.locator('.cm-content').textContent()
   await page.locator('.preview-settings-toggle').click()
   await page.getByRole('button', { name: /^应用克莱因蓝主题/ }).click()
-  await expect(page.locator('.wechat-content strong span')).toHaveCSS('color', 'rgb(0, 170, 85)')
-  await page.getByRole('radio', { name: '统一应用主题', exact: true }).check()
+  await page.locator('.inspector-tabs').getByRole('tab', { name: '样式', exact: true }).click()
+  await page.getByRole('radio', { name: 'orange', exact: true }).click()
+  await expect(page.locator('.wechat-content strong')).toHaveCSS('color', 'rgb(240, 106, 42)')
   await expect(page.locator('.wechat-content strong span')).not.toHaveCSS('color', 'rgb(0, 170, 85)')
   await expect(page.locator('.wechat-content img')).not.toHaveCSS('border-top-color', 'rgb(0, 170, 85)')
   await page.getByRole('button', { name: '复制公众号格式', exact: true }).click()
@@ -93,9 +95,25 @@ test('preserves or unifies source colors consistently in preview, copy and resto
   expect(copied).not.toContain('rgb(0, 170, 85)')
   expect(copied).not.toContain('data-ez-source-decoration')
   await expect(page.getByLabel('本地保存状态')).toHaveText('已保存')
+  // Exercise a legacy saved policy: reopening must still honor the visible controls.
+  await page.evaluate(() => new Promise<void>((resolve, reject) => {
+    const request = indexedDB.open('dispatch-workbench-local')
+    request.onerror = () => reject(request.error)
+    request.onsuccess = () => {
+      const database = request.result
+      const transaction = database.transaction('drafts', 'readwrite')
+      const store = transaction.objectStore('drafts')
+      const drafts = store.getAll()
+      drafts.onsuccess = () => {
+        for (const draft of drafts.result) store.put({ ...draft, formatting: { ...draft.formatting, sourceStyle: 'preserve' } })
+      }
+      transaction.oncomplete = () => { database.close(); resolve() }
+      transaction.onerror = () => { database.close(); reject(transaction.error) }
+    }
+  }))
   await page.reload()
-  await expect(page.getByRole('radio', { name: '统一应用主题', exact: true })).toBeChecked()
-  await page.getByRole('radio', { name: '保留原文样式', exact: true }).check()
-  await expect(page.locator('.wechat-content strong span')).toHaveCSS('color', 'rgb(0, 170, 85)')
+  await page.locator('.preview-settings-toggle').click()
+  await expect(page.locator('.wechat-content strong')).toHaveCSS('color', 'rgb(240, 106, 42)')
+  await expect(page.locator('.cm-content')).toHaveText(originalSource!)
   await page.screenshot({ path: testInfo.outputPath('theme-policy-1440.png') })
 })

@@ -99,17 +99,16 @@ export function DispatchControls({
             type="button"
             className="publish-trigger"
             aria-label={`打开发布面板，已选 ${selectedPlatforms} 个，共 ${platformAccounts.length} 个平台`}
-            title={hasArticle ? '实验性草稿同步 · Beta' : '请先导入稿件'}
+            title={hasArticle ? '实验性草稿同步 · Beta' : '填写正文后可同步草稿'}
             aria-expanded={isOpen}
             aria-haspopup="dialog"
-            disabled={!hasArticle || interactionLocked}
+            disabled={interactionLocked}
             onClick={() => {
-              if (hasArticle) onOpenChange(true)
+              onOpenChange(true)
             }}
           >
             {isPublishing ? <LoaderCircle className="spin" size={16} /> : <Send size={16} />}
-            <span>同步草稿</span>
-            <strong>{selectedPlatforms}/{platformAccounts.length}</strong>
+            <span>发布</span>
           </button>
         </div>
       )}

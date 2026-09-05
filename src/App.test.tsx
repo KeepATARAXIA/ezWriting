@@ -1,3 +1,4 @@
+import { createBlankInWorkbench, editWorkbenchTitle } from './test-utils/workbench'
 import { act, StrictMode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -111,28 +112,26 @@ describe('App publishing engine onboarding', () => {
     })
 
     const newDocumentButton = container.querySelector<HTMLButtonElement>('.drop-actions .primary-button')!
-    await act(async () => newDocumentButton.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    await createBlankInWorkbench(container)
     await act(async () => new Promise(resolve => window.setTimeout(resolve, 20)))
 
     expect(container.querySelector('.editor-shell.has-article')).not.toBeNull()
-    expect(container.querySelector<HTMLInputElement>('[aria-label="文章标题"]')?.value).toBe('')
+    expect(container.querySelector('.topbar-document-title')?.textContent).toBe('未命名稿件')
     expect(container.querySelector('.content-editor-section')).not.toBeNull()
-    expect(container.querySelector<HTMLButtonElement>('button[aria-label="导入文档"]')).not.toBeNull()
+    expect(container.querySelector<HTMLButtonElement>('button[aria-label="导入文档"]')).toBeNull()
     expect(container.querySelector<HTMLButtonElement>('.new-document-button')?.textContent).toContain('新建')
     expect(container.querySelector('.workbench-source')).toBeNull()
     expect(container.querySelectorAll('.workspace-mode-switcher button')).toHaveLength(3)
     expect(container.querySelector<HTMLButtonElement>('button[aria-label="同时显示编辑端和预览端"]')?.getAttribute('aria-pressed')).toBe('true')
-    expect(container.querySelector<HTMLButtonElement>('button[aria-label^="打开发布面板"]')?.disabled).toBe(true)
+    expect(container.querySelector<HTMLButtonElement>('button[aria-label^="打开发布面板"]')?.disabled).toBe(false)
     expect(container.querySelector('.preview-current-block')).toBeNull()
     expect(container.textContent).not.toContain('在右侧预览')
 
-    const titleInput = container.querySelector<HTMLInputElement>('[aria-label="文章标题"]')!
     await act(async () => {
-      Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set?.call(titleInput, '当前稿件')
-      titleInput.dispatchEvent(new Event('input', { bubbles: true }))
+      editWorkbenchTitle(container, '当前稿件')
     })
-    await act(async () => container.querySelector<HTMLButtonElement>('.new-document-button')?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
-    expect(container.querySelector<HTMLInputElement>('[aria-label="文章标题"]')?.value).toBe('')
+    await createBlankInWorkbench(container)
+    expect(container.querySelector('.topbar-document-title')?.textContent).toBe('未命名稿件')
   })
 
   it('creates a real local draft from a platform template and opens the matching preview', async () => {
@@ -147,7 +146,7 @@ describe('App publishing engine onboarding', () => {
     await act(async () => templateButton.click())
     await act(async () => new Promise(resolve => window.setTimeout(resolve, 20)))
 
-    expect(container.querySelector<HTMLInputElement>('[aria-label="文章标题"]')?.value).toBe('小红书图文草稿')
+    expect(container.querySelector('.topbar-document-title')?.textContent).toBe('小红书图文草稿')
     expect(container.querySelector('.editor-grid')?.getAttribute('data-preview-platform')).toBe('xhs')
     expect(container.querySelector<HTMLButtonElement>('button[aria-label="小红书"]')?.getAttribute('aria-selected')).toBe('true')
     await vi.waitFor(() => {
@@ -165,7 +164,7 @@ describe('App publishing engine onboarding', () => {
       root.render(<App />)
       await Promise.resolve()
     })
-    await act(async () => container.querySelector<HTMLButtonElement>('.drop-actions .primary-button')?.click())
+    await createBlankInWorkbench(container)
 
     const separator = container.querySelector<HTMLDivElement>('[role="separator"]')!
     const editorGrid = container.querySelector<HTMLElement>('.editor-grid')!
@@ -173,10 +172,6 @@ describe('App publishing engine onboarding', () => {
     expect(separator.getAttribute('aria-valuetext')).toBe('编辑区 44%，预览区 56%')
     expect(editorGrid.getAttribute('data-preview-platform')).toBe('wechat')
     expect(Array.from(container.querySelectorAll<HTMLElement>('.topbar-workbench [data-topbar-group]')).map(group => group.dataset.topbarGroup)).toEqual([
-      'new',
-      'platform',
-      'view',
-      'status',
       'publish',
     ])
 
@@ -225,7 +220,7 @@ describe('App publishing engine onboarding', () => {
       root.render(<App />)
       await Promise.resolve()
     })
-    await act(async () => container.querySelector<HTMLButtonElement>('.drop-actions .primary-button')?.click())
+    await createBlankInWorkbench(container)
 
     const separator = container.querySelector<HTMLDivElement>('[role="separator"]')!
     expect(separator.getAttribute('aria-valuenow')).toBe('47')
@@ -245,7 +240,7 @@ describe('App publishing engine onboarding', () => {
       root.render(<App />)
       await Promise.resolve()
     })
-    await act(async () => container.querySelector<HTMLButtonElement>('.drop-actions .primary-button')?.click())
+    await createBlankInWorkbench(container)
 
     const separator = container.querySelector<HTMLDivElement>('[role="separator"]')!
     expect(separator.getAttribute('aria-valuenow')).toBe('51')
@@ -263,67 +258,33 @@ describe('App publishing engine onboarding', () => {
       root.render(<App />)
       await Promise.resolve()
     })
-    await act(async () => container.querySelector<HTMLButtonElement>('.drop-actions .primary-button')?.click())
+    await createBlankInWorkbench(container)
 
     expect(container.querySelector('[role="separator"]')?.getAttribute('aria-valuenow')).toBe('44')
   })
 
-  it('imports into a new document by appending or replacing the current content', async () => {
+  it('imports each file as an independent document and retains the current draft on failure or cancel', async () => {
     bridgeMocks.waitForBridge.mockResolvedValue(false)
-
-    await act(async () => {
-      root.render(<App />)
-      await Promise.resolve()
-    })
-    await act(async () => container.querySelector<HTMLButtonElement>('.drop-actions .primary-button')?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
-    await act(async () => new Promise(resolve => window.setTimeout(resolve, 20)))
-
-    const titleInput = container.querySelector<HTMLInputElement>('[aria-label="文章标题"]')!
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set?.call(titleInput, '保留当前标题')
-      titleInput.dispatchEvent(new Event('input', { bubbles: true }))
-    })
-
-    const chooseImportMode = async (label: string) => {
-      await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="导入文档"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
-      const option = Array.from(container.querySelectorAll<HTMLButtonElement>('.editor-import-menu [role="menuitem"]'))
-        .find(button => button.textContent?.includes(label))!
-      await act(async () => option.dispatchEvent(new MouseEvent('click', { bubbles: true })))
-    }
-
+    await act(async () => root.render(<App draftRepository={null} />))
     const importFile = async (content: string, name: string) => {
-      const input = container.querySelector<HTMLInputElement>('.editor-import-input')!
-      Object.defineProperty(input, 'files', {
-        configurable: true,
-        value: [new File([content], name, { type: 'text/markdown' })],
-      })
-      await act(async () => {
-        input.dispatchEvent(new Event('change', { bubbles: true }))
-        await new Promise(resolve => window.setTimeout(resolve, 0))
-      })
-      const expectedBody = content.split(/\n+/).at(-1) || ''
-      await vi.waitFor(
-        () => expect(container.querySelector('.source-editor .cm-content')?.textContent).toContain(expectedBody),
-        { timeout: 3000 },
-      )
+      const input = container.querySelector<HTMLInputElement>('input[accept=".md,.markdown,.html,.htm,.zip"]')!
+      Object.defineProperty(input, 'files', { configurable: true, value: [new File([content], name)] })
+      await act(async () => { input.dispatchEvent(new Event('change', { bubbles: true })); await new Promise(resolve => setTimeout(resolve, 30)) })
     }
-
-    await chooseImportMode('追加到当前内容')
-    await importFile('# 第一份导入稿\n\n第一段追加正文。', 'first.md')
-    expect(container.querySelector<HTMLInputElement>('[aria-label="文章标题"]')?.value).toBe('保留当前标题')
-    expect(container.querySelector('.source-editor .cm-content')?.textContent).toContain('第一段追加正文。')
-
-    await chooseImportMode('追加到当前内容')
-    await importFile('# 第二份导入稿\n\n第二段追加正文。', 'second.md')
-    expect(container.querySelector('.source-editor .cm-content')?.textContent).toContain('第一段追加正文。')
-    expect(container.querySelector('.source-editor .cm-content')?.textContent).toContain('第二段追加正文。')
-
-    await chooseImportMode('替换当前内容')
-    await importFile('# 替换后的标题\n\n只保留替换正文。', 'replacement.md')
-    expect(container.querySelector<HTMLInputElement>('[aria-label="文章标题"]')?.value).toBe('替换后的标题')
-    expect(container.querySelector('.source-editor .cm-content')?.textContent).toContain('只保留替换正文。')
-    expect(container.querySelector('.source-editor .cm-content')?.textContent).not.toContain('第一段追加正文。')
-    expect(container.querySelector('.source-editor .cm-content')?.textContent).not.toContain('第二段追加正文。')
+    await importFile('# 第一稿\n\n保留在第一稿的内容', 'first.md')
+    await act(async () => container.querySelector<HTMLButtonElement>('.new-document-button')!.click())
+    expect(container.querySelector('.new-document-options')?.textContent).toContain('导入文件')
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="关闭新建文档"]')!.click())
+    expect(container.querySelector('.topbar-document-title')?.textContent).toBe('第一稿')
+    await importFile('# 第二稿\n\n独立的新内容', 'second.md')
+    expect(container.querySelector('.topbar-document-title')?.textContent).toBe('第二稿')
+    expect(container.querySelector('.wechat-content')?.textContent).toContain('独立的新内容')
+    expect(container.querySelector('.wechat-content')?.textContent).not.toContain('保留在第一稿')
+    await importFile('broken archive', 'broken.zip')
+    expect(container.querySelector('.topbar-document-title')?.textContent).toBe('第二稿')
+    expect(container.querySelector('.wechat-content')?.textContent).toContain('独立的新内容')
+    expect(container.querySelector('.notification-panel [role="alert"]')).not.toBeNull()
+    expect(container.querySelector('.editor-import')).toBeNull()
   })
 
   it('does not turn forged imported missing-image markers into preview actions', async () => {
@@ -430,8 +391,8 @@ describe('App publishing engine onboarding', () => {
     })
 
     const publishTrigger = container.querySelector<HTMLButtonElement>('button[aria-label^="打开发布面板"]')!
-    expect(publishTrigger.textContent).toContain('同步草稿')
-    expect(publishTrigger.textContent).toContain('0/1')
+    expect(publishTrigger.textContent).toBe('发布')
+    expect(publishTrigger.getAttribute('aria-label')).toContain('已选 0 个，共 1 个平台')
     await act(async () => publishTrigger.dispatchEvent(new MouseEvent('click', { bubbles: true })))
 
     expect(container.textContent).toContain('选择发布平台')
@@ -440,7 +401,7 @@ describe('App publishing engine onboarding', () => {
     await act(async () => platform.dispatchEvent(new MouseEvent('click', { bubbles: true })))
 
     expect(platform.getAttribute('aria-pressed')).toBe('true')
-    expect(publishTrigger.textContent).toContain('1/1')
+    expect(publishTrigger.getAttribute('aria-label')).toContain('已选 1 个，共 1 个平台')
     expect(container.textContent).toContain('同步到 1 个平台')
   })
 
@@ -591,8 +552,8 @@ describe('App publishing engine onboarding', () => {
     expect(container.querySelector('.preview-workbench')?.classList.contains('theme-clean')).toBe(true)
     expect(container.querySelector<HTMLElement>('.xhs-card-content h2')?.style.fontFamily).toContain('MiSans')
     expect(container.querySelector<HTMLElement>('.xhs-card-content blockquote')?.style.background).toBe('rgb(245, 247, 249)')
-    await act(async () => container.querySelector<HTMLButtonElement>('#xhs-settings-font-trigger')?.click())
-    const largeFont = Array.from(container.querySelectorAll<HTMLButtonElement>('#xhs-settings-font-panel [aria-label="选择文章字号"] button'))
+    await act(async () => container.querySelector<HTMLButtonElement>('#xhs-settings-style-trigger')?.click())
+    const largeFont = Array.from(container.querySelectorAll<HTMLButtonElement>('#xhs-settings-style-panel [aria-label="选择文章字号"] button'))
       .find(button => button.textContent === '大')!
     await act(async () => largeFont.click())
     await act(async () => wechatTab.click())
@@ -688,14 +649,14 @@ describe('App publishing engine onboarding', () => {
 
     expect(container.querySelector('.article-info-section')).toBeNull()
     expect(container.querySelector('.content-editor-section')).not.toBeNull()
-    expect(container.querySelector('[aria-label="文章标题"]')).not.toBeNull()
+    expect(container.querySelector('.content-editor-section .cm-content')).not.toBeNull()
     expect(container.textContent).not.toContain('封面图片')
     expect(container.textContent).toContain('正文内容')
     expect(container.querySelector('.source-document-stats')?.textContent).toContain('字数')
     expect(container.querySelector('.source-document-stats')?.textContent).toContain('图片 1')
     expect(Array.from(container.querySelectorAll<HTMLButtonElement>('.platform-switcher button')).map(button => button.getAttribute('aria-label'))).toEqual(['微信公众号', '小红书', 'X 长文'])
     expect(container.querySelectorAll('.platform-switcher .platform-logo')).toHaveLength(3)
-    expect(container.querySelector('.workbench-topbar .workbench-navigation > .platform-switcher')).not.toBeNull()
+    expect(container.querySelector('.workbench-toolbar .workbench-navigation > .platform-switcher')).not.toBeNull()
     expect(container.querySelector('.workbench-topbar .workbench-actions > .platform-switcher')).toBeNull()
     expect(container.querySelector('.workbench-commandbar')).toBeNull()
     expect(container.querySelector('.preview-lane .platform-switcher')).toBeNull()
@@ -705,10 +666,10 @@ describe('App publishing engine onboarding', () => {
     expect(container.querySelector('.wechat-document')).not.toBeNull()
     expect(container.querySelector('.xhs-card-page')).toBeNull()
     expect(container.querySelector('.x-article')).toBeNull()
-    expect(container.querySelector('.warning-summary')?.getAttribute('aria-expanded')).toBe('false')
-    expect(container.textContent).toContain('1 张图片待处理')
-    await act(async () => container.querySelector<HTMLButtonElement>('.warning-summary')?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
-    expect(container.querySelector('.warning-details')?.textContent).toContain('未找到图片：assets/flow.png')
+    expect(container.querySelector('.notification-trigger')?.getAttribute('aria-expanded')).toBe('false')
+    await act(async () => container.querySelector<HTMLButtonElement>('.notification-trigger')!.click())
+    expect(container.textContent).toContain('1 张图片待补齐')
+    expect(container.querySelector('.notification-panel')?.textContent).toContain('未找到图片：assets/flow.png')
     expect(container.querySelector('.source-editor .cm-content')?.textContent).not.toContain('![流程图](assets/flow.png)')
     expect(container.querySelector('.source-editor .source-image-widget.missing')?.textContent).toContain('图片待补齐')
     expect(container.querySelector('.wechat-content .missing-image-card')).not.toBeNull()
@@ -730,7 +691,7 @@ describe('App publishing engine onboarding', () => {
     expect(splitViewButton.getAttribute('aria-pressed')).toBe('true')
 
     const mobilePreview = Array.from(container.querySelectorAll<HTMLButtonElement>('.device-preview-switcher button'))
-      .find(button => button.textContent?.includes('手机预览'))!
+      .find(button => button.getAttribute('aria-label') === '手机预览')!
     await act(async () => mobilePreview.dispatchEvent(new MouseEvent('click', { bubbles: true })))
     expect(container.querySelector('.preview-device-frame')?.classList.contains('mobile')).toBe(true)
     expect(container.querySelector('[role="dialog"][aria-label*="手机效果预览"]')).not.toBeNull()
@@ -742,50 +703,22 @@ describe('App publishing engine onboarding', () => {
     expect(container.querySelector('.preview-device-frame')?.classList.contains('desktop')).toBe(true)
     await act(async () => mobilePreview.dispatchEvent(new MouseEvent('click', { bubbles: true })))
     const desktopPreview = Array.from(container.querySelectorAll<HTMLButtonElement>('.device-preview-switcher button'))
-      .find(button => button.textContent?.includes('电脑预览'))!
+      .find(button => button.getAttribute('aria-label') === '电脑预览')!
     await act(async () => desktopPreview.dispatchEvent(new MouseEvent('click', { bubbles: true })))
     expect(container.querySelector('.preview-device-frame')?.classList.contains('desktop')).toBe(true)
 
-    const titleInput = container.querySelector<HTMLInputElement>('[aria-label="文章标题"]')!
     await act(async () => {
-      Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set?.call(titleInput, '补图后保留标题')
-      titleInput.dispatchEvent(new Event('input', { bubbles: true }))
+      editWorkbenchTitle(container, '补图后保留标题')
     })
 
     const resourceTab = container.querySelector<HTMLButtonElement>('[aria-controls="article-resource-view"]')!
-    const editTab = container.querySelector<HTMLButtonElement>('[aria-controls="article-edit-view"]')!
     await act(async () => resourceTab.dispatchEvent(new MouseEvent('click', { bubbles: true })))
-    expect(container.textContent).toContain('文档资源')
+    expect(container.textContent).toContain('文档素材')
     expect(container.textContent).toContain('还差 1 张本地图片')
     expect(container.querySelectorAll('.article-resource-card')).toHaveLength(1)
-    const previewViewport = container.querySelector<HTMLElement>('.platform-preview-viewport')!
-    Object.defineProperties(previewViewport, {
-      clientHeight: { configurable: true, value: 400 },
-      scrollHeight: { configurable: true, value: 1600 },
-      scrollTop: { configurable: true, writable: true, value: 0 },
-    })
-    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
-      if (this === previewViewport) return new DOMRect(0, 100, 800, 400)
-      if (this instanceof HTMLElement && this.classList.contains('missing-image-card')) {
-        return new DOMRect(0, 700 - previewViewport.scrollTop, 500, 80)
-      }
-      return new DOMRect()
-    })
-    const scrollTo = vi.fn((options: ScrollToOptions) => {
-      previewViewport.scrollTop = Number(options.top) || 0
-    })
-    Object.defineProperty(previewViewport, 'scrollTo', { configurable: true, value: scrollTo })
     await act(async () => container.querySelector<HTMLButtonElement>('.resource-card-locate')?.click())
-    const locatedMissingImage = container.querySelector<HTMLElement>('.wechat-content .missing-image-card')!
-    expect(container.querySelector('.editor-grid')?.classList.contains('workspace-mode-split')).toBe(true)
-    expect(container.querySelector('.preview-device-frame')?.classList.contains('desktop')).toBe(true)
-    expect(locatedMissingImage?.classList.contains('preview-located-target')).toBe(true)
-    expect(locatedMissingImage?.getAttribute('data-preview-selected')).toBe('true')
-    await vi.waitFor(
-      () => expect(scrollTo).toHaveBeenCalledWith({ top: 440, behavior: 'auto' }),
-      { timeout: 500 },
-    )
-    await act(async () => editTab.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    expect(container.querySelector<HTMLElement>('#article-edit-view')?.hidden).toBe(false)
+    expect(document.activeElement).toBe(container.querySelector('.cm-content'))
 
     const separator = container.querySelector<HTMLDivElement>('[role="separator"]')!
     expect(separator.getAttribute('aria-valuenow')).toBe('44')
@@ -884,8 +817,8 @@ describe('App publishing engine onboarding', () => {
       expect(container.textContent).not.toContain('还差 1 张本地图片')
       expect(container.querySelector('.x-article img[src^="blob:"]')).not.toBeNull()
     }, { timeout: 1000 })
-    await act(async () => editTab.dispatchEvent(new MouseEvent('click', { bubbles: true })))
-    expect(container.querySelector<HTMLInputElement>('[aria-label="文章标题"]')?.value).toBe('补图后保留标题')
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="正文"]')!.click())
+    expect(container.querySelector('.topbar-document-title')?.textContent).toBe('补图后保留标题')
   })
 
   it('supplements a Windows absolute Markdown image from a selected folder', async () => {
@@ -907,7 +840,8 @@ describe('App publishing engine onboarding', () => {
       await new Promise(resolve => window.setTimeout(resolve, 20))
     })
 
-    expect(container.textContent).toContain('1 张图片待处理')
+    await act(async () => container.querySelector<HTMLButtonElement>('.notification-trigger')!.click())
+    expect(container.textContent).toContain('1 张图片待补齐')
     const resourceTab = container.querySelector<HTMLButtonElement>('[aria-controls="article-resource-view"]')!
     await act(async () => resourceTab.dispatchEvent(new MouseEvent('click', { bubbles: true })))
     expect(container.textContent).toContain('还差 1 张本地图片')
@@ -928,7 +862,7 @@ describe('App publishing engine onboarding', () => {
     })
 
     expect(container.textContent).not.toContain('还差 1 张本地图片')
-    expect(container.textContent).not.toContain('1 张图片待处理')
+    expect(container.textContent).not.toContain('1 张图片待补齐')
     expect(container.querySelector('.resource-card-copy strong')?.textContent).toBe('流程图')
     await vi.waitFor(() => {
       expect(container.querySelector('.wechat-content img[src^="blob:"]')).not.toBeNull()
@@ -959,7 +893,7 @@ describe('App publishing engine onboarding', () => {
     await act(async () => new Promise(resolve => window.setTimeout(resolve, 20)))
 
     const xhsTab = Array.from(container.querySelectorAll<HTMLButtonElement>('button[role="tab"]'))
-      .find(button => button.textContent?.includes('小红书'))!
+      .find(button => button.getAttribute('aria-label') === '小红书')!
     await act(async () => {
       xhsTab.dispatchEvent(new MouseEvent('click', { bubbles: true }))
       await vi.dynamicImportSettled()
@@ -968,8 +902,8 @@ describe('App publishing engine onboarding', () => {
     expect(container.querySelector('.xhs-card-page.template-focus')).not.toBeNull()
     expect(container.querySelector('.xhs-tool-rail')).not.toBeNull()
     expect(container.querySelectorAll('.xhs-view-modes button')).toHaveLength(3)
-    expect(container.textContent).toContain('下载当前页')
-    expect(container.textContent).toContain('下载全部图片')
+    expect(container.querySelector('[aria-label="下载当前图片"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="下载全部图片"]')).not.toBeNull()
 
     expect(container.querySelector('[aria-label="小红书设置模块"]')).not.toBeNull()
     expect(container.querySelector('[aria-label="小红书视觉模板"]')).not.toBeNull()
@@ -980,19 +914,16 @@ describe('App publishing engine onboarding', () => {
     expect(Array.from(container.querySelectorAll<HTMLButtonElement>('.xhs-tool-rail button')).some(button => button.textContent?.includes('卡片样式'))).toBe(false)
     expect(container.textContent).not.toContain('顶部色条')
     const layoutTrigger = container.querySelector<HTMLButtonElement>('#xhs-settings-layout-trigger')!
-    const fontTrigger = container.querySelector<HTMLButtonElement>('#xhs-settings-font-trigger')!
-    expect(layoutTrigger.getAttribute('aria-expanded')).toBe('true')
+    const fontTrigger = container.querySelector<HTMLButtonElement>('#xhs-settings-style-trigger')!
+    expect(layoutTrigger.getAttribute('aria-selected')).toBe('true')
     await act(async () => fontTrigger.click())
-    expect(layoutTrigger.getAttribute('aria-expanded')).toBe('true')
-    expect(fontTrigger.getAttribute('aria-expanded')).toBe('true')
-    expect(container.querySelectorAll('#xhs-tool-panel .settings-accordion-panel:not([hidden])')).toHaveLength(2)
-    expect(container.querySelector('#xhs-settings-font-panel [aria-label="选择文章字号"]')).not.toBeNull()
+    expect(layoutTrigger.getAttribute('aria-selected')).toBe('false')
+    expect(fontTrigger.getAttribute('aria-selected')).toBe('true')
+    expect(container.querySelectorAll('#xhs-tool-panel .inspector-tab-panel:not([hidden])')).toHaveLength(1)
+    expect(container.querySelector('#xhs-settings-style-panel [aria-label="选择文章字号"]')).not.toBeNull()
     await act(async () => layoutTrigger.click())
-    expect(layoutTrigger.getAttribute('aria-expanded')).toBe('false')
-    expect(fontTrigger.getAttribute('aria-expanded')).toBe('true')
-    await act(async () => layoutTrigger.click())
-    expect(layoutTrigger.getAttribute('aria-expanded')).toBe('true')
-    expect(fontTrigger.getAttribute('aria-expanded')).toBe('true')
+    expect(layoutTrigger.getAttribute('aria-selected')).toBe('true')
+    expect(fontTrigger.getAttribute('aria-selected')).toBe('false')
     const cleanTemplate = Array.from(container.querySelectorAll<HTMLButtonElement>('.xhs-template-options button'))
       .find(button => button.getAttribute('aria-label')?.startsWith('简约基础：'))!
     await act(async () => cleanTemplate.dispatchEvent(new MouseEvent('click', { bubbles: true })))
@@ -1012,7 +943,7 @@ describe('App publishing engine onboarding', () => {
     expect(container.querySelectorAll('.xhs-card-spread .xhs-card-footer-actions')).toHaveLength(2)
 
     const mobilePreview = Array.from(container.querySelectorAll<HTMLButtonElement>('.device-preview-switcher button'))
-      .find(button => button.textContent?.includes('手机预览'))!
+      .find(button => button.getAttribute('aria-label') === '手机预览')!
     await act(async () => mobilePreview.dispatchEvent(new MouseEvent('click', { bubbles: true })))
     expect(container.querySelector('.mobile-xhs-preview')).not.toBeNull()
     expect(container.querySelector('.mobile-xhs-card-stage .xhs-card-page')).not.toBeNull()

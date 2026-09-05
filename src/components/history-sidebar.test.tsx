@@ -40,9 +40,6 @@ describe('HistorySidebar', () => {
       onSelectDraft: vi.fn(),
       onChangeKind: vi.fn(),
       onDeleteDraft: vi.fn(),
-      onExportBackup: vi.fn(),
-      onImportBackup: vi.fn(),
-      onExportDiagnostics: vi.fn(),
       now: NOW,
     }
   })
@@ -186,36 +183,7 @@ describe('HistorySidebar', () => {
     expect(document.activeElement).toBe(menuButton)
   })
 
-  it('renders local backup actions', async () => {
-    const onExportBackup = vi.fn()
-    const onImportBackup = vi.fn()
-    const onExportDiagnostics = vi.fn()
-    await render({
-      onExportBackup,
-      onImportBackup,
-      onExportDiagnostics,
-    })
-
-    const dataTrigger = container.querySelector<HTMLButtonElement>('.history-data-trigger')!
-    expect(dataTrigger.getAttribute('aria-expanded')).toBe('false')
-    await act(async () => dataTrigger.dispatchEvent(new MouseEvent('click', { bubbles: true })))
-    expect(dataTrigger.getAttribute('aria-expanded')).toBe('true')
-    const exportButton = Array.from(container.querySelectorAll<HTMLButtonElement>('.history-backup-actions button'))
-      .find(button => button.textContent?.includes('导出备份'))!
-    const importButton = Array.from(container.querySelectorAll<HTMLButtonElement>('.history-backup-actions button'))
-      .find(button => button.textContent?.includes('导入备份'))!
-    const diagnosticsButton = Array.from(container.querySelectorAll<HTMLButtonElement>('.history-backup-actions button'))
-      .find(button => button.textContent?.includes('导出诊断报告'))!
-    await act(async () => exportButton.dispatchEvent(new MouseEvent('click', { bubbles: true })))
-    await act(async () => importButton.dispatchEvent(new MouseEvent('click', { bubbles: true })))
-    await act(async () => diagnosticsButton.dispatchEvent(new MouseEvent('click', { bubbles: true })))
-    expect(onExportBackup).toHaveBeenCalledTimes(1)
-    expect(onImportBackup).toHaveBeenCalledTimes(1)
-    expect(onExportDiagnostics).toHaveBeenCalledTimes(1)
-    expect(container.textContent).toContain('换域名或清理网站数据前，请先导出备份')
-  })
-
-  it('disables draft mutations and backup actions while an exclusive operation is running', async () => {
+  it('disables draft mutations while an exclusive operation is running', async () => {
     await render({
       drafts: [draft({ id: 'locked' })],
       interactionLocked: true,
@@ -223,36 +191,13 @@ describe('HistorySidebar', () => {
 
     expect(container.querySelector<HTMLButtonElement>('.history-draft-open')?.disabled).toBe(true)
     expect(container.querySelector<HTMLButtonElement>('.history-draft-menu-button')?.disabled).toBe(true)
-    await act(async () => container.querySelector<HTMLButtonElement>('.history-data-trigger')?.click())
-    expect(Array.from(container.querySelectorAll<HTMLButtonElement>('.history-backup-actions button')).every(button => button.disabled)).toBe(true)
   })
 
-  it('uses a compact semantic rail when collapsed', async () => {
-    const onToggleExpanded = vi.fn()
-    await render({
-      isExpanded: false,
-      onToggleExpanded,
-      drafts: [draft({ id: 'one' }), draft({ id: 'two' })],
-    })
-
-    const panel = container.querySelector<HTMLElement>('#history-sidebar-panel')!
-    expect(panel.hidden).toBe(true)
+  it('hides the history panel without exposing hidden draft actions', async () => {
+    await render({ isExpanded: false, drafts: [draft({ id: 'one' })] })
+    expect(container.querySelector<HTMLElement>('#history-sidebar-panel')?.hidden).toBe(true)
     expect(container.querySelector('.history-sidebar')?.classList.contains('collapsed')).toBe(true)
-    expect(container.querySelector('.history-rail-count')?.getAttribute('aria-label')).toBe('本机共有 2 篇稿件')
-
-    const expandButton = container.querySelector<HTMLButtonElement>('[aria-label="展开历史记录"]')!
-    expect(expandButton.getAttribute('aria-expanded')).toBe('false')
-    await act(async () => expandButton.dispatchEvent(new MouseEvent('click', { bubbles: true })))
-    expect(onToggleExpanded).toHaveBeenCalledTimes(1)
-    expect(container.querySelector('[aria-label*="登录"]')).toBeNull()
-  })
-
-  it('shows when the browser granted persistent storage', async () => {
-    await render({ storagePersistent: true })
-    expect(container.textContent).toContain('本地数据')
-    expect(container.textContent).toContain('已启用持久化存储')
-    expect(container.textContent).not.toContain('登录')
-    expect(container.textContent).not.toContain('同步')
+    expect(container.querySelector('.history-rail-button')).toBeNull()
   })
 
   it('shows a useful empty state before the first draft exists', async () => {

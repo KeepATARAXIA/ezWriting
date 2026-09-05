@@ -41,6 +41,7 @@ import {
 import type { ArticleSourceLanguage } from '../domain/article'
 import { isGifSource, mediaPlaceholder, mountGifPreview, mountVideoPreview } from '../lib/media-preview'
 import { sourceBlockIndexAtOffset } from '../lib/article-source'
+import { splitEditorDocument } from '../lib/article-editor-document'
 import {
   isLocalVideoReference,
   localVideoBlob,
@@ -55,6 +56,7 @@ import {
 } from '../lib/video-assets'
 import './video-media.css'
 import './source-editor-layout.css'
+import { editorRowStripes } from './source-editor-stripes'
 
 export interface SourceEditorFocusRequest {
   line: number
@@ -75,6 +77,10 @@ interface SourceEditorProps {
   onChange: (value: string) => void
   onActiveBlockChange?: (location: SourceEditorActiveLocation | null) => void
   syncScroll?: boolean
+  showSyntax?: boolean
+  rowStripes?: boolean
+  onShowSyntaxChange?: (enabled: boolean) => void
+  titleInDocument?: boolean
 }
 
 export interface SourceEditorStatus {
@@ -1113,7 +1119,7 @@ function markdownLinkAtOffset(text: string, offset: number): string | null {
   return null
 }
 
-export function SourceEditor({ value, language, status, focusRequest, readOnly = false, onChange, onActiveBlockChange, syncScroll = false }: SourceEditorProps) {
+export function SourceEditor({ value, language, status, focusRequest, readOnly = false, onChange, onActiveBlockChange, syncScroll = false, showSyntax, rowStripes = false, onShowSyntaxChange, titleInDocument = false }: SourceEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
@@ -1122,6 +1128,7 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
   const imageSourceCompartmentRef = useRef(new Compartment())
   const readOnlyCompartmentRef = useRef(new Compartment())
   const markdownPresentationCompartmentRef = useRef(new Compartment())
+  const rowStripesCompartmentRef = useRef(new Compartment())
   const embeddedImagesRef = useRef(new Map<string, string>())
   const languageRef = useRef(language)
   const onChangeRef = useRef(onChange)
@@ -1141,7 +1148,8 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
   const [selectionMenu, setSelectionMenu] = useState<SelectionMenuState | null>(null)
   const [historyAvailability, setHistoryAvailability] = useState({ undoCount: 0, redoCount: 0 })
   const [videoError, setVideoError] = useState<string | null>(null)
-  const [showMarkdownSyntax, setShowMarkdownSyntax] = useState(false)
+  const [localShowSyntax, setLocalShowSyntax] = useState(false)
+  const showMarkdownSyntax = showSyntax ?? localShowSyntax
 
   languageRef.current = language
   onChangeRef.current = onChange
@@ -1274,13 +1282,22 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
     text: string,
     selectFrom = text.length,
     selectTo = selectFrom,
-    options: { preserveOuterScroll?: boolean; syncImmediately?: boolean } = {},
+    options: { preserveOuterScroll?: boolean; syncImmediately?: boolean; media?: boolean } = {},
   ) => {
     if (readOnlyRef.current) return
     const view = viewRef.current
     if (!view) return
     const outerScroll = options.preserveOuterScroll ? captureOuterScroll(view) : null
-    const { from, to } = view.state.selection.main
+    let { from, to } = view.state.selection.main
+    if (options.media && titleInDocument) {
+      const heading = splitEditorDocument(view.state.doc.toString())
+      if (heading.blockOffset && from < heading.prefix.length) {
+        from = to = heading.prefix.length
+        const separator = heading.prefix.endsWith('\n\n') ? '' : heading.prefix.endsWith('\n') ? '\n' : '\n\n'
+        text = `${separator}${text}\n\n`
+        selectFrom = selectTo = text.length
+      }
+    }
     view.dispatch({
       changes: { from, to, insert: text },
       selection: { anchor: from + selectFrom, head: from + selectTo },
@@ -1495,7 +1512,7 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
     const alt = file.name.replace(/\.[^.]+$/, '') || '图片'
     const token = addEmbeddedImage(embeddedImagesRef.current, source)
     if (languageRef.current === 'html') insertText(`<img src="${token}" alt="${alt}">`)
-    else insertText(`![${alt}](${token})`)
+    else insertText(`![${alt}](${token})`, undefined, undefined, { media: true })
   }
 
   const handleImageSelection = (event: ChangeEvent<HTMLInputElement>) => {
@@ -1513,6 +1530,7 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
       insertText(videoHtmlSyntax(file.name, token), undefined, undefined, {
         preserveOuterScroll: true,
         syncImmediately: true,
+        media: true,
       })
     } catch (error) {
       setVideoError(error instanceof Error ? error.message : '视频读取失败，请重新选择。')
@@ -1540,6 +1558,7 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
         doc: compacted.text,
         extensions: [
           basicSetup,
+          rowStripesCompartmentRef.current.of([]),
           EditorView.clipboardOutputFilter.of(text => expandLocalImageReferences(expandEmbeddedMedia(text, embeddedImagesRef.current))),
           history({ minDepth: SOURCE_EDITOR_MIN_UNDO_DEPTH }),
           imageSourceCompartment.of(embeddedImageFacet.of({ sources: compacted.sources })),
@@ -1833,6 +1852,10 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
   }, [language, showMarkdownSyntax])
 
   useEffect(() => {
+    viewRef.current?.dispatch({ effects: rowStripesCompartmentRef.current.reconfigure(rowStripes ? editorRowStripes() : []) })
+  }, [rowStripes])
+
+  useEffect(() => {
     const view = viewRef.current
     if (!view || !focusRequest || focusRequest.requestId === lastFocusRequestRef.current) return
     lastFocusRequestRef.current = focusRequest.requestId
@@ -1844,6 +1867,10 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
       annotations: externalFocusUpdate.of(true),
     })
     view.focus()
+    // Refocusing the same source position can leave Chrome's native selection at
+    // the document start. Keep it aligned even when CodeMirror's selection is unchanged.
+    const caret = view.domAtPos(position)
+    view.contentDOM.ownerDocument.getSelection()?.collapse(caret.node, caret.offset)
   }, [focusRequest])
 
   return (
@@ -1909,7 +1936,7 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
               aria-pressed={!showMarkdownSyntax}
               title={showMarkdownSyntax ? '隐藏 Markdown 语法' : '显示 Markdown 语法'}
               onMouseDown={event => event.preventDefault()}
-              onClick={() => setShowMarkdownSyntax(current => !current)}
+              onClick={() => onShowSyntaxChange ? onShowSyntaxChange(!showMarkdownSyntax) : setLocalShowSyntax(!showMarkdownSyntax)}
             >
               {showMarkdownSyntax ? <EyeOff size={15} /> : <Eye size={15} />}
               <span>{showMarkdownSyntax ? '隐藏语法' : '显示语法'}</span>

@@ -1,3 +1,4 @@
+import { editTitle } from './workbench-helpers'
 import { expect, test } from '@playwright/test'
 
 test('keeps homepage actions readable across desktop and mobile and imports from the main action', async ({ page }) => {
@@ -13,7 +14,7 @@ test('keeps homepage actions readable across desktop and mobile and imports from
   const chooser = page.waitForEvent('filechooser')
   await page.getByRole('button', { name: '导入稿件', exact: true }).click()
   await (await chooser).setFiles({ name: 'home.md', mimeType: 'text/markdown', buffer: Buffer.from('# 首页导入验证\n\n本地正文。') })
-  await expect(page.getByLabel('文章标题')).toHaveValue('首页导入验证')
+  await expect(page.locator('.topbar-document-title')).toHaveText('首页导入验证')
   await expect(page.locator('.cm-content')).toContainText('本地正文。')
 })
 
@@ -29,8 +30,9 @@ test('times out an unresponsive engine, retries, and keeps local creation availa
   await page.locator('.home-connection-note').getByRole('button', { name: '重新连接' }).click()
   await expect(page.locator('.home-connection-note')).toContainText('暂未连接内容平台')
   await page.getByRole('button', { name: '开始写稿' }).click()
-  await page.getByLabel('文章标题').fill('无需连接也能写稿')
-  await expect(page.getByLabel('文章标题')).toHaveValue('无需连接也能写稿')
+  await page.getByRole('button', { name: '空白文档', exact: true }).click()
+  await editTitle(page, '无需连接也能写稿')
+  await expect(page.locator('.topbar-document-title')).toHaveText('无需连接也能写稿')
 })
 
 test('allows writing while the engine is still connecting and closing its setup guide', async ({ page }) => {
@@ -39,11 +41,13 @@ test('allows writing while the engine is still connecting and closing its setup 
   })
   await page.goto('/')
   await page.getByRole('button', { name: '开始写稿' }).click()
-  await page.getByLabel('文章标题').fill('连接中继续编辑')
-  await expect(page.getByLabel('文章标题')).toHaveValue('连接中继续编辑')
-  await expect(page.locator('.extension-chip')).toContainText('连接异常', { timeout: 12_000 })
-  await page.getByRole('button', { name: '打开发布引擎安装指引' }).click()
+  await page.getByRole('button', { name: '空白文档', exact: true }).click()
+  await editTitle(page, '连接中继续编辑')
+  await expect(page.locator('.topbar-document-title')).toHaveText('连接中继续编辑')
+  await page.getByRole('button', { name: /通知/ }).click()
+  await expect(page.locator('.notification-panel')).toContainText('连接异常', { timeout: 12_000 })
+  await page.getByRole('button', { name: '查看连接指引' }).click()
   await page.getByRole('button', { name: '继续本地编辑' }).click()
   await expect(page.getByRole('dialog')).toHaveCount(0)
-  await expect(page.getByLabel('文章标题')).toHaveValue('连接中继续编辑')
+  await expect(page.locator('.topbar-document-title')).toHaveText('连接中继续编辑')
 })

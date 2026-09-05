@@ -118,7 +118,7 @@ describe('wechat theme layer', () => {
   it('adapts shared article typography, spacing, and accent inside WeChat themes', () => {
     const output = applyWechatTheme(
       '<p>共享排版</p><a href="https://example.com">链接</a>',
-      { themeId: 'literary' },
+      { themeId: 'literary', accentByTheme: { literary: '#f06a2a' } },
       {
         ...DEFAULT_ARTICLE_FORMATTING,
         font: 'sans',

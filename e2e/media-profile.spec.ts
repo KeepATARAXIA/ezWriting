@@ -1,3 +1,4 @@
+import { editTitle } from './workbench-helpers'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { expect, test } from '@playwright/test'
 
@@ -16,7 +17,7 @@ for (const scenario of ['text', 'image', 'gif', 'video', 'mixed']) {
     await page.locator('input[type="file"][accept*=".md"]').first().setInputFiles({
       name: `${scenario}.md`, mimeType: 'text/markdown', buffer: Buffer.from(markdown),
     })
-    await expect(page.getByLabel('文章标题')).toHaveValue('媒体性能基线')
+    await expect(page.locator('.topbar-document-title')).toHaveText('媒体性能基线')
     if (['image', 'gif', 'mixed'].includes(scenario)) {
       const type = scenario === 'image' ? 'png' : 'gif'
       await page.locator('.source-toolbar input[accept="image/*"]').setInputFiles({
@@ -65,7 +66,7 @@ for (const scenario of ['text', 'image', 'gif', 'video', 'mixed']) {
     await cdp.send('HeapProfiler.collectGarbage')
     const before = await cdp.send('Runtime.getHeapUsage')
     const start = Date.now()
-    await page.getByLabel('文章标题').fill('媒体性能基线 · 修改标题')
+    await editTitle(page, '媒体性能基线 · 修改标题')
     await page.waitForFunction(() => (window as unknown as { __mediaReport: { titleWrites: number } }).__mediaReport.titleWrites > 0)
     await expect(page.locator('.history-sync-state', { hasText: '已保存' }).first()).toHaveText('已保存', { timeout: 45_000 })
     const savedMs = Date.now() - start

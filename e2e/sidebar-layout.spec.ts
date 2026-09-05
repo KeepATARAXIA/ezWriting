@@ -1,0 +1,100 @@
+import { editTitle } from './workbench-helpers'
+import { expect, test, type Locator } from '@playwright/test'
+
+async function expectReachable(locator: Locator) {
+  await expect(locator).toBeVisible()
+  await expect.poll(() => locator.evaluate(element => {
+    const rect = element.getBoundingClientRect()
+    return element.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2))
+  })).toBe(true)
+}
+
+test('keeps navigation persistent, auxiliary panels exclusive, and the draft intact', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1674, height: 943 })
+  await page.goto('/')
+  await page.getByRole('button', { name: '打开历史记录', exact: true }).click()
+  await expect.poll(async () => {
+    const panel = (await page.locator('#history-sidebar-panel').boundingBox())!
+    const topbar = (await page.locator('.topbar').boundingBox())!
+    return Math.abs(panel.y - topbar.y - topbar.height)
+  }).toBeLessThan(1)
+  await page.getByRole('button', { name: '收起历史记录', exact: true }).click()
+  await page.getByRole('button', { name: '使用公众号长文模板开始' }).click()
+  await expect(page.locator('.cm-content')).toContainText('核心内容')
+  await editTitle(page, '让创作更专注，让内容抵达更多人')
+  await expect(page.locator('.topbar-document-title')).toHaveText('让创作更专注，让内容抵达更多人')
+  await expect(page.getByLabel('本地保存状态')).toHaveText('已保存')
+  const editor = page.locator('.cm-editor')
+  const editorHandle = await editor.elementHandle()
+  const history = page.getByRole('button', { name: '打开历史记录', exact: true })
+  const resources = page.getByRole('button', { name: '文档素材', exact: true })
+  for (const width of [1674, 1440, 768, 390]) {
+    await page.setViewportSize({ width, height: 943 })
+    await expectReachable(history)
+    if (await history.getAttribute('aria-expanded') !== 'true') await history.click()
+    await expect(page.getByRole('searchbox', { name: '搜索历史稿件' })).toBeVisible()
+    await history.click()
+    await resources.click()
+    await expect(page.locator('.paper-panel .resource-panel')).toBeVisible()
+    await expect(editor).toBeHidden()
+    await page.getByRole('button', { name: '正文', exact: true }).click()
+    await expect(editor).toBeVisible()
+    expect(await editorHandle!.evaluate(element => element.isConnected)).toBe(true)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  }
+  await page.setViewportSize({ width: 1674, height: 943 })
+  await page.locator('.preview-settings-toggle').click()
+  await page.screenshot({ path: testInfo.outputPath('sidebar-workbench.png') })
+  await page.getByRole('button', { name: '设置', exact: true }).click()
+  await page.screenshot({ path: testInfo.outputPath('sidebar-local-user.png') })
+})
+
+test('exports from the local user without opening history and restores keyboard focus', async ({ page }) => {
+  await page.goto('/')
+  await page.getByRole('button', { name: '新建文档', exact: true }).click()
+  await page.getByRole('button', { name: '空白文档', exact: true }).click()
+  await editTitle(page, '本地用户备份验证')
+  await expect(page.getByLabel('本地保存状态')).toHaveText('已保存')
+  const trigger = page.getByRole('button', { name: '设置', exact: true })
+  await trigger.click()
+  const dialog = page.getByRole('dialog', { name: '设置', exact: true })
+  await expect(dialog).toContainText('1 篇稿件')
+  await expect(page.locator('#history-sidebar-panel')).toBeHidden()
+  const downloaded = page.waitForEvent('download')
+  await dialog.getByRole('button', { name: '导出备份', exact: true }).click()
+  expect((await downloaded).suggestedFilename()).toMatch(/\.ezwriting-backup\.zip$/)
+  await expect(page.getByRole('dialog', { name: '工作台通知' })).toContainText('备份')
+  await page.keyboard.press('Escape')
+  await expect(dialog).toHaveCount(0)
+  await trigger.click()
+  await page.keyboard.press('Escape')
+  await expect(trigger).toBeFocused()
+  await page.reload()
+  await expect(page.locator('.topbar-document-title')).toHaveText('本地用户备份验证')
+})
+
+test('keeps mobile navigation, local data, and draft-sync overlays in the right order', async ({ page }, testInfo) => {
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 844 })
+    await page.goto('/')
+    const local = page.getByRole('button', { name: '设置', exact: true })
+    await expectReachable(local)
+    await local.click()
+    await expectReachable(page.getByRole('button', { name: '关闭设置' }))
+    await page.keyboard.press('Escape')
+    const history = page.getByRole('button', { name: '打开历史记录', exact: true })
+    await history.click()
+    await expectReachable(page.getByRole('button', { name: '收起历史记录', exact: true }))
+    await page.keyboard.press('Escape')
+    await expect(history).toBeFocused()
+    await page.getByRole('button', { name: '新建文档', exact: true }).click()
+  await page.getByRole('button', { name: '空白文档', exact: true }).click()
+    await expect(page.locator('.cm-content')).toBeVisible()
+    await expectReachable(local)
+    await page.screenshot({ path: testInfo.outputPath(`sidebar-mobile-${width}.png`) })
+    await page.getByRole('button', { name: /^打开发布面板/ }).click()
+    await expectReachable(page.getByRole('button', { name: '继续本地编辑' }))
+    await page.getByRole('button', { name: '继续本地编辑' }).click()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  }
+})

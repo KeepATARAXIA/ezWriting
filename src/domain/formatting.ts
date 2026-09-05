@@ -17,7 +17,7 @@ export interface ArticleFormatting {
 }
 
 export const DEFAULT_ARTICLE_FORMATTING: ArticleFormatting = {
-  sourceStyle: 'preserve',
+  sourceStyle: 'theme',
   theme: 'clean',
   font: 'serif',
   fontSize: 'medium',

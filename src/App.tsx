@@ -15,7 +15,6 @@ import {
 } from 'react'
 import {
   ArrowRight,
-  ChevronDown,
   CircleAlert,
   Clock3,
   Columns2,
@@ -25,10 +24,8 @@ import {
   FolderOpen,
   ImagePlus,
   Images,
-  Import,
   LoaderCircle,
   PanelLeft,
-  PanelLeftOpen,
   PanelRight,
   PlugZap,
   RotateCcw,
@@ -40,8 +37,12 @@ import type { ArticleDraft, MissingImageAction, MissingImageTarget, PlatformAcco
 import { DEFAULT_ARTICLE_FORMATTING, type ArticleFormatting } from './domain/formatting'
 import { DispatchControls, type BridgeState, type WorkState } from './components/dispatch-controls'
 import { HistorySidebar } from './components/history-sidebar'
+import { WorkbenchNavigation, type WorkbenchPanel } from './components/workbench-navigation'
+import { WorkbenchPanels } from './components/workbench-panels'
+import { WorkbenchHelp } from './components/workbench-help'
+import { normalizeArticleEditorTitle } from './lib/article-editor-document'
+import { readDefaultWorkspaceMode, readShowSyntax, readEditorRowStripes, saveWorkbenchPreference, type WorkspaceMode } from './lib/workbench-preferences'
 import { ResourceImage } from './components/resource-image'
-import { ResourceSidebar } from './components/resource-sidebar'
 import { isGifSource } from './lib/media-preview'
 import { WorkbenchErrorBoundary } from './components/workbench-error-boundary'
 import type { SourceEditorActiveLocation, SourceEditorFocusRequest } from './components/source-editor'
@@ -135,8 +136,6 @@ interface AppProps {
 }
 
 type EditorView = 'edit' | 'resources'
-type EditorImportMode = 'append' | 'replace'
-type WorkspaceMode = 'editor' | 'split' | 'preview'
 type ExclusiveOperation =
   | 'create-draft'
   | 'content-import'
@@ -149,7 +148,7 @@ type ExclusiveOperation =
   | 'restore-draft'
   | 'publish'
 
-const SourceEditor = lazy(() => import('./components/source-editor').then(module => ({ default: module.SourceEditor })))
+const ArticleEditor = lazy(() => import('./components/article-editor').then(module => ({ default: module.ArticleEditor })))
 const PlatformPreviews = lazy(() => import('./components/platform-previews').then(module => ({ default: module.PlatformPreviews })))
 
 const PREVIEW_PLATFORMS: Array<{ id: PreviewPlatform; label: string; accessibleLabel: string; logo: string }> = [
@@ -230,8 +229,10 @@ function clampEditorPanePercent(value: number): number {
 }
 
 function articleFormattingForTarget(formatting: ArticleFormatting, target: PlatformContentTarget): ArticleFormatting {
-  if (target === 'x' || formatting.theme === 'clean') return formatting
-  return { ...formatting, theme: 'clean' }
+  // Legacy drafts may still store "preserve"; panel settings now always control output.
+  const theme = target === 'x' ? formatting.theme : 'clean'
+  if (formatting.sourceStyle === 'theme' && formatting.theme === theme) return formatting
+  return { ...formatting, sourceStyle: 'theme', theme }
 }
 
 function readEditorPanePercents(): EditorPanePercents {
@@ -484,31 +485,6 @@ function hasArticleBodyContent(html: string): boolean {
   )
 }
 
-function appendImportedArticle(current: ArticleDraft, imported: ArticleDraft): ArticleDraft {
-  const currentSource = resolveArticleSource(current)
-  const importedSource = resolveArticleSource(imported)
-  const hasCurrentContent = hasArticleBodyContent(current.html)
-  const sameLanguage = currentSource.language === importedSource.language
-  const combinedSource = hasCurrentContent
-    ? sameLanguage
-      ? `${currentSource.text.trimEnd()}\n\n${importedSource.text.trimStart()}`
-      : sanitizeEditedHtml(`${current.html}${imported.html}`)
-    : importedSource.text
-  const combinedLanguage = hasCurrentContent && !sameLanguage ? 'html' : importedSource.language
-  const base: ArticleDraft = {
-    ...current,
-    title: current.title.trim() ? current.title : imported.title,
-    sourceText: combinedSource,
-    sourceLanguage: combinedLanguage,
-    markdown: combinedLanguage === 'markdown' ? combinedSource : undefined,
-    summary: current.summary || imported.summary,
-    tags: [...new Set([...current.tags, ...imported.tags])],
-    warnings: [...new Set([...current.warnings, ...imported.warnings])],
-    missingAssets: [...new Set([...(current.missingAssets || []), ...(imported.missingAssets || [])])],
-  }
-  return reconcileSourceUpdate(current, updateArticleFromSource(base, combinedSource))
-}
-
 function analyzeArticleContent(html: string): { characterCount: number; bodyImageCount: number; resources: ArticleResource[] } {
   const document = new DOMParser().parseFromString(html, 'text/html')
   const text = (document.body.textContent || '').replace(/\s+/g, '')
@@ -560,6 +536,14 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   const [draftRevision, setDraftRevision] = useState(0)
   const [historyExpanded, setHistoryExpanded] = useState(readHistorySidebarExpanded)
   const [historyOverlayOpen, setHistoryOverlayOpen] = useState(false)
+  const [historyUsesOverlay, setHistoryUsesOverlay] = useState(isHistoryOverlayViewport)
+  useEffect(() => {
+    const media = window.matchMedia?.('(max-width: 1440px)')
+    if (!media) return
+    const update = () => { setHistoryUsesOverlay(media.matches); setHistoryOverlayOpen(false) }
+    media.addEventListener('change', update)
+    return () => media.removeEventListener('change', update)
+  }, [])
   const [historyError, setHistoryError] = useState<string | null>(null)
   const [undoDraft, setUndoDraft] = useState<{ id: string; title: string } | null>(null)
   const [backupStatus, setBackupStatus] = useState<'idle' | 'exporting' | 'importing'>('idle')
@@ -589,40 +573,37 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   const [syncScroll, setSyncScroll] = useState(() => {
     try { return window.localStorage.getItem('dispatch.sync-scroll.v1') !== 'false' } catch { return true }
   })
-  const [resourceWidth, setResourceWidth] = useState(() => {
-    try { return Math.max(260, Math.min(440, Number(window.localStorage.getItem('dispatch.resource-width.v1')) || 300)) } catch { return 300 }
-  })
   const [resourceFilter, setResourceFilter] = useState<'all' | 'image' | 'gif' | 'video' | 'missing'>('all')
   const [failedResources, setFailedResources] = useState<Set<string>>(() => new Set())
   const [resourceRetries, setResourceRetries] = useState<Record<string, number>>({})
   useEffect(() => { setFailedResources(new Set()); setResourceRetries({}) }, [article?.id])
   const [mobileWorkspace, setMobileWorkspace] = useState<'edit' | 'preview' | 'resources'>('edit')
   const [previewDevice, setPreviewDevice] = useState<PreviewDevice>('desktop')
-  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('split')
-  const [warningsExpanded, setWarningsExpanded] = useState(false)
-  const [isImportMenuOpen, setIsImportMenuOpen] = useState(false)
+  const [previewToolbarTarget, setPreviewToolbarTarget] = useState<HTMLDivElement | null>(null)
+  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>(readDefaultWorkspaceMode)
+  const [panel, setPanel] = useState<WorkbenchPanel>(null)
+  const [helpOpen, setHelpOpen] = useState(false)
+  const [notificationsOpen, setNotificationsOpen] = useState(false)
+  const [previewNotice, setPreviewNotice] = useState<string | null>(null)
+  const [showSyntax, setShowSyntax] = useState(readShowSyntax)
+  const [editorRowStripes, setEditorRowStripes] = useState(readEditorRowStripes)
+  const [defaultWorkspace, setDefaultWorkspace] = useState(readDefaultWorkspaceMode)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const directoryInputRef = useRef<HTMLInputElement>(null)
   const backupInputRef = useRef<HTMLInputElement>(null)
-  const editorImportInputRef = useRef<HTMLInputElement>(null)
-  const editorImportMenuRef = useRef<HTMLDivElement>(null)
   const assetInputRef = useRef<HTMLInputElement>(null)
   const assetDirectoryInputRef = useRef<HTMLInputElement>(null)
   const missingImageInputRef = useRef<HTMLInputElement>(null)
   const pendingMissingImageActionRef = useRef<{ target: MissingImageTarget; action: Exclude<MissingImageAction, 'delete'> } | null>(null)
-  const pendingEditorImportModeRef = useRef<EditorImportMode>('append')
   const importContextRef = useRef<ImportContext | null>(null)
   const bridgeRequestRef = useRef(0)
   const editorGridRef = useRef<HTMLDivElement>(null)
   const editorPanePercentsRef = useRef(editorPanePercents)
   const paneResizeActiveRef = useRef(false)
   const paneResizePlatformRef = useRef<PreviewPlatform | null>(null)
-  const titleInputRef = useRef<HTMLTextAreaElement>(null)
   const resourcesPanelRef = useRef<HTMLElement>(null)
   const focusRequestIdRef = useRef(0)
   const previewLocateRequestIdRef = useRef(0)
-  const locatedFieldRef = useRef<HTMLElement | null>(null)
-  const locatedFieldTimerRef = useRef<number | null>(null)
   const activeDraftRecordRef = useRef<PersistedDraft | null>(null)
   const activeDraftIdRef = useRef<string | null>(null)
   const draftRevisionRef = useRef(0)
@@ -721,6 +702,8 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   }, [])
 
   const toggleHistorySidebar = useCallback(() => {
+    setEditorView('edit')
+    setMobileWorkspace(current => current === 'resources' ? 'edit' : current)
     if (historyOverlayOpen || isHistoryOverlayViewport()) {
       if (historyOverlayOpen) closeHistoryOverlay()
       else setHistoryOverlayOpen(true)
@@ -789,14 +772,15 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
       ...restored,
       article: restoredArticle,
     }
-    const repaired = repairLoadedMarkdownStrongWhitespace(restoredArticle)
+    const normalizedArticle = normalizeArticleEditorTitle(restoredArticle)
+    const repaired = repairLoadedMarkdownStrongWhitespace(normalizedArticle)
     const snapshot: CurrentDraftSnapshot = { ...persistedSnapshot, article: repaired.article }
     documentGenerationRef.current += 1
     draftRevisionRef.current += 1
     activeDraftRecordRef.current = persisted
     activeDraftIdRef.current = persisted.id
     autosave.markSaved(persistedSnapshot, draftRevisionRef.current)
-    if (repaired.changed) draftRevisionRef.current += 1
+    if (repaired.changed || normalizedArticle !== restoredArticle) draftRevisionRef.current += 1
     setDraftRevision(draftRevisionRef.current)
     setArticle(snapshot.article)
     setFormatting(snapshot.formatting)
@@ -811,16 +795,15 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     setActiveEditorLocation(null)
     setEditorView('edit')
     setPreviewDevice('desktop')
-    setMobileWorkspace('edit')
+    setWorkspaceMode(readDefaultWorkspaceMode())
+    setMobileWorkspace(readDefaultWorkspaceMode() === 'preview' ? 'preview' : 'edit')
     setResourceFilter('all')
-    setWarningsExpanded(false)
-    setIsImportMenuOpen(false)
     importContextRef.current = null
   }, [autosave.markSaved])
   applyPersistedDraftRef.current = applyPersistedDraft
 
   const activateNewDraft = useCallback((snapshot: DraftWorkspaceSnapshot, platform: PreviewPlatform = 'wechat') => {
-    snapshot = { ...snapshot, article: compactArticleMedia(snapshot.article) }
+    snapshot = { ...snapshot, article: compactArticleMedia(normalizeArticleEditorTitle(snapshot.article)) }
     documentGenerationRef.current += 1
     draftRevisionRef.current += 1
     activeDraftRecordRef.current = null
@@ -835,16 +818,16 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     setActivePlatform(platform)
     setResults([])
     setError(null)
+    setPreviewNotice(null)
+    setNotificationsOpen(false)
     setEditorFocusRequest(null)
     setPreviewLocateRequest(null)
     setActiveEditorLocation(null)
     setEditorView('edit')
     setPreviewDevice('desktop')
-    setWorkspaceMode('split')
-    setMobileWorkspace('edit')
+    setWorkspaceMode(readDefaultWorkspaceMode())
+    setMobileWorkspace(readDefaultWorkspaceMode() === 'preview' ? 'preview' : 'edit')
     setResourceFilter('all')
-    setWarningsExpanded(false)
-    setIsImportMenuOpen(false)
     importContextRef.current = null
     void autosave.saveNow(snapshot, draftRevisionRef.current).catch(saveError => {
       setHistoryError(`本地保存失败：${(saveError as Error).message}`)
@@ -880,11 +863,9 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     setActiveEditorLocation(null)
     setEditorView('edit')
     setPreviewDevice('desktop')
-    setWorkspaceMode('split')
-    setMobileWorkspace('edit')
+    setWorkspaceMode(readDefaultWorkspaceMode())
+    setMobileWorkspace(readDefaultWorkspaceMode() === 'preview' ? 'preview' : 'edit')
     setResourceFilter('all')
-    setWarningsExpanded(false)
-    setIsImportMenuOpen(false)
     importContextRef.current = null
   }, [autosave.cancel, autosave.markSaved])
 
@@ -967,8 +948,6 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
 
   useEffect(() => () => {
     document.body.classList.remove('is-resizing-panes')
-    if (locatedFieldTimerRef.current !== null) window.clearTimeout(locatedFieldTimerRef.current)
-    locatedFieldRef.current?.classList.remove('editor-located-target')
   }, [])
 
   useEffect(() => {
@@ -979,22 +958,6 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     return () => window.removeEventListener('focus', reconnectOnReturn)
   }, [bridgeState, refreshBridge, workState])
 
-  useEffect(() => {
-    if (!isImportMenuOpen) return
-    const closeOnOutsidePress = (event: PointerEvent) => {
-      if (!editorImportMenuRef.current?.contains(event.target as Node)) setIsImportMenuOpen(false)
-    }
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setIsImportMenuOpen(false)
-    }
-    document.addEventListener('pointerdown', closeOnOutsidePress)
-    document.addEventListener('keydown', closeOnEscape)
-    return () => {
-      document.removeEventListener('pointerdown', closeOnOutsidePress)
-      document.removeEventListener('keydown', closeOnEscape)
-    }
-  }, [isImportMenuOpen])
-
   const importFile = async (file?: File, relatedFiles: File[] = []) => {
     if (!file) return
     const operationGeneration = ++documentGenerationRef.current
@@ -1003,17 +966,14 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     setEditorFocusRequest(null)
     setPreviewLocateRequest(null)
     setActiveEditorLocation(null)
-    setWarningsExpanded(false)
     setWorkspaceMode('split')
     setWorkState('parsing')
     const assetFiles = relatedFiles.filter(related => related !== file)
-    importContextRef.current = { primary: file, assets: assetFiles }
     const sourceInfo = {
       name: file.name,
       size: file.size + assetFiles.reduce((total, asset) => total + asset.size, 0),
       assetCount: assetFiles.filter(asset => asset.type.startsWith('image/') || /\.(png|jpe?g|gif|webp|svg)$/i.test(asset.name)).length,
     }
-    setFileInfo(sourceInfo)
     try {
       const parsed = await parseContentFile(file, assetFiles, {
         operation: 'initial',
@@ -1024,8 +984,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
       importContextRef.current = { primary: file, assets: assetFiles }
     } catch (parseError) {
       if (operationGeneration !== documentGenerationRef.current) return
-      clearActiveDraft()
-      setWorkState('idle')
+      setWorkState(article ? 'ready' : 'idle')
       setError(parseError instanceof FileParseError ? parseError.message : '文件解析失败，请检查内容包后重试。')
     }
   }
@@ -1034,9 +993,11 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     if (!files.length || !beginExclusiveOperation('content-import')) return
     try {
       const primary = pickPrimaryContentFile(files)
+      await autosave.flush()
+      setPanel(null)
       await importFile(primary, files.filter(file => file !== primary))
     } catch (selectionError) {
-      setError(selectionError instanceof FileParseError ? selectionError.message : '没有找到可导入的文章文件。')
+      setError(selectionError instanceof FileParseError ? selectionError.message : `导入前保存失败，当前稿件已保留：${(selectionError as Error).message}`)
     } finally {
       endExclusiveOperation('content-import')
     }
@@ -1052,6 +1013,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     } finally {
       endExclusiveOperation('create-draft')
     }
+    setPanel(null)
     activateNewDraft(createDraftSnapshot(createBlankArticle()))
   }
 
@@ -1178,55 +1140,6 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
       setBackupNotice(`已导出脱敏诊断报告，包含最近 ${report.recentImports.length} 次导入计时。`)
     } catch (diagnosticError) {
       setHistoryError(`导出诊断报告失败：${(diagnosticError as Error).message}`)
-    }
-  }
-
-  const requestEditorImport = (mode: EditorImportMode) => {
-    if (exclusiveOperationRef.current !== null) return
-    pendingEditorImportModeRef.current = mode
-    setIsImportMenuOpen(false)
-    if (editorImportInputRef.current) {
-      editorImportInputRef.current.value = ''
-      editorImportInputRef.current.click()
-    }
-  }
-
-  const importIntoEditor = async (file?: File) => {
-    if (!file || !beginExclusiveOperation('content-import')) return
-    const mode = pendingEditorImportModeRef.current
-    const targetDraftId = activeDraftIdRef.current
-    const operationGeneration = documentGenerationRef.current
-    setError(null)
-    setResults([])
-    setEditorFocusRequest(null)
-    setPreviewLocateRequest(null)
-    setActiveEditorLocation(null)
-    setWarningsExpanded(false)
-    setWorkState('parsing')
-
-    try {
-      const parsed = await parseContentFile(file, [], {
-        operation: mode,
-        onDiagnostic: recordImportDiagnostic,
-      })
-      if (operationGeneration !== documentGenerationRef.current || activeDraftIdRef.current !== targetDraftId) return
-      setArticle(current => {
-        if (!current) return parsed
-        if (mode === 'replace') return { ...parsed, id: current.id, importedAt: current.importedAt }
-        return appendImportedArticle(current, parsed)
-      })
-      importContextRef.current = { primary: file, assets: [] }
-      if (mode === 'replace') {
-        setFileInfo({ name: file.name, size: file.size, assetCount: 0 })
-      }
-      setEditorView('edit')
-      setWorkState('ready')
-      markDraftDirty()
-    } catch (parseError) {
-      setWorkState('ready')
-      setError(parseError instanceof FileParseError ? parseError.message : '文件解析失败，当前内容已保留。')
-    } finally {
-      endExclusiveOperation('content-import')
     }
   }
 
@@ -1416,28 +1329,13 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     updateEditorPanePercent(next, true, activePlatform)
   }
 
-  const locateEditorField = (element: HTMLElement | null, focusTarget?: HTMLElement | null) => {
-    if (!element) return
-    if (locatedFieldTimerRef.current !== null) window.clearTimeout(locatedFieldTimerRef.current)
-    locatedFieldRef.current?.classList.remove('editor-located-target')
-    locatedFieldRef.current = element
-    element.classList.add('editor-located-target')
-    element.scrollIntoView?.({ block: 'center', behavior: 'smooth' })
-    focusTarget?.focus()
-    locatedFieldTimerRef.current = window.setTimeout(() => {
-      element.classList.remove('editor-located-target')
-      if (locatedFieldRef.current === element) locatedFieldRef.current = null
-      locatedFieldTimerRef.current = null
-    }, 2000)
-  }
-
   const editPreviewTarget = (target: PreviewEditTarget) => {
     setMobileWorkspace('edit')
     setEditorView('edit')
     setActiveEditorLocation(null)
     setPreviewLocateRequest(null)
     if (target.kind === 'title') {
-      window.requestAnimationFrame(() => locateEditorField(titleInputRef.current, titleInputRef.current))
+      setEditorFocusRequest({ line: 0, requestId: ++focusRequestIdRef.current })
       return
     }
     if (!article) return
@@ -1453,29 +1351,11 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     setActiveEditorLocation(location)
   }
 
-  const locateResourceInPreview = (resource: ArticleResource) => {
-    if (resource.kind !== 'body' || resource.blockIndex === undefined || resource.blockIndex < 0) return
-    setWorkspaceMode('split')
-    setMobileWorkspace('preview')
-    setPreviewDevice('desktop')
-    previewLocateRequestIdRef.current += 1
-    setPreviewLocateRequest({
-      blockIndex: resource.blockIndex,
-      requestId: previewLocateRequestIdRef.current,
-    })
-  }
-
-  const updateArticleTitle = (title: string) => {
-    if (exclusiveOperationRef.current !== null) return
-    setArticle(current => current ? { ...current, title: title.replace(/\s*[\r\n]+\s*/g, ' ') } : current)
-    markDraftDirty()
-  }
-
-  const updateArticleSource = (sourceText: string) => {
+  const updateArticleSource = (sourceText: string, title: string) => {
     if (exclusiveOperationRef.current !== null) return
     startTransition(() => {
       setArticle(current => current
-        ? reconcileSourceUpdate(current, updateArticleFromSource(current, compactLocalImages(compactLocalVideoData(sourceText))))
+        ? reconcileSourceUpdate(current, updateArticleFromSource({ ...current, title }, compactLocalImages(compactLocalVideoData(sourceText))))
         : current)
       markDraftDirty()
     })
@@ -1718,6 +1598,13 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     void refreshBridge()
   }
 
+  const toggleResources = () => {
+    const opening = editorView !== 'resources'
+    if (workspaceMode === 'preview') setWorkspaceMode('split')
+    setEditorView(opening ? 'resources' : 'edit')
+    setMobileWorkspace(opening ? 'resources' : 'edit')
+  }
+
   const isPublishing = workState === 'publishing'
   const isOperationLocked = exclusiveOperation !== null
   const hasPublishableArticle = useMemo(() => Boolean(article && hasArticleBodyContent(article.html)), [article?.html])
@@ -1771,19 +1658,30 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   const visibleResources = articleContent.resources.filter(resource => resourceFilter === 'all' || (resourceFilter === 'missing' ? resource.missingTarget || !resource.src : resource.mediaType === resourceFilter))
   const connectedPlatformCount = accounts.filter(account => platformAccountType(account) !== 'zip-download').length
 
+  const changeShowSyntax = (enabled: boolean) => {
+    setShowSyntax(enabled)
+    saveWorkbenchPreference('dispatch.show-syntax.v1', String(enabled))
+  }
+  const openPanel = (next: WorkbenchPanel) => {
+    closeHistoryOverlay(false)
+    setNotificationsOpen(false)
+    setPanel(next)
+  }
+  const videos = articleContent.resources.filter(resource => resource.mediaType === 'video').length
+  const gifs = articleContent.resources.filter(resource => resource.mediaType === 'gif').length
+  const missing = article?.missingAssets?.length || 0
+  const mediaNotice = [missing ? `${missing} 张图片待补齐` : '', videos ? `${videos} 个视频需在目标平台手动上传` : '', activePlatform === 'xhs' && gifs ? `${gifs} 个 GIF 将输出为静态图片` : ''].filter(Boolean).join(' · ')
+  const notificationCount = (article?.warnings.length || 0) + [mediaNotice, error, historyError, autosave.error, backupNotice, backupProgress, undoDraft, previewNotice, bridgeState === 'missing' || bridgeState === 'error'].filter(Boolean).length
+  useEffect(() => {
+    if (error || historyError || autosave.error || backupNotice || undoDraft || previewNotice) { setPanel(null); setNotificationsOpen(true) }
+  }, [error, historyError, autosave.error, backupNotice, undoDraft, previewNotice])
+
   return (
     <div className="app-shell article-open">
+      <input ref={fileInputRef} type="file" accept=".md,.markdown,.html,.htm,.zip" onChange={event => { void importSelection(Array.from(event.target.files || [])); event.target.value = '' }} hidden />
+      <input ref={directoryInputRef} type="file" multiple onChange={event => { void importSelection(Array.from(event.target.files || [])); event.target.value = '' }} {...{ webkitdirectory: '', directory: '' }} hidden />
       <header ref={topbarRef} className={`topbar ${article ? 'workbench-topbar' : ''}`}>
         <div className="brand-cluster">
-          <button
-            ref={historyTriggerRef}
-            type="button"
-            className="history-mobile-trigger"
-            aria-label="打开历史记录"
-            aria-expanded={historyOverlayOpen}
-            aria-controls="history-sidebar-panel"
-            onClick={() => setHistoryOverlayOpen(true)}
-          ><PanelLeftOpen size={18} /></button>
           <a className="brand" href="/" aria-label="EZWRITING 首页">
             <span className="brand-mark" aria-hidden="true"><img src={brandLogo} alt="" /></span>
             <span>EZWRITING</span>
@@ -1797,92 +1695,13 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
             title="GitHub 仓库"
           ><img src={githubLogo} alt="" aria-hidden="true" /></a>
         </div>
-        {article ? (
+        {article ? (<>
+          <div className="topbar-document-context">
+            <span className="topbar-document-title" title={article.title || '未命名稿件'}>{article.title || '未命名稿件'}</span>
+            <span className={`workbench-save-state ${autosave.status}`} role="status" aria-label="本地保存状态"><span className="save-state-dot" aria-hidden="true" />{({ idle: '未保存', dirty: '待保存', saving: '保存中', saved: '已保存', error: '保存失败' })[autosave.status]}</span>
+          </div>
           <div className="topbar-workbench" role="group" aria-label="工作台操作">
-            <nav className="workbench-navigation topbar-command-flow" aria-label="新建、平台与视图">
-              <button
-                type="button"
-                className="new-document-button topbar-document-command"
-                data-topbar-group="new"
-                aria-label="新建文档"
-                onClick={() => void createNewArticle()}
-                disabled={workState === 'parsing' || isOperationLocked}
-                title="保存当前稿件并新建文档"
-              >
-                <FilePlus2 size={16} />
-                <span>新建</span>
-              </button>
-
-              <span className="workbench-navigation-divider" aria-hidden="true" />
-
-              <div className="platform-switcher topbar-platform-group" data-topbar-group="platform" role="tablist" aria-label="选择预览平台">
-                {PREVIEW_PLATFORMS.map(platform => (
-                  <button
-                    type="button"
-                    role="tab"
-                    key={platform.id}
-                    aria-label={platform.accessibleLabel}
-                    aria-selected={activePlatform === platform.id}
-                    aria-controls="platform-preview-panel"
-                    className={activePlatform === platform.id ? 'active' : ''}
-                    disabled={isOperationLocked}
-                    onClick={() => setActivePlatform(platform.id)}
-                  >
-                    <span className={`platform-logo ${platform.id}`} aria-hidden="true"><img src={platform.logo} alt="" /></span>
-                    <strong>{platform.label}</strong>
-                  </button>
-                ))}
-              </div>
-
-              <span className="workbench-navigation-divider" aria-hidden="true" />
-
-              <div className="workspace-mode-switcher topbar-view-group" data-topbar-group="view" role="group" aria-label="工作区显示方式">
-                <button
-                  type="button"
-                  className={workspaceMode === 'editor' ? 'active' : ''}
-                  aria-pressed={workspaceMode === 'editor'}
-                  aria-label="仅显示编辑端"
-                  title="仅显示编辑端"
-                  onClick={() => { setWorkspaceMode('editor'); setMobileWorkspace('edit'); setEditorView('edit') }}
-                ><PanelLeft size={17} /></button>
-                <button
-                  type="button"
-                  className={workspaceMode === 'split' ? 'active' : ''}
-                  aria-pressed={workspaceMode === 'split'}
-                  aria-label="同时显示编辑端和预览端"
-                  title="同时显示编辑端和预览端"
-                  onClick={() => setWorkspaceMode('split')}
-                ><Columns2 size={17} /></button>
-                <button
-                  type="button"
-                  className={workspaceMode === 'preview' ? 'active' : ''}
-                  aria-pressed={workspaceMode === 'preview'}
-                  aria-label="仅显示预览端"
-                  title="仅显示预览端"
-                  onClick={() => { setWorkspaceMode('preview'); setMobileWorkspace('preview') }}
-                ><PanelRight size={17} /></button>
-              </div>
-            </nav>
-
             <div className="workbench-actions" role="group" aria-label="发布状态与操作">
-              <span className={`workbench-save-state ${autosave.status}`} role="status" aria-label="本地保存状态">{({ idle: '未保存', dirty: '待保存', saving: '保存中', saved: '已保存', error: '保存失败' })[autosave.status]}</span>
-              <button
-                type="button"
-                className={`extension-chip topbar-status-command ${bridgeState}`}
-                data-topbar-group="status"
-                onClick={handleBridgeStatusClick}
-                disabled={bridgeState === 'checking' || isOperationLocked}
-                aria-label={bridgeState === 'missing' || bridgeState === 'error' ? '打开发布引擎安装指引' : '重新检测发布引擎'}
-                aria-expanded={bridgeState === 'missing' || bridgeState === 'error' ? isDispatchDrawerOpen : undefined}
-                aria-haspopup={bridgeState === 'missing' || bridgeState === 'error' ? 'dialog' : undefined}
-                aria-live="polite"
-              >
-                {bridgeState === 'checking' && <LoaderCircle className="spin" size={15} />}
-                {bridgeState === 'connected' && <PlugZap size={15} />}
-                {(bridgeState === 'missing' || bridgeState === 'error') && <CircleAlert size={15} />}
-                {bridgeState === 'checking' ? '正在连接发布引擎' : bridgeState === 'connected' ? `引擎已就绪 · ${connectedPlatformCount} 平台` : bridgeState === 'error' ? '引擎连接异常' : '引擎待连接'}
-              </button>
-
               <div className="topbar-publish-group" data-topbar-group="publish" role="group" aria-label="发布操作">
                 <DispatchControls
                   accounts={accounts}
@@ -1915,7 +1734,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
               }}
             />
           </div>
-        ) : (
+        </>) : (
           <div className="topbar-meta home-topbar-meta">
             <button
               type="button"
@@ -1958,6 +1777,57 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
       </header>
 
       <div className="workbench-layout">
+        <WorkbenchNavigation
+          historyOpen={historyUsesOverlay ? historyOverlayOpen : historyExpanded}
+          draftCount={homeDrafts.length}
+          interactionLocked={isOperationLocked || hydrationPhase === 'loading'}
+          historyTriggerRef={historyTriggerRef}
+          onNew={() => openPanel('new')}
+          onHistory={toggleHistorySidebar}
+          panel={panel}
+          onPanelChange={openPanel}
+          onHelp={() => { closeHistoryOverlay(false); setHelpOpen(true) }}
+          notificationsOpen={notificationsOpen}
+          notificationCount={notificationCount}
+          onNotificationsChange={setNotificationsOpen}
+        >
+      <div className="workbench-notices">
+        {error && <div className="local-history-notice error" role="alert"><span>{error}</span><button type="button" aria-label="关闭错误提示" onClick={() => setError(null)}><XCircle size={16} /></button></div>}
+        {previewNotice && <div className="local-history-notice" role="status"><span>{previewNotice}</span><button type="button" aria-label="关闭输出提示" onClick={() => setPreviewNotice(null)}><XCircle size={16} /></button></div>}
+        {article?.warnings.map((warning, index) => <p className="notification-warning" key={`${index}-${warning}`}>{warning}</p>)}
+        {mediaNotice && <div className="notification-warning"><p>{mediaNotice}</p><button type="button" onClick={() => { setNotificationsOpen(false); setEditorView('resources'); setWorkspaceMode('split'); setMobileWorkspace('resources') }}>查看文档素材</button></div>}
+        {(bridgeState === 'missing' || bridgeState === 'error') && <div className="notification-warning"><p>{bridgeState === 'error' ? '发布引擎连接异常' : '发布引擎待连接'}</p><button type="button" onClick={() => { setNotificationsOpen(false); setIsDispatchDrawerOpen(true) }}>查看连接指引</button></div>}
+        {backupProgress && <div className="local-history-notice" role="status"><span>{backupProgress}</span><button type="button" onClick={() => backupControllerRef.current?.abort()}>取消备份操作</button></div>}
+        {autosave.error && (
+          <div className="local-history-notice error" role="alert">
+            <span>自动保存失败：{autosave.error.message}。当前编辑仍保留，请重试或导出备份。</span>
+            <div className="notice-actions">
+              <button type="button" aria-label="重试保存" disabled={isOperationLocked || autosave.status === 'saving'} onClick={() => void autosave.flush().catch(() => undefined)}>重试保存</button>
+              <button type="button" disabled={isOperationLocked} onClick={() => void exportLocalData()}>导出备份</button>
+            </div>
+          </div>
+        )}
+        {historyError && (
+          <div className="local-history-notice error" role="alert">
+            <span>{historyError}</span>
+            <button type="button" className="notice-close" aria-label="关闭历史操作提示" onClick={() => setHistoryError(null)}><XCircle size={16} /></button>
+          </div>
+        )}
+        {undoDraft && (
+          <div className="history-undo-notice" role="status">
+            <span>“{undoDraft.title.trim() || '未命名稿件'}”已删除</span>
+            <button type="button" disabled={isOperationLocked} onClick={() => void undoDeleteHistoryDraft(undoDraft.id)}><Undo2 size={16} /> 撤销</button>
+            <button type="button" className="notice-close" aria-label="关闭撤销删除提示" onClick={() => setUndoDraft(null)}><XCircle size={16} /></button>
+          </div>
+        )}
+        {backupNotice && (
+          <div className="local-history-notice" role="status">
+            <span>{backupNotice}</span>
+            <button type="button" className="notice-close" aria-label="关闭备份提示" onClick={() => setBackupNotice(null)}><XCircle size={16} /></button>
+          </div>
+        )}
+      </div>
+        </WorkbenchNavigation>
         <button
           type="button"
           className={`history-sidebar-backdrop ${historyOverlayOpen ? 'visible' : ''}`}
@@ -1977,28 +1847,81 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
             drafts={drafts}
             activeDraftId={article?.id}
             activeSaveStatus={autosave.status}
-            isExpanded={historyOverlayOpen || historyExpanded}
+            isExpanded={historyUsesOverlay ? historyOverlayOpen : historyExpanded}
             onToggleExpanded={toggleHistorySidebar}
             onSelectDraft={id => void selectHistoryDraft(id)}
             onChangeKind={(id, kind) => void changeHistoryDraftKind(id, kind)}
             onDeleteDraft={id => void deleteHistoryDraft(id)}
-            onExportBackup={() => void exportLocalData()}
-            onImportBackup={() => {
-              if (backupInputRef.current) {
-                backupInputRef.current.value = ''
-                backupInputRef.current.click()
-              }
-            }}
-            onExportDiagnostics={exportReliabilityData}
-            backupStatus={backupStatus}
             interactionLocked={isOperationLocked}
-            storagePersistent={storagePersistent}
           />
         </div>
 
       <main ref={workspaceRef} className="workspace article-open">
         <section className="work-area">
           <div className={`editor-shell ${article ? 'has-article' : 'empty-workbench'}`}>
+            {article && <div className={`workbench-toolbar workspace-mode-${workspaceMode} mobile-workspace-${mobileWorkspace}`} aria-label="当前稿件操作">
+              <div className="workbar-document-tools">
+                <nav className="workbench-navigation workbar-navigation" aria-label="平台与视图">
+                  <div className="platform-switcher topbar-platform-group" data-topbar-group="platform" role="tablist" aria-label="选择预览平台">
+                    {PREVIEW_PLATFORMS.map(platform => (
+                      <button
+                        type="button"
+                        role="tab"
+                        key={platform.id}
+                        title={platform.accessibleLabel}
+                        aria-label={platform.accessibleLabel}
+                        aria-selected={activePlatform === platform.id}
+                        aria-controls="platform-preview-panel"
+                        className={activePlatform === platform.id ? 'active' : ''}
+                        disabled={isOperationLocked}
+                        onClick={() => setActivePlatform(platform.id)}
+                      >
+                        <span className={`platform-logo ${platform.id}`} aria-hidden="true"><img src={platform.logo} alt="" /></span>
+                      </button>
+                    ))}
+                  </div>
+
+                  <span className="workbench-navigation-divider" aria-hidden="true" />
+
+                  <div className="workspace-mode-switcher topbar-view-group" data-topbar-group="view" role="group" aria-label="工作区显示方式">
+                    <button
+                      type="button"
+                      className={workspaceMode === 'editor' ? 'active' : ''}
+                      aria-pressed={workspaceMode === 'editor'}
+                      aria-label="仅显示编辑端"
+                      title="仅显示编辑端"
+                      onClick={() => { setWorkspaceMode('editor'); setMobileWorkspace('edit'); setEditorView('edit') }}
+                    ><PanelLeft size={18} /></button>
+                    <button
+                      type="button"
+                      className={workspaceMode === 'split' ? 'active' : ''}
+                      aria-pressed={workspaceMode === 'split'}
+                      aria-label="同时显示编辑端和预览端"
+                      title="同时显示编辑端和预览端"
+                      onClick={() => setWorkspaceMode('split')}
+                    ><Columns2 size={18} /></button>
+                    <button
+                      type="button"
+                      className={workspaceMode === 'preview' ? 'active' : ''}
+                      aria-pressed={workspaceMode === 'preview'}
+                      aria-label="仅显示预览端"
+                      title="仅显示预览端"
+                      onClick={() => { setWorkspaceMode('preview'); setMobileWorkspace('preview') }}
+                    ><PanelRight size={18} /></button>
+                  </div>
+                </nav>
+                <nav className="mobile-workspace-tabs" aria-label="手机工作区">
+                  {(['edit', 'preview'] as const).map(view => (
+                    <button type="button" key={view} aria-pressed={mobileWorkspace === view} onClick={() => {
+                      setMobileWorkspace(view)
+                      setWorkspaceMode('split')
+                      if (view !== 'preview') setEditorView(view)
+                    }} aria-label={view === 'edit' ? '编辑' : '预览'} title={view === 'edit' ? '编辑' : '预览'}>{view === 'edit' ? <PanelLeft size={18} /> : <PanelRight size={18} />}</button>
+                  ))}
+                </nav>
+              </div>
+              <div ref={setPreviewToolbarTarget} className="workbar-preview-tools" />
+            </div>}
             {hydrationPhase === 'loading' ? (
               <section className="history-hydration-state" aria-live="polite">
                 <LoaderCircle className="spin" size={24} />
@@ -2007,8 +1930,6 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
             ) : !article ? (
               <section className="empty-import-stage">
                 <div className="empty-workbench-content">
-                  <input ref={fileInputRef} type="file" accept=".md,.markdown,.html,.htm,.zip" onChange={event => void importSelection(Array.from(event.target.files || []))} hidden />
-                  <input ref={directoryInputRef} type="file" multiple onChange={event => void importSelection(Array.from(event.target.files || []))} {...{ webkitdirectory: '', directory: '' }} hidden />
                   <section className="empty-workbench-hero" aria-labelledby="empty-workbench-title">
                     <div className="home-platform-list" aria-label="支持的内容平台">
                       {PREVIEW_PLATFORMS.map(platform => (
@@ -2022,7 +1943,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                     <h1 id="empty-workbench-title">写一次，适配并发布到多个平台</h1>
                     <p>支持微信公众号、小红书、X 等平台的内容编辑、预览与分发</p>
                     <div className="drop-actions">
-                      <button type="button" className="primary-button" onClick={() => void createNewArticle()} disabled={workState === 'parsing' || isOperationLocked}>
+                      <button type="button" className="primary-button" onClick={() => openPanel('new')} disabled={workState === 'parsing' || isOperationLocked}>
                         <FilePlus2 size={19} />
                         开始写稿
                         <ArrowRight size={18} />
@@ -2086,13 +2007,6 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                     <div className="home-import-actions">
                       <button type="button" className="directory-link" onClick={() => directoryInputRef.current?.click()} disabled={workState === 'parsing' || isOperationLocked}><FolderOpen size={17} /> 选择文件夹</button>
                     </div>
-                    {error && (
-                      <div className="import-error" role="alert">
-                        <CircleAlert size={17} />
-                        <span>{error}</span>
-                        <button type="button" onClick={() => setError(null)} aria-label="关闭错误提示"><XCircle size={16} /></button>
-                      </div>
-                    )}
                   </section>
 
                   {homeDrafts.length > 0 && (
@@ -2155,27 +2069,24 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
             ) : (
               <div
                 ref={editorGridRef}
-                className={`editor-grid workspace-mode-${workspaceMode} mobile-workspace-${mobileWorkspace} ${editorView === 'resources' ? 'resources-open' : ''}`}
+                className={`editor-grid workspace-mode-${workspaceMode} mobile-workspace-${mobileWorkspace}`}
                 data-preview-platform={activePlatform}
-                style={{ '--editor-pane-width': `${editorPanePercent}%`, '--editor-weight': `${editorPanePercent}fr`, '--preview-weight': `${100 - editorPanePercent}fr`, '--resource-width': `${resourceWidth}px` } as CSSProperties}
+                style={{ '--editor-pane-width': `${editorPanePercent}%`, '--editor-weight': `${editorPanePercent}fr`, '--preview-weight': `${100 - editorPanePercent}fr` } as CSSProperties}
               >
-                  <nav className="mobile-workspace-tabs" aria-label="手机工作区">
-                    {(['edit', 'preview', 'resources'] as const).map(view => (
-                      <button type="button" key={view} aria-pressed={mobileWorkspace === view} onClick={() => {
-                        setMobileWorkspace(view)
-                        setWorkspaceMode('split')
-                        if (view !== 'preview') setEditorView(view)
-                      }}>{view === 'edit' ? '编辑' : view === 'preview' ? '预览' : `资源 ${articleContent.resources.length}`}</button>
-                    ))}
-                  </nav>
+
+                  <section className="paper-panel">
+                    <div className="article-workspace-pane">
+                      <div className="editor-view-tabs" role="group" aria-label="当前稿件内容">
+                        <button type="button" aria-pressed={editorView === 'edit'} title="正文" aria-label="正文" onClick={() => { setEditorView('edit'); setMobileWorkspace('edit') }}><FileText size={16} /><span>正文</span></button>
+                        <button type="button" className="document-assets-tab" aria-controls="article-resource-view" aria-label="文档素材" title="仅管理当前稿件的素材" aria-pressed={editorView === 'resources'} onClick={toggleResources}><Images size={16} /><span>文档素材</span><small>{articleContent.resources.length}</small></button>
+                      </div>
                   {editorView === 'resources' && (
-                    <ResourceSidebar width={resourceWidth} onWidthChange={setResourceWidth} onClose={() => { setEditorView('edit'); setMobileWorkspace('edit') }}>
                     <section ref={resourcesPanelRef} className="resource-panel editor-view-panel" id="article-resource-view" role="tabpanel" aria-labelledby="resource-panel-heading">
                       <header className="resource-panel-heading">
                         <div>
                           <p>DOCUMENT ASSETS</p>
-                          <h2 id="resource-panel-heading">文档资源</h2>
-                          <span>图片、GIF 与视频集中管理；点击缩略图定位正文。</span>
+                          <h2 id="resource-panel-heading">文档素材</h2>
+                          <span>仅属于当前稿件；点击缩略图返回正文。</span>
                         </div>
                         <div className="resource-actions">
                           <input ref={assetInputRef} type="file" accept="image/*" multiple onChange={event => void supplementAssets(Array.from(event.target.files || []))} hidden />
@@ -2206,9 +2117,9 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                               <button
                                 type="button"
                                 className="resource-card-locate"
-                                aria-label={`在右侧定位：${resource.name}`}
+                                aria-label={`在正文定位：${resource.name}`}
                                 disabled={resource.blockIndex === undefined || resource.blockIndex < 0}
-                                onClick={() => locateResourceInPreview(resource)}
+                                onClick={() => editPreviewTarget({ kind: 'body', blockIndex: resource.blockIndex ?? 0 })}
                               >
                                 <span className="resource-thumbnail">
                                   {resource.missingTarget || !resource.src
@@ -2246,118 +2157,19 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                         <div className="resource-empty"><Images size={25} /><strong>正文里还没有资源</strong><span>在编辑工具栏中插入图片或视频后，会自动出现在这里。</span></div>
                       )}
                     </section>
-                    </ResourceSidebar>
                   )}
-                  <section className="paper-panel">
-                    <div className="article-workspace-pane">
-                  {error && (
-                    <div className="error-banner" role="alert">
-                      <CircleAlert size={18} />
-                      <span>{error}</span>
-                      <button type="button" onClick={() => setError(null)} aria-label="关闭错误提示"><XCircle size={17} /></button>
-                    </div>
-                  )}
-                  {article.warnings.length > 0 && (
-                    <aside className={`warning-notice ${warningsExpanded ? 'expanded' : ''}`}>
-                      <button type="button" className="warning-summary" aria-expanded={warningsExpanded} onClick={() => setWarningsExpanded(current => !current)}>
-                        <CircleAlert size={17} />
-                        <strong>{(article.missingAssets?.length || 0) > 0 ? `${article.missingAssets?.length} 张图片待处理` : `${article.warnings.length} 条导入提醒`}</strong>
-                        <span>{warningsExpanded ? '收起详情' : '查看详情'}</span>
-                        <ChevronDown size={16} aria-hidden="true" />
-                      </button>
-                      {warningsExpanded && <div className="warning-details">{article.warnings.map(warning => <p key={warning}>{warning}</p>)}</div>}
-                    </aside>
-                  )}
-
-                  <nav className="editor-view-tabs" aria-label="编辑区视图">
-                    <div className="editor-view-tab-list" role="tablist">
-                      <button
-                        type="button"
-                        role="tab"
-                        aria-selected={editorView === 'edit'}
-                        aria-controls="article-edit-view"
-                        className={editorView === 'edit' ? 'active' : ''}
-                        onClick={() => { setEditorView('edit'); setMobileWorkspace('edit') }}
-                      >编辑</button>
-                      <button
-                        type="button"
-                        role="tab"
-                        aria-selected={editorView === 'resources'}
-                        aria-controls="article-resource-view"
-                        className={editorView === 'resources' ? 'active' : ''}
-                        onClick={() => { setEditorView(current => current === 'resources' ? 'edit' : 'resources'); setMobileWorkspace('resources') }}
-                      ><Images size={15} />资源 <span>{articleContent.resources.length}</span></button>
-                    </div>
-                    <div className="editor-import" ref={editorImportMenuRef}>
-                      <input
-                        ref={editorImportInputRef}
-                        className="editor-import-input"
-                        type="file"
-                        accept=".md,.markdown,.html,.htm,.zip"
-                        hidden
-                        onChange={event => {
-                          const file = event.target.files?.[0]
-                          void importIntoEditor(file)
-                          event.target.value = ''
-                        }}
-                      />
-                      <button
-                        type="button"
-                        className="editor-import-trigger"
-                        aria-label="导入文档"
-                        aria-haspopup="menu"
-                        aria-expanded={isImportMenuOpen}
-                        disabled={workState === 'parsing' || isOperationLocked}
-                        onClick={() => setIsImportMenuOpen(current => !current)}
-                      >
-                        {workState === 'parsing' ? <LoaderCircle className="spin" size={15} /> : <Import size={15} />}
-                        <span>{workState === 'parsing' ? '导入中' : '导入'}</span>
-                        <ChevronDown size={14} />
-                      </button>
-                      {isImportMenuOpen && (
-                        <div className="editor-import-menu" role="menu" aria-label="选择导入方式">
-                          <button type="button" role="menuitem" onClick={() => requestEditorImport('append')}>
-                            <span className="import-option-icon append"><FilePlus2 size={17} /></span>
-                            <span><strong>追加到当前内容</strong><small>保留正在写的内容，将文件接在正文后面</small></span>
-                          </button>
-                          <button type="button" role="menuitem" onClick={() => requestEditorImport('replace')}>
-                            <span className="import-option-icon replace"><RotateCcw size={17} /></span>
-                            <span><strong>替换当前内容</strong><small>清空当前标题、正文与资源，使用导入文件</small></span>
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </nav>
-
-                    <div className="article-form editor-view-panel" id="article-edit-view" role="tabpanel">
-                      <label className="editor-title-field" htmlFor="article-title">
-                        <span className="editor-title-field-heading">
-                          <strong>文章标题</strong>
-                          <small>{article.title.length > 0 ? `${Array.from(article.title).length} 字` : '可选'}</small>
-                        </span>
-                        <textarea
-                          ref={titleInputRef}
-                          id="article-title"
-                          className="title-input"
-                          aria-label="文章标题"
-                          placeholder="请输入标题（可选）"
-                          rows={1}
-                          value={article.title}
-                          disabled={isOperationLocked}
-                          onKeyDown={event => {
-                            if (event.key === 'Enter') event.preventDefault()
-                          }}
-                          onChange={event => updateArticleTitle(event.target.value)}
-                        />
-                      </label>
-
+                    <div className="article-form editor-view-panel" id="article-edit-view" role="tabpanel" hidden={editorView !== 'edit'}>
                       <section className="content-editor-section" aria-label="正文内容">
                         <WorkbenchErrorBoundary
                           resetKey={article.id}
                           fallback={<div className="article-editor-loading" role="alert">编辑器暂时无法显示，请切换稿件后重试。</div>}
                         >
                           <Suspense fallback={<div className="article-editor-loading">正在准备编辑器…</div>}>
-                            <SourceEditor
+                            <ArticleEditor
+                              title={article.title}
+                              showSyntax={showSyntax}
+                              rowStripes={editorRowStripes}
+                              onShowSyntaxChange={changeShowSyntax}
                               key={article.id}
                               value={articleSource?.text || ''}
                               language={articleSource?.language || 'markdown'}
@@ -2367,7 +2179,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                                 sourceLabel: sourceLabel(article),
                               }}
                               focusRequest={editorFocusRequest}
-                              readOnly={isOperationLocked || workspaceMode === 'preview'}
+                              readOnly={isOperationLocked || workspaceMode === 'preview' || editorView === 'resources'}
                               syncScroll={syncScroll}
                               onChange={updateArticleSource}
                               onActiveBlockChange={updateActiveEditorLocation}
@@ -2411,14 +2223,9 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                           <div className={`preview-device-frame ${previewDevice}`}>
                             <PlatformPreviews
                               key={article.id}
+                              toolbarTarget={previewToolbarTarget}
                               activePlatform={activePlatform}
-                              syncScroll={syncScroll}
-                              onSyncScrollChange={enabled => {
-                                setSyncScroll(enabled)
-                                setActiveEditorLocation(null)
-                                setPreviewLocateRequest(null)
-                                try { window.localStorage.setItem('dispatch.sync-scroll.v1', String(enabled)) } catch { /* Session preference still works. */ }
-                              }}
+                              onNotice={setPreviewNotice}
                               title={article.title}
                               html={previewHtml}
                               sourceText={deferredArticleSourceText}
@@ -2451,37 +2258,38 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
         </section>
       </main>
       </div>
-      <div className="workbench-notices" aria-label="工作台通知">
-        {backupProgress && <div className="local-history-notice" role="status"><span>{backupProgress}</span><button type="button" onClick={() => backupControllerRef.current?.abort()}>取消备份操作</button></div>}
-        {autosave.error && (
-          <div className="local-history-notice error" role="alert">
-            <span>自动保存失败：{autosave.error.message}。当前编辑仍保留，请重试或导出备份。</span>
-            <div className="notice-actions">
-              <button type="button" aria-label="重试保存" disabled={isOperationLocked || autosave.status === 'saving'} onClick={() => void autosave.flush().catch(() => undefined)}>重试保存</button>
-              <button type="button" disabled={isOperationLocked} onClick={() => void exportLocalData()}>导出备份</button>
-            </div>
-          </div>
-        )}
-        {historyError && (
-          <div className="local-history-notice error" role="alert">
-            <span>{historyError}</span>
-            <button type="button" className="notice-close" aria-label="关闭历史操作提示" onClick={() => setHistoryError(null)}><XCircle size={16} /></button>
-          </div>
-        )}
-        {undoDraft && (
-          <div className="history-undo-notice" role="status">
-            <span>“{undoDraft.title.trim() || '未命名稿件'}”已删除</span>
-            <button type="button" disabled={isOperationLocked} onClick={() => void undoDeleteHistoryDraft(undoDraft.id)}><Undo2 size={16} /> 撤销</button>
-            <button type="button" className="notice-close" aria-label="关闭撤销删除提示" onClick={() => setUndoDraft(null)}><XCircle size={16} /></button>
-          </div>
-        )}
-        {backupNotice && (
-          <div className="local-history-notice" role="status">
-            <span>{backupNotice}</span>
-            <button type="button" className="notice-close" aria-label="关闭备份提示" onClick={() => setBackupNotice(null)}><XCircle size={16} /></button>
-          </div>
-        )}
-      </div>
+
+      <WorkbenchPanels panel={panel} onClose={() => setPanel(null)}
+        onBlank={() => void createNewArticle()}
+        onFile={() => fileInputRef.current?.click()} onDirectory={() => directoryInputRef.current?.click()}
+        locked={isOperationLocked || hydrationPhase === 'loading'}
+        syncScroll={syncScroll} onSyncScroll={enabled => {
+          setSyncScroll(enabled); setActiveEditorLocation(null); setPreviewLocateRequest(null)
+          saveWorkbenchPreference('dispatch.sync-scroll.v1', String(enabled))
+        }}
+        showSyntax={showSyntax} onShowSyntax={changeShowSyntax}
+        editorRowStripes={editorRowStripes} onEditorRowStripes={enabled => {
+          setEditorRowStripes(enabled)
+          saveWorkbenchPreference('dispatch.editor-row-stripes.v1', String(enabled))
+        }}
+        defaultWorkspace={defaultWorkspace} onDefaultWorkspace={mode => { setDefaultWorkspace(mode); saveWorkbenchPreference('dispatch.default-workspace.v1', mode) }}
+        onResetLayout={() => {
+          const defaults = { ...DEFAULT_EDITOR_PANE_PERCENT_BY_PLATFORM }
+          editorPanePercentsRef.current = defaults; setEditorPanePercents(defaults); saveEditorPanePercents(defaults)
+        }}
+        draftCount={homeDrafts.length} storagePersistent={storagePersistent} hasRepository={Boolean(draftRepository)}
+        backupStatus={backupStatus} backupProgress={backupProgress} onCancelBackup={() => backupControllerRef.current?.abort()}
+        onExportBackup={() => void exportLocalData()} onImportBackup={() => backupInputRef.current?.click()} onExportDiagnostics={exportReliabilityData}
+      />
+      {helpOpen && <div hidden={Boolean(panel) || isDispatchDrawerOpen}><WorkbenchHelp onClose={() => setHelpOpen(false)} onNavigate={step => {
+        if (step === 0 || !article) { openPanel('new'); return }
+        if (step >= 5) { setIsDispatchDrawerOpen(true); return }
+        setWorkspaceMode('split')
+        if (step === 2) { setEditorView('resources'); setMobileWorkspace('resources') }
+        else if (step === 1) editPreviewTarget({ kind: 'title' })
+        else { setMobileWorkspace('preview'); setEditorView('edit') }
+      }} /></div>}
+
     </div>
   )
 }

@@ -9,7 +9,7 @@ import { LOCAL_BACKUP_FORMAT, parseLocalBackup } from '../services/local-backup'
 describe('source style policy', () => {
   const source = '<p><strong><span style="color:#00aa55;font-size:22px">原文强调</span></strong></p><img src="https://example.com/a.png" style="border:2px solid #00aa55" alt="配图">'
   it('keeps explicit source styles through WeChat formatting without exposing internal markers', () => {
-    const formatting = { ...DEFAULT_ARTICLE_FORMATTING, wechat: { ...DEFAULT_ARTICLE_FORMATTING.wechat, themeId: 'klein' as const } }
+    const formatting = { ...DEFAULT_ARTICLE_FORMATTING, sourceStyle: 'preserve' as const, wechat: { ...DEFAULT_ARTICLE_FORMATTING.wechat, themeId: 'klein' as const } }
     const html = applyPlatformCompatibility(applyWechatTheme(applyArticleFormatting(source, formatting), formatting.wechat, formatting), 'wechat')
     const document = new DOMParser().parseFromString(html, 'text/html')
     expect(document.querySelector('strong span')?.getAttribute('style')).toContain('22px')

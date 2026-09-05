@@ -1,3 +1,4 @@
+import { editTitle } from './workbench-helpers'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { expect, test, type Page } from '@playwright/test'
@@ -16,9 +17,9 @@ interface BridgeTestWindow extends Window {
 }
 
 async function importFixture(page: Page, name: string): Promise<void> {
-  const fileInput = page.locator('.empty-workbench-content > input[type="file"][accept*=".md"]')
+  const fileInput = page.locator('input[type="file"][accept*=".md"]')
   await fileInput.setInputFiles(path.join(FIXTURE_DIRECTORY, name))
-  await expect(page.getByLabel('文章标题')).toBeVisible()
+  await expect(page.locator('.cm-content')).toBeVisible()
 }
 
 async function waitForLocalSave(page: Page): Promise<void> {
@@ -32,9 +33,9 @@ async function openHistory(page: Page): Promise<void> {
 
 async function openLocalDataActions(page: Page): Promise<void> {
   await openHistory(page)
-  const trigger = page.getByRole('button', { name: /本地数据/ })
+  const trigger = page.getByRole('button', { name: '设置', exact: true })
   if (await trigger.getAttribute('aria-expanded') !== 'true') await trigger.click()
-  await expect(page.locator('.history-data-actions')).toBeVisible()
+  await expect(page.locator('.workbench-settings')).toBeVisible()
 }
 
 test('switches between Markdown source and presentation editing without losing syntax', async ({ page }) => {
@@ -62,12 +63,12 @@ test('switches between Markdown source and presentation editing without losing s
     mimeType: 'text/markdown',
     buffer: Buffer.from(markdown),
   })
-  await expect(page.getByLabel('文章标题')).toHaveValue('Markdown 显示切换')
+  await expect(page.locator('.topbar-document-title')).toHaveText('Markdown 显示切换')
   await expect(page.getByRole('button', { name: '显示 Markdown 语法' })).toHaveAttribute('aria-pressed', 'true')
 
   await page.locator('.cm-line').filter({ hasText: '点击这一段' }).click()
   await expect(page.locator('.source-editor')).toHaveClass(/markdown-presentation/)
-  await expect(page.locator('.cm-md-heading-text')).toContainText('正文小标题')
+  await expect(page.locator('.cm-md-heading-text.cm-md-heading-2')).toContainText('正文小标题')
   await expect(page.locator('.cm-md-strong')).toContainText('重点内容')
   await expect(page.locator('.cm-md-highlight')).toContainText('HTML 标签高亮内容')
   await expect(page.locator('.source-editor .cm-content')).not.toContainText('<mark>')
@@ -125,7 +126,7 @@ test('keeps the selected source line centered after large images settle and on r
     mimeType: 'text/markdown',
     buffer: Buffer.from(markdown),
   })
-  await expect(page.getByLabel('文章标题')).toHaveValue('预览居中回归')
+  await expect(page.locator('.topbar-document-title')).toHaveText('预览居中回归')
 
   const sourceLine = page.locator('.cm-line').filter({ hasText: '目标定位行，应当出现在右侧正中间。' }).first()
   const previewViewport = page.locator('.platform-preview-viewport')
@@ -171,7 +172,7 @@ test('keeps the preview position fixed when a preview target locates the source 
     mimeType: 'text/markdown',
     buffer: Buffer.from(markdown),
   })
-  await expect(page.getByLabel('文章标题')).toHaveValue('预览位置稳定性回归')
+  await expect(page.locator('.topbar-document-title')).toHaveText('预览位置稳定性回归')
 
   const previewViewport = page.locator('.platform-preview-viewport')
   const previewTarget = page.locator('.wechat-content [data-source-line]').filter({ hasText: targetText }).first()
@@ -254,7 +255,7 @@ test('keeps a deeply scrolled WeChat target visually fixed on its first click', 
     mimeType: 'text/markdown',
     buffer: Buffer.from(markdown),
   })
-  await expect(page.getByLabel('文章标题')).toHaveValue('公众号深度滚动回归')
+  await expect(page.locator('.topbar-document-title')).toHaveText('公众号深度滚动回归')
 
   await page.locator('.preview-settings-toggle').click()
   await page.getByRole('tab', { name: '活力' }).click()
@@ -345,10 +346,10 @@ test('imports, autosaves, restores, and exports a privacy-safe diagnostic report
   await page.goto('/')
   await importFixture(page, 'markdown-baseline.md')
 
-  await expect(page.getByLabel('文章标题')).toHaveValue('Reliability Baseline')
+  await expect(page.locator('.topbar-document-title')).toHaveText('Reliability Baseline')
   await waitForLocalSave(page)
   await page.reload()
-  await expect(page.getByLabel('文章标题')).toHaveValue('Reliability Baseline')
+  await expect(page.locator('.topbar-document-title')).toHaveText('Reliability Baseline')
 
   await openLocalDataActions(page)
   const downloadPromise = page.waitForEvent('download')
@@ -383,7 +384,7 @@ test('moves a complete local backup to a different browser origin', async ({ pag
   await expect(page.getByRole('heading', { name: '写一次，适配并发布到多个平台' })).toBeVisible()
   await page.locator('input[accept*=".ezwriting-backup"]').setInputFiles(backupPath!)
 
-  await expect(page.getByLabel('文章标题')).toHaveValue('Obsidian Compatibility')
+  await expect(page.locator('.topbar-document-title')).toHaveText('Obsidian Compatibility')
   await openHistory(page)
   await expect(page.locator('.history-draft-title', { hasText: 'Obsidian Compatibility' })).toBeVisible()
 })
@@ -410,7 +411,10 @@ test('exports the Xiaohongshu card master at 1080 by 1440 pixels', async ({ page
 test('blocks publishing for a blank document', async ({ page }) => {
   await page.goto('/')
   await page.getByRole('button', { name: '开始写稿' }).click()
-  await expect(page.getByRole('button', { name: /打开发布面板/ })).toBeDisabled()
+  await page.getByRole('button', { name: '空白文档', exact: true }).click()
+  await page.getByRole('button', { name: /打开发布面板/ }).click()
+  await expect(page.locator('.publish-button')).toBeDisabled()
+  await expect(page.locator('[aria-label="发布前检查"]')).toContainText('请先导入稿件')
 })
 
 test('sanitizes imported HTML before previews can trigger hidden requests or forged actions', async ({ page }) => {
@@ -420,7 +424,7 @@ test('sanitizes imported HTML before previews can trigger hidden requests or for
     await route.abort()
   })
   await page.goto('/')
-  await page.locator('.empty-workbench-content > input[type="file"][accept*=".md"]').setInputFiles({
+  await page.locator('input[type="file"][accept*=".md"]').setInputFiles({
     name: 'unsafe-network.html',
     mimeType: 'text/html',
     buffer: Buffer.from(`
@@ -440,7 +444,7 @@ test('sanitizes imported HTML before previews can trigger hidden requests or for
     `),
   })
 
-  await expect(page.getByLabel('文章标题')).toHaveValue('HTML 净化门禁')
+  await expect(page.locator('.topbar-document-title')).toHaveText('HTML 净化门禁')
   await expect.poll(() => [...new Set(requests)]).toContain('/allowed.png')
   await page.waitForTimeout(300)
   expect([...new Set(requests)]).toEqual(['/allowed.png'])
@@ -502,7 +506,7 @@ test('flushes an immediate edit before delete and restores the latest version', 
   await importFixture(page, 'markdown-baseline.md')
   await waitForLocalSave(page)
 
-  await page.getByLabel('文章标题').fill('删除前最后一版')
+  await editTitle(page, '删除前最后一版')
   await openHistory(page)
   await page.locator('.history-draft-menu-button').first().click()
   await page.getByRole('menuitem', { name: '删除' }).click()
@@ -510,7 +514,7 @@ test('flushes an immediate edit before delete and restores the latest version', 
   await openHistory(page)
   await page.locator('.history-draft-open').first().click()
 
-  await expect(page.getByLabel('文章标题')).toHaveValue('删除前最后一版')
+  await expect(page.locator('.topbar-document-title')).toHaveText('删除前最后一版')
 })
 
 test('rejects a stale write from another tab without overwriting the newer version', async ({ context, page }) => {
@@ -520,15 +524,15 @@ test('rejects a stale write from another tab without overwriting the newer versi
 
   const secondPage = await context.newPage()
   await secondPage.goto('/')
-  await expect(secondPage.getByLabel('文章标题')).toHaveValue('Reliability Baseline')
+  await expect(secondPage.locator('.topbar-document-title')).toHaveText('Reliability Baseline')
 
-  await page.getByLabel('文章标题').fill('标签页 A 的新版本')
+  await editTitle(page, '标签页 A 的新版本')
   await page.waitForTimeout(850)
-  await secondPage.getByLabel('文章标题').fill('标签页 B 的旧快照修改')
+  await editTitle(secondPage, '标签页 B 的旧快照修改')
 
   await expect(secondPage.getByText(/另一标签页已更新这篇稿件/)).toBeVisible({ timeout: 5_000 })
   await page.reload()
-  await expect(page.getByLabel('文章标题')).toHaveValue('标签页 A 的新版本')
+  await expect(page.locator('.topbar-document-title')).toHaveText('标签页 A 的新版本')
 })
 
 test('turns simultaneous backup clicks into one download', async ({ page }) => {

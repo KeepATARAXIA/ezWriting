@@ -7,7 +7,7 @@ async function openArticle(page: Page, body = '保持清晰可读的正文，同
     mimeType: 'text/markdown',
     buffer: Buffer.from(`# 工作台体验回归\n\n${body}`),
   })
-  await expect(page.getByLabel('文章标题')).toHaveValue('工作台体验回归')
+  await expect(page.locator('.topbar-document-title')).toHaveText('工作台体验回归')
 }
 
 async function expectUncovered(button: Locator) {
@@ -30,8 +30,8 @@ test('preserves undo and redo when switching the editor to resources and back', 
   const scrollTop = await scroller.evaluate(element => element.scrollTop)
   for (let count = 0; count < 2; count += 1) {
     await page.locator('[aria-controls="article-resource-view"]').click()
-    await expect(page.locator('#article-edit-view')).toBeVisible()
-    await page.getByRole('button', { name: '关闭素材' }).click()
+    await expect(page.locator('#article-edit-view')).toBeHidden()
+    await page.getByRole('button', { name: '正文', exact: true }).click()
     await expect.poll(async () => Math.abs(await scroller.evaluate(element => element.scrollTop) - scrollTop)).toBeLessThan(2)
   }
   const undo = page.getByRole('button', { name: '撤销', exact: true })
@@ -57,7 +57,7 @@ test('keeps last-draft recovery visible after the mobile history drawer closes',
   await undo.click()
   await page.getByRole('button', { name: '打开历史记录', exact: true }).click()
   await page.locator('.history-draft-open').first().click()
-  await expect(page.getByLabel('文章标题')).toHaveValue('工作台体验回归')
+  await expect(page.locator('.topbar-document-title')).toHaveText('工作台体验回归')
 })
 
 for (const width of [1440, 1366, 1025]) {
@@ -78,12 +78,18 @@ for (const width of [1440, 1366, 1025]) {
         return rects.every((rect, index) => rects.slice(index + 1).every(other =>
           rect.right <= other.left || other.right <= rect.left || rect.bottom <= other.top || other.bottom <= rect.top))
       })).toBe(true)
-      await page.locator('.preview-tool-resizer').press('End')
-      await expect.poll(async () => (await viewport.boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(439)
-      await expect.poll(async () => {
-        const actual = (await page.locator('.preview-tool-rail:not([hidden])').boundingBox())!.width
-        return Math.abs(Number(await page.locator('.preview-tool-resizer').getAttribute('aria-valuenow')) - actual)
-      }).toBeLessThan(1)
+      if (width > 1100) {
+        await page.locator('.preview-tool-resizer').press('End')
+        await expect.poll(async () => (await viewport.boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(439)
+        await expect.poll(async () => {
+          const actual = (await page.locator('.preview-tool-rail:not([hidden])').boundingBox())!.width
+          return Math.abs(Number(await page.locator('.preview-tool-resizer').getAttribute('aria-valuenow')) - actual)
+        }).toBeLessThan(1)
+      } else {
+        // Settings overlay smaller laptop previews instead of squeezing the article.
+        await expect(page.locator('.preview-tool-resizer')).toBeVisible()
+        await expect(page.locator('.preview-tool-rail:not([hidden])')).toHaveCSS('position', 'absolute')
+      }
       const bar = (await separator.boundingBox())!
       await page.mouse.move(bar.x + bar.width / 2, bar.y + bar.height / 2)
       await page.mouse.down()
@@ -124,6 +130,6 @@ for (const width of [390, 320]) {
     await expectUncovered(copy)
     await page.locator('.preview-settings-toggle').click()
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
-    await page.screenshot({ path: testInfo.outputPath(`workbench-mobile-${width}.png`) })
+    await page.screenshot({ path: testInfo.outputPath(`workbench-mobile-${width}.png`), animations: 'disabled' })
   })
 }

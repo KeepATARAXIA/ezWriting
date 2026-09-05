@@ -37,6 +37,8 @@ function captureFrame(source: string, kind: MediaKind, signal: AbortSignal): Pro
     if (signal.aborted) { resolve(null); return }
     const media = kind === 'gif' ? new Image() : document.createElement('video')
     let finished = false
+    let nextVideoSample = 0
+    const videoSampleTimes = [0.1, 0.3, 0.75, 1.5, 2.5]
     const finish = (thumbnail: Thumbnail | null) => {
       if (finished) return
       finished = true
@@ -45,6 +47,7 @@ function captureFrame(source: string, kind: MediaKind, signal: AbortSignal): Pro
       media.onload = media.onerror = null
       if (media instanceof HTMLVideoElement) {
         media.onloadeddata = null
+        media.onseeked = null
         media.removeAttribute('src')
         media.load()
       } else media.removeAttribute('src')
@@ -54,6 +57,7 @@ function captureFrame(source: string, kind: MediaKind, signal: AbortSignal): Pro
     const timer = setTimeout(abort, 8_000)
     const draw = () => {
       if (signal.aborted || finished) return
+      if (media instanceof HTMLVideoElement && media.seeking) return
       const width = media instanceof HTMLVideoElement ? media.videoWidth : media.naturalWidth
       const height = media instanceof HTMLVideoElement ? media.videoHeight : media.naturalHeight
       if (!width || !height) { finish(null); return }
@@ -66,6 +70,28 @@ function captureFrame(source: string, kind: MediaKind, signal: AbortSignal): Pro
         if (!context) { finish(null); return }
         // Canvas draws the animation's default/first frame, per the HTML standard.
         context.drawImage(media, 0, 0, canvas.width, canvas.height)
+        if (media instanceof HTMLVideoElement) {
+          // Some clips begin with black leader/fade-in. Inspect a tiny sample,
+          // then seek only within the opening seconds; never play a hidden decoder.
+          const sample = document.createElement('canvas')
+          sample.width = 32
+          sample.height = 18
+          const sampleContext = sample.getContext('2d', { willReadFrequently: true })
+          if (!sampleContext) { finish(null); return }
+          sampleContext.drawImage(canvas, 0, 0, sample.width, sample.height)
+          const pixels = sampleContext.getImageData(0, 0, sample.width, sample.height).data
+          let visiblePixels = 0
+          for (let index = 0; index < pixels.length; index += 4) {
+            if (Math.max(pixels[index], pixels[index + 1], pixels[index + 2]) > 18) visiblePixels++
+          }
+          if (visiblePixels < pixels.length / 4 * 0.01) {
+            const duration = Number.isFinite(media.duration) ? media.duration : media.seekable.length ? media.seekable.end(media.seekable.length - 1) : 2.6
+            const nextTime = Math.min(videoSampleTimes[nextVideoSample++] ?? 0, Math.max(0, duration - 0.02))
+            if (nextTime <= media.currentTime + 0.01) { finish(null); return }
+            media.currentTime = nextTime
+            return
+          }
+        }
         canvas.toBlob(blob => {
           if (finished) return
           finish(blob ? { url: URL.createObjectURL(blob), width, height } : null)
@@ -83,6 +109,7 @@ function captureFrame(source: string, kind: MediaKind, signal: AbortSignal): Pro
       media.muted = true
       media.playsInline = true
       media.onloadeddata = draw
+      media.onseeked = draw
     } else media.onload = draw
     media.src = source
   })
@@ -165,7 +192,7 @@ export function mountGifPreview(image: HTMLImageElement, source: string, control
     playing = false
     image.src = poster
     image.dataset.ezGifPreview = 'static'
-    if (button) { button.textContent = '播放 GIF'; button.setAttribute('aria-pressed', 'false') }
+    if (button) { button.textContent = '播放 GIF'; button.setAttribute('aria-label', '播放 GIF'); button.title = '播放 GIF'; button.setAttribute('aria-pressed', 'false'); button.dataset.playing = 'false' }
   }
   const load = () => {
     if (thumbnail) return
@@ -182,6 +209,8 @@ export function mountGifPreview(image: HTMLImageElement, source: string, control
     button.type = 'button'
     button.className = 'media-play-toggle'
     button.setAttribute('aria-pressed', 'false')
+    button.setAttribute('aria-label', '播放 GIF')
+    button.title = '播放 GIF'
     button.textContent = '播放 GIF'
     button.onclick = event => {
       event.preventDefault()
@@ -192,6 +221,9 @@ export function mountGifPreview(image: HTMLImageElement, source: string, control
       image.src = source
       image.dataset.ezGifPreview = 'playing'
       button.textContent = '暂停 GIF'
+      button.setAttribute('aria-label', '暂停 GIF')
+      button.title = '暂停 GIF'
+      button.dataset.playing = 'true'
       button.setAttribute('aria-pressed', 'true')
     }
     controls?.append(button)
@@ -204,11 +236,13 @@ export function mountVideoPreview(container: HTMLElement, source: string, name: 
   const image = document.createElement('img')
   image.alt = `视频封面：${name}`
   image.src = mediaPlaceholder()
+  image.dataset.ezPoster = 'loading'
   const button = document.createElement('button')
   button.type = 'button'
   button.className = 'media-play-toggle'
   button.textContent = '播放视频'
   button.setAttribute('aria-label', `播放视频：${name}`)
+  button.title = '播放视频'
   container.append(image, button)
   let video: HTMLVideoElement | null = null
   let thumbnail: ReturnType<typeof acquireThumbnail> | undefined
@@ -224,13 +258,20 @@ export function mountVideoPreview(container: HTMLElement, source: string, name: 
     image.hidden = false
     button.textContent = '播放视频'
     button.setAttribute('aria-label', `播放视频：${name}`)
+    button.title = '播放视频'
+    button.dataset.playing = 'false'
   }
   const load = () => {
     if (thumbnail) return
     thumbnail = acquireThumbnail(source, 'video')
     void thumbnail.promise.then(result => {
-      if (disposed || !result) return
-      image.src = result.url
+      if (disposed) return
+      image.dataset.ezPoster = result ? 'ready' : 'unavailable'
+      image.title = result ? '视频开头画面' : '封面暂不可用，点击播放查看视频'
+      if (result) {
+        image.src = result.url
+        if (video) video.poster = result.url
+      }
       onResize?.()
     })
   }
@@ -238,17 +279,21 @@ export function mountVideoPreview(container: HTMLElement, source: string, name: 
     event.preventDefault()
     event.stopPropagation()
     if (video) { stop(); return }
+    load()
     video = document.createElement('video')
     video.controls = true
     video.playsInline = true
     video.preload = 'metadata'
     video.src = source
+    if (image.dataset.ezPoster === 'ready') video.poster = image.src
     video.setAttribute('aria-label', `视频播放器：${name}`)
-    video.onerror = () => { stop(); button.textContent = '无法播放，点击重试' }
+    video.onerror = () => { stop(); button.title = '无法播放，点击重试'; button.setAttribute('aria-label', `重试播放视频：${name}`) }
     image.hidden = true
     container.prepend(video)
-    button.textContent = '收起视频'
-    button.setAttribute('aria-label', `收起视频：${name}`)
+    button.textContent = '停止播放'
+    button.setAttribute('aria-label', `停止播放视频：${name}`)
+    button.title = '停止播放'
+    button.dataset.playing = 'true'
     void video.play().catch(() => { /* Native controls remain available if playback is blocked. */ })
   }
   const unwatch = watchVisibility(container, load, stop)
@@ -264,6 +309,7 @@ export function prepareStaticPreviewMedia(document: Document): void {
     poster.dataset.ezVideoSource = video.getAttribute('src') || ''
     poster.dataset.ezVideoPreview = 'static'
     poster.src = mediaPlaceholder()
+    poster.dataset.ezPoster = 'loading'
     poster.title = `视频：${name} · 在左侧编辑区播放`
     for (const attribute of ['data-source-block', 'data-source-line']) {
       if (video.hasAttribute(attribute)) poster.setAttribute(attribute, video.getAttribute(attribute)!)
@@ -311,7 +357,12 @@ export function observeStaticPreviewMedia(root: HTMLElement): () => void {
         const unwatch = watchVisibility(image, () => {
           if (thumbnail) return
           thumbnail = acquireThumbnail(image.dataset.ezVideoSource!, 'video')
-          void thumbnail.promise.then(result => { if (!disposed && result) image.src = result.url })
+          void thumbnail.promise.then(result => {
+            if (disposed) return
+            image.dataset.ezPoster = result ? 'ready' : 'unavailable'
+            if (result) image.src = result.url
+            else image.title = '封面暂不可用，可在左侧编辑区播放视频'
+          })
         }, () => undefined)
         cleanups.set(image, () => { disposed = true; unwatch(); thumbnail?.release() })
       }
