@@ -858,13 +858,13 @@ describe('App publishing engine onboarding', () => {
     })
     await act(async () => {
       assetDirectoryInput.dispatchEvent(new Event('change', { bubbles: true }))
-      await new Promise(resolve => window.setTimeout(resolve, 20))
     })
 
-    expect(container.textContent).not.toContain('还差 1 张本地图片')
-    expect(container.textContent).not.toContain('1 张图片待补齐')
-    expect(container.querySelector('.resource-card-copy strong')?.textContent).toBe('流程图')
-    await vi.waitFor(() => {
+    await vi.waitFor(async () => {
+      await act(async () => new Promise(resolve => window.setTimeout(resolve, 0)))
+      expect(container.textContent).not.toContain('还差 1 张本地图片')
+      expect(container.textContent).not.toContain('1 张图片待补齐')
+      expect(container.querySelector('.resource-card-copy strong')?.textContent).toBe('流程图')
       expect(container.querySelector('.wechat-content img[src^="blob:"]')).not.toBeNull()
     }, { timeout: 1000 })
   })
