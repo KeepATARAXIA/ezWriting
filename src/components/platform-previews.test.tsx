@@ -428,9 +428,47 @@ describe('PlatformPreviews editor-to-preview locating', () => {
     expect(onFormattingChange).not.toHaveBeenCalled()
 
     await act(async () => swissSelect.click())
+    expect(container.querySelector('.wechat-content [data-wechat-theme="swiss-index"]')).not.toBeNull()
+    expect(onFormattingChange).not.toHaveBeenCalled()
+    await act(async () => container.querySelector<HTMLButtonElement>('.wechat-theme-action-buttons .primary-button')?.click())
     expect(onFormattingChange).toHaveBeenCalledWith(expect.objectContaining({
       wechat: expect.objectContaining({ themeId: 'swiss-index' }),
     }))
+  })
+
+  it('restores unapplied themes and styles, and discards previews on close or platform change', async () => {
+    const onFormattingChange = vi.fn()
+    const render = (platform: 'wechat' | 'x' = 'wechat', formatting = DEFAULT_ARTICLE_FORMATTING) => root.render(
+      <PlatformPreviews activePlatform={platform} title="主题试用" html="<p>保留正文</p>"
+        formatting={formatting} onFormattingChange={onFormattingChange}
+        previewDevice="desktop" onPreviewDeviceChange={vi.fn()} />,
+    )
+    const click = async (selector: string) => act(async () => container.querySelector<HTMLButtonElement>(selector)!.click())
+    await act(async () => render())
+    await click('.preview-settings-toggle')
+    await click('button[aria-label^="预览克莱因蓝主题"]')
+    await click('#wechat-settings-style-trigger')
+    await click('[aria-label="选择文章字号"] button:last-child')
+    expect(onFormattingChange).not.toHaveBeenCalled()
+    expect(container.querySelector<HTMLButtonElement>('.wechat-copy-button')!.disabled).toBe(true)
+    await click('.wechat-theme-action-buttons button:first-child')
+    expect(container.querySelector('.wechat-content [data-wechat-theme="literary"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="选择文章字号"] button:last-child')?.getAttribute('aria-checked')).toBe('false')
+    expect(container.querySelector<HTMLButtonElement>('.wechat-copy-button')!.disabled).toBe(false)
+    await click('#wechat-settings-layout-trigger')
+    await click('button[aria-label^="预览克莱因蓝主题"]')
+    await click('.settings-close')
+    expect(container.querySelector('.wechat-content [data-wechat-theme="literary"]')).not.toBeNull()
+    await click('.preview-settings-toggle')
+    await click('button[aria-label^="预览克莱因蓝主题"]')
+    await act(async () => render('x'))
+    await act(async () => render())
+    expect(container.querySelector('.wechat-content [data-wechat-theme="literary"]')).not.toBeNull()
+    await click('button[aria-label^="预览克莱因蓝主题"]')
+    const externalFormatting = { ...DEFAULT_ARTICLE_FORMATTING, fontSize: 'small' as const }
+    await act(async () => render('wechat', externalFormatting))
+    expect(container.querySelector('.wechat-content [data-wechat-theme="literary"]')).not.toBeNull()
+    expect(onFormattingChange).not.toHaveBeenCalled()
   })
 
   it('copies the inline-styled WeChat body as rich HTML', async () => {

@@ -790,7 +790,11 @@ function FormattingPanel({
 }
 
 export function PlatformPreviews({ toolbarTarget, activePlatform, title, html, sourceText, sourceLanguage, formatting, renderFormatting, onFormattingChange, xhsSettings: controlledXhsSettings, onXhsSettingsChange, previewAccount, previewDevice, isUpdating = false, onPreviewDeviceChange, locateRequest, onEditTarget, onMissingImageAction, onNotice }: PlatformPreviewsProps) {
-  const previewFormatting = renderFormatting ?? formatting
+  const [wechatThemeDraft, setWechatThemeDraft] = useState<{ base: ArticleFormatting; value: ArticleFormatting } | null>(null)
+  // Draft previews never enter autosave or publishing until explicitly applied.
+  const pendingWechatFormatting = activePlatform === 'wechat' && wechatThemeDraft?.base === formatting ? wechatThemeDraft.value : null
+  const wechatControlFormatting = pendingWechatFormatting ?? formatting
+  const previewFormatting = pendingWechatFormatting ?? renderFormatting ?? formatting
   const [uncontrolledXhsSettings, setUncontrolledXhsSettings] = useState<XhsCardSettings>(DEFAULT_XHS_CARD_SETTINGS)
   const xhsSettings = controlledXhsSettings ?? uncontrolledXhsSettings
   const updateXhsSettings = onXhsSettingsChange ?? setUncontrolledXhsSettings
@@ -844,7 +848,7 @@ export function PlatformPreviews({ toolbarTarget, activePlatform, title, html, s
       : mapPreviewBlocks(renderMissingImagePlaceholders(playableHtml), sourceLineMap, activePlatform),
     [activePlatform, playableHtml, sourceLineMap],
   )
-  const wechatSettings = useMemo(() => normalizeWechatThemeSettings(formatting.wechat), [formatting.wechat])
+  const wechatSettings = useMemo(() => normalizeWechatThemeSettings(wechatControlFormatting.wechat), [wechatControlFormatting.wechat])
   const previewWechatSettings = useMemo(
     () => normalizeWechatThemeSettings(previewFormatting.wechat),
     [previewFormatting.wechat],
@@ -1178,15 +1182,31 @@ export function PlatformPreviews({ toolbarTarget, activePlatform, title, html, s
     updateXhsSettingsRef.current(nextSettings)
   }
 
+  const changeWechatFormatting = (next: ArticleFormatting) => {
+    if (pendingWechatFormatting) setWechatThemeDraft({ base: formatting, value: next })
+    else onFormattingChange?.(next)
+  }
+
   const updateWechatSettings = (next: Partial<typeof wechatSettings>) => {
-    onFormattingChange?.({
-      ...formatting,
+    changeWechatFormatting({
+      ...wechatControlFormatting,
       wechat: normalizeWechatThemeSettings({ ...wechatSettings, ...next }),
     })
   }
 
   const selectWechatTheme = (themeId: WechatThemeId) => {
-    updateWechatSettings({ themeId })
+    if (themeId === wechatSettings.themeId) return
+    setWechatThemeDraft({ base: formatting, value: {
+      ...wechatControlFormatting,
+      wechat: normalizeWechatThemeSettings({ ...wechatSettings, themeId }),
+    } })
+  }
+
+  const applyWechatThemeDraft = () => {
+    if (!pendingWechatFormatting || !onFormattingChange) return
+    onFormattingChange(pendingWechatFormatting)
+    setWechatThemeDraft(null)
+    onNotice?.(`已应用「${activeWechatTheme.name}」，复制与发布将使用此排版。`)
   }
 
   const updateWechatSlot = (key: string, color: string) => {
@@ -1206,8 +1226,8 @@ export function PlatformPreviews({ toolbarTarget, activePlatform, title, html, s
     const slotColorsByTheme = { ...wechatSettings.slotColorsByTheme }
     delete accentByTheme[wechatSettings.themeId]
     delete slotColorsByTheme[wechatSettings.themeId]
-    onFormattingChange?.({
-      ...formatting,
+    changeWechatFormatting({
+      ...wechatControlFormatting,
       accent: 'blue',
       wechat: normalizeWechatThemeSettings({ ...wechatSettings, accentByTheme, slotColorsByTheme }),
     })
@@ -1256,6 +1276,10 @@ export function PlatformPreviews({ toolbarTarget, activePlatform, title, html, s
     setToolRailOpen(current => ({ ...current, [platform]: !current[platform] }))
     if (toolRailOpen[platform]) window.requestAnimationFrame(() => settingsButtonRef.current?.focus())
   }
+
+  useEffect(() => {
+    if (activePlatform !== 'wechat' || !toolRailOpen.wechat) setWechatThemeDraft(null)
+  }, [activePlatform, toolRailOpen.wechat])
 
   useEffect(() => {
     if (!toolRailOpen[activePlatform] || previewDevice === 'mobile') return
@@ -1355,8 +1379,8 @@ export function PlatformPreviews({ toolbarTarget, activePlatform, title, html, s
         setToolRailLayout(null)
         return
       }
-      // Keep a small exposed preview edge beside the overlay drawer.
-      const max = Math.max(TOOL_RAIL_MIN_WIDTH, Math.min(TOOL_RAIL_MAX_WIDTH, Math.floor(width - 34)))
+      // Reserve readable preview space beside the docked rail and its separator.
+      const max = Math.max(TOOL_RAIL_MIN_WIDTH, Math.min(TOOL_RAIL_MAX_WIDTH, Math.floor(width - 290)))
       const value = Math.round(rail.getBoundingClientRect().width)
       setToolRailLayout(current => current?.max === max && current.value === value ? current : { max, value })
     }
@@ -2098,8 +2122,8 @@ export function PlatformPreviews({ toolbarTarget, activePlatform, title, html, s
           <button type="button" className={xhsPreviewMode === 'all' ? 'active' : ''} aria-pressed={xhsPreviewMode === 'all'} aria-label="整体预览" title="整体预览" onClick={() => changeXhsPreviewMode('all')}><LayoutGrid size={18} /></button>
         </div>}
         <span className="tool-divider" aria-hidden="true" />
-        {activePlatform === 'wechat' && <button type="button" className={`preview-tool-toggle wechat-copy-button ${wechatCopyState}`} disabled={wechatCopyState === 'copying' || isUpdating}
-          aria-label={wechatCopyState === 'success' ? '公众号格式已复制' : wechatCopyState === 'error' ? '复制失败，点击重试' : '复制公众号格式'} title="复制公众号格式" onClick={() => void copyWechatContent()}>
+        {activePlatform === 'wechat' && <button type="button" className={`preview-tool-toggle wechat-copy-button ${wechatCopyState}`} disabled={wechatCopyState === 'copying' || isUpdating || Boolean(pendingWechatFormatting)}
+          aria-label={wechatCopyState === 'success' ? '公众号格式已复制' : wechatCopyState === 'error' ? '复制失败，点击重试' : '复制公众号格式'} title={pendingWechatFormatting ? '请先应用主题或恢复原样，再复制' : '复制公众号格式'} onClick={() => void copyWechatContent()}>
           {wechatCopyState === 'copying' ? <LoaderCircle className="spin" size={18} /> : wechatCopyState === 'success' ? <Check size={18} /> : <Copy size={18} />}
         </button>}
         {activePlatform === 'x' && <button type="button" className="preview-tool-toggle primary-output" disabled={xCopyState === 'copying' || isUpdating} onClick={() => void copyXContent()} aria-label="复制 X 长文格式" title="复制 X 长文格式">{xCopyState === 'copying' ? <LoaderCircle className="spin" size={18} /> : xCopyState === 'success' ? <Check size={18} /> : <Copy size={18} />}</button>}
@@ -2164,7 +2188,7 @@ export function PlatformPreviews({ toolbarTarget, activePlatform, title, html, s
               )}
               <aside id="wechat-theme-panel" className="wechat-theme-rail preview-tool-rail" role="dialog" aria-label="公众号排版设置" hidden={!toolRailOpen.wechat}>
                 <header className="wechat-theme-heading preview-tool-rail-heading">
-                  <span><strong>公众号主题</strong></span>
+                  <span><strong>公众号排版</strong></span>
                   <button type="button" className="settings-close" aria-label="关闭公众号设置" title="收起主题面板" onClick={() => toggleToolRail('wechat')}><PanelRightClose size={17} /></button>
                 </header>
                 <FormattingPanel
@@ -2172,8 +2196,8 @@ export function PlatformPreviews({ toolbarTarget, activePlatform, title, html, s
                   label="公众号设置模块"
                   openSections={openFormattingSections.wechat}
                   onSectionToggle={section => toggleFormattingSection('wechat', section)}
-                  formatting={formatting}
-                  onFormattingChange={onFormattingChange}
+                  formatting={wechatControlFormatting}
+                  onFormattingChange={changeWechatFormatting}
                   layoutContent={(
                     <section className="wechat-theme-layout" aria-label="公众号主题排版">
                       <div className="wechat-theme-categories" role="tablist" aria-label="筛选公众号主题">
@@ -2201,7 +2225,7 @@ export function PlatformPreviews({ toolbarTarget, activePlatform, title, html, s
                             <button
                               type="button"
                               className="wechat-theme-select-target"
-                              aria-label={`应用${theme.name}主题：${theme.description}`}
+                              aria-label={`预览${theme.name}主题：${theme.description}`}
                               aria-pressed={wechatSettings.themeId === theme.id}
                               title={`${theme.name} · ${theme.description}`}
                               onClick={() => selectWechatTheme(theme.id)}
@@ -2209,14 +2233,14 @@ export function PlatformPreviews({ toolbarTarget, activePlatform, title, html, s
                             <WechatThemeGraphic motif={theme.mock} index={themeIndex} />
                             <footer className="wechat-theme-card-copy">
                               <strong>{theme.name}</strong>
-                              {wechatSettings.themeId === theme.id && <Check size={13} aria-hidden="true" />}
+                              {wechatSettings.themeId === theme.id && <span className="wechat-theme-check"><Check size={14} aria-hidden="true" /></span>}
                             </footer>
                           </article>
                         ))}
                       </div>
                     </section>
                   )}
-                  colorControls={<AccentControls formatting={formatting} selectedColor={wechatSettings.accentByTheme[wechatSettings.themeId] ?? activeWechatTheme.primary} onChange={next => onFormattingChange?.({
+                  colorControls={<AccentControls formatting={wechatControlFormatting} selectedColor={wechatSettings.accentByTheme[wechatSettings.themeId] ?? activeWechatTheme.primary} onChange={next => changeWechatFormatting({
                     ...next,
                     wechat: { ...wechatSettings, accentByTheme: { ...wechatSettings.accentByTheme, [wechatSettings.themeId]: ARTICLE_ACCENT_COLORS[next.accent] } },
                   })} />}
@@ -2229,6 +2253,16 @@ export function PlatformPreviews({ toolbarTarget, activePlatform, title, html, s
                     </section>
                   )}
                 />
+                <footer className="wechat-theme-actions">
+                  <div role="status" aria-live="polite">
+                    <strong>{pendingWechatFormatting ? '预览中' : '已应用'} · {activeWechatTheme.name}</strong>
+                    <span>{pendingWechatFormatting ? '仅预览，应用后用于复制与发布' : '点击主题，在正文中预览效果'}</span>
+                  </div>
+                  <div className="wechat-theme-action-buttons">
+                    <button type="button" disabled={!pendingWechatFormatting} onClick={() => setWechatThemeDraft(null)}>恢复原样</button>
+                    <button type="button" className="primary-button" disabled={!pendingWechatFormatting || !onFormattingChange} onClick={applyWechatThemeDraft}>立即应用</button>
+                  </div>
+                </footer>
               </aside>
             </div>
           </article>

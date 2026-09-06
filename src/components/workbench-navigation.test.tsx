@@ -24,7 +24,7 @@ describe('WorkbenchNavigation', () => {
     expect(props.onNew).toHaveBeenCalledOnce(); expect(props.onHistory).toHaveBeenCalledOnce()
     expect(props.onPanelChange).toHaveBeenCalledWith('settings'); expect(props.onHelp).toHaveBeenCalledOnce()
     expect(container.querySelector('[aria-label="素材管理"]')).toBeNull()
-    await act(async () => { button('模板素材库（规划中）').click(); button('AI 工具（规划中）').click() })
+    await act(async () => { button('模板素材库').click(); button('AI 工具（规划中）').click() })
     expect(props.onPanelChange).toHaveBeenCalledWith('library'); expect(props.onPanelChange).toHaveBeenCalledWith('ai')
   })
   it('focuses notices and restores focus on Escape', async () => {

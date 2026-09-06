@@ -34,6 +34,7 @@ import {
   XCircle,
 } from 'lucide-react'
 import type { ArticleDraft, MissingImageAction, MissingImageTarget, PlatformAccount, PublishResult } from './domain/article'
+import type { LibraryContent, LibraryInsertRequest, LibraryItem } from './domain/template-library'
 import { DEFAULT_ARTICLE_FORMATTING, type ArticleFormatting } from './domain/formatting'
 import { DispatchControls, type BridgeState, type WorkState } from './components/dispatch-controls'
 import { HistorySidebar } from './components/history-sidebar'
@@ -143,6 +144,7 @@ type ExclusiveOperation =
   | 'backup-export'
   | 'backup-import'
   | 'switch-draft'
+  | 'return-home'
   | 'change-kind'
   | 'delete-draft'
   | 'restore-draft'
@@ -171,7 +173,7 @@ const HOME_STARTER_TEMPLATES: HomeStarterTemplate[] = [
   {
     id: 'wechat-longform',
     title: '公众号长文',
-    description: '用开场、正文与结尾搭好一篇完整长文。',
+    description: '开场 → 正文 → 结尾',
     initialTitle: '公众号长文草稿',
     platform: 'wechat',
     kind: 'longform',
@@ -180,7 +182,7 @@ const HOME_STARTER_TEMPLATES: HomeStarterTemplate[] = [
   {
     id: 'xhs-image-post',
     title: '小红书图文',
-    description: '从一句亮点和三条要点快速组织图文内容。',
+    description: '一句亮点 + 三条要点',
     initialTitle: '小红书图文草稿',
     platform: 'xhs',
     kind: 'image',
@@ -189,7 +191,7 @@ const HOME_STARTER_TEMPLATES: HomeStarterTemplate[] = [
   {
     id: 'x-longform',
     title: 'X 长文',
-    description: '围绕一个鲜明观点展开论据与结论。',
+    description: '观点 → 论据 → 结论',
     initialTitle: 'X 长文草稿',
     platform: 'x',
     kind: 'longform',
@@ -557,6 +559,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   const [bridgeState, setBridgeState] = useState<BridgeState>('checking')
   const [bridgeError, setBridgeError] = useState<string | null>(null)
   const [isDispatchDrawerOpen, setIsDispatchDrawerOpen] = useState(false)
+  const [dispatchSidebarTarget, setDispatchSidebarTarget] = useState<HTMLDivElement | null>(null)
   const [accounts, setAccounts] = useState<PlatformAccount[]>([])
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [results, setResults] = useState<PublishResult[]>([])
@@ -582,6 +585,10 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   const [previewToolbarTarget, setPreviewToolbarTarget] = useState<HTMLDivElement | null>(null)
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>(readDefaultWorkspaceMode)
   const [panel, setPanel] = useState<WorkbenchPanel>(null)
+  const [librarySelection, setLibrarySelection] = useState<Extract<LibraryContent, { kind: 'text' }> | null>(null)
+  const [libraryInsertRequest, setLibraryInsertRequest] = useState<(LibraryInsertRequest & { draftId: string }) | null>(null)
+  const libraryInsertIdRef = useRef(0)
+  const libraryDismissGuardRef = useRef<() => boolean>(() => true)
   const [helpOpen, setHelpOpen] = useState(false)
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [previewNotice, setPreviewNotice] = useState<string | null>(null)
@@ -614,9 +621,16 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   const historySidebarSlotRef = useRef<HTMLDivElement>(null)
   const topbarRef = useRef<HTMLElement>(null)
   const workspaceRef = useRef<HTMLElement>(null)
+  const homeFocusRequestedRef = useRef(false)
   const applyPersistedDraftRef = useRef<(draft: PersistedDraft) => void>(() => undefined)
 
   activeDraftIdRef.current = article?.id ?? null
+
+  useEffect(() => {
+    if (article || hydrationPhase !== 'ready' || !homeFocusRequestedRef.current) return
+    homeFocusRequestedRef.current = false
+    document.getElementById('empty-workbench-title')?.focus()
+  }, [article?.id, hydrationPhase])
 
   useEffect(() => {
     retainLocalImageReferences(article ? [article.html, article.markdown || '', article.sourceText || ''] : [])
@@ -702,6 +716,8 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   }, [])
 
   const toggleHistorySidebar = useCallback(() => {
+    if (!libraryDismissGuardRef.current()) return
+    setPanel(null)
     setEditorView('edit')
     setMobileWorkspace(current => current === 'resources' ? 'edit' : current)
     if (historyOverlayOpen || isHistoryOverlayViewport()) {
@@ -1015,6 +1031,28 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     }
     setPanel(null)
     activateNewDraft(createDraftSnapshot(createBlankArticle()))
+  }
+
+  const returnHome = async () => {
+    if (!libraryDismissGuardRef.current()) return
+    if (hydrationPhase === 'loading' || !beginExclusiveOperation('return-home')) return
+    try {
+      // Do not release the editor or its media until the current draft is safely stored.
+      if (article && !draftRepository) throw new Error('本地存储不可用，请先导出当前稿件。')
+      await autosave.flush()
+      await refreshDraftSummaries()
+      homeFocusRequestedRef.current = true
+      clearActiveDraft()
+      closeHistoryOverlay(false)
+      setHistoryExpanded(false)
+      setPanel(null)
+      setNotificationsOpen(false)
+      setIsDispatchDrawerOpen(false)
+    } catch (saveError) {
+      setHistoryError(`返回首页失败，当前编辑已保留：${(saveError as Error).message}`)
+    } finally {
+      endExclusiveOperation('return-home')
+    }
   }
 
   const createArticleFromTemplate = async (template: HomeStarterTemplate) => {
@@ -1663,17 +1701,46 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     saveWorkbenchPreference('dispatch.show-syntax.v1', String(enabled))
   }
   const openPanel = (next: WorkbenchPanel) => {
+    if (panel === 'library' && !libraryDismissGuardRef.current()) return
     closeHistoryOverlay(false)
     setNotificationsOpen(false)
+    setLibrarySelection(null)
     setPanel(next)
+    if (next === 'library') {
+      setHistoryExpanded(false)
+      setWorkspaceMode(current => current === 'preview' ? 'split' : current)
+      setEditorView('edit'); setMobileWorkspace('edit')
+    }
+    if (panel === 'library' && next === null) window.requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('.rail-action[aria-controls="template-library-sidebar"]')?.focus())
   }
+  const collectEditorSelection = (selection: Extract<LibraryContent, { kind: 'text' }>) => {
+    if (exclusiveOperationRef.current !== null) return
+    if (panel === 'library' && !libraryDismissGuardRef.current()) return
+    closeHistoryOverlay(false)
+    setHistoryExpanded(false)
+    setNotificationsOpen(false)
+    setLibrarySelection(selection)
+    setPanel('library')
+  }
+  const insertLibraryItem = (item: LibraryItem) => {
+    if (!article || exclusiveOperationRef.current !== null) return
+    setLibrarySelection(null)
+    setWorkspaceMode(current => current === 'preview' ? 'split' : current)
+    setEditorView('edit')
+    setMobileWorkspace('edit')
+    setLibraryInsertRequest({ requestId: ++libraryInsertIdRef.current, item, draftId: article.id })
+  }
+  const finishLibraryInsert = useCallback((requestId: number, message?: string) => {
+    setLibraryInsertRequest(current => current?.requestId === requestId ? null : current)
+    if (message) setPreviewNotice(message)
+  }, [])
   const videos = articleContent.resources.filter(resource => resource.mediaType === 'video').length
   const gifs = articleContent.resources.filter(resource => resource.mediaType === 'gif').length
   const missing = article?.missingAssets?.length || 0
   const mediaNotice = [missing ? `${missing} 张图片待补齐` : '', videos ? `${videos} 个视频需在目标平台手动上传` : '', activePlatform === 'xhs' && gifs ? `${gifs} 个 GIF 将输出为静态图片` : ''].filter(Boolean).join(' · ')
   const notificationCount = (article?.warnings.length || 0) + [mediaNotice, error, historyError, autosave.error, backupNotice, backupProgress, undoDraft, previewNotice, bridgeState === 'missing' || bridgeState === 'error'].filter(Boolean).length
   useEffect(() => {
-    if (error || historyError || autosave.error || backupNotice || undoDraft || previewNotice) { setPanel(null); setNotificationsOpen(true) }
+    if (error || historyError || autosave.error || backupNotice || undoDraft || previewNotice) { setPanel(current => current === 'library' ? current : null); setNotificationsOpen(true) }
   }, [error, historyError, autosave.error, backupNotice, undoDraft, previewNotice])
 
   return (
@@ -1682,10 +1749,10 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
       <input ref={directoryInputRef} type="file" multiple onChange={event => { void importSelection(Array.from(event.target.files || [])); event.target.value = '' }} {...{ webkitdirectory: '', directory: '' }} hidden />
       <header ref={topbarRef} className={`topbar ${article ? 'workbench-topbar' : ''}`}>
         <div className="brand-cluster">
-          <a className="brand" href="/" aria-label="EZWRITING 首页">
+          <button type="button" className="brand" aria-label="EZWRITING 首页" title="返回首页" disabled={isOperationLocked || hydrationPhase === 'loading'} onClick={() => void returnHome()}>
             <span className="brand-mark" aria-hidden="true"><img src={brandLogo} alt="" /></span>
             <span>EZWRITING</span>
-          </a>
+          </button>
           <a
             className="github-repository-link"
             href="https://github.com/KeepATARAXIA/ezWriting"
@@ -1704,6 +1771,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
             <div className="workbench-actions" role="group" aria-label="发布状态与操作">
               <div className="topbar-publish-group" data-topbar-group="publish" role="group" aria-label="发布操作">
                 <DispatchControls
+                  drawerTarget={dispatchSidebarTarget}
                   accounts={accounts}
                   bridgeError={bridgeError}
                   bridgeState={bridgeState}
@@ -1756,6 +1824,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
             </button>
             <span className="version-chip home-version-chip">BETA · 0.2</span>
             <DispatchControls
+              drawerTarget={dispatchSidebarTarget}
               accounts={accounts}
               bridgeError={bridgeError}
               bridgeState={bridgeState}
@@ -1776,7 +1845,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
         )}
       </header>
 
-      <div className="workbench-layout">
+      <div className={`workbench-layout${panel === 'library' ? ' library-open' : ''}`}>
         <WorkbenchNavigation
           historyOpen={historyUsesOverlay ? historyOverlayOpen : historyExpanded}
           draftCount={homeDrafts.length}
@@ -1940,16 +2009,13 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                       ))}
                       <small>持续扩展</small>
                     </div>
-                    <h1 id="empty-workbench-title">写一次，适配并发布到多个平台</h1>
+                    <h1 id="empty-workbench-title" tabIndex={-1}>写一次，适配并发布到多个平台</h1>
                     <p>支持微信公众号、小红书、X 等平台的内容编辑、预览与分发</p>
                     <div className="drop-actions">
-                      <button type="button" className="primary-button" onClick={() => openPanel('new')} disabled={workState === 'parsing' || isOperationLocked}>
+                      <button type="button" className="primary-button" onClick={() => void createNewArticle()} disabled={workState === 'parsing' || isOperationLocked}>
                         <FilePlus2 size={19} />
                         开始写稿
                         <ArrowRight size={18} />
-                      </button>
-                      <button type="button" className="folder-button" onClick={() => fileInputRef.current?.click()} disabled={workState === 'parsing' || isOperationLocked}>
-                        <FileUp size={19} /> 导入稿件
                       </button>
                     </div>
                     <ol className="home-content-flow" aria-label="内容处理流程">
@@ -2001,7 +2067,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                       </span>
                       <span className="home-import-copy" aria-live="polite">
                         <strong>{workState === 'parsing' ? '正在解析并整理内容…' : isDragging ? '松开即可导入内容' : '将文件拖到这里，或点击选择文件'}</strong>
-                        <span>{isDragging ? '我们会在本地解析文件，并直接打开编辑工作台' : '支持 Markdown、HTML、ZIP · 导入后进入编辑与多平台预览'}</span>
+                        <span>{isDragging ? '在本地解析后，直接进入编辑' : '支持 Markdown、HTML、ZIP'}</span>
                       </span>
                     </button>
                     <div className="home-import-actions">
@@ -2009,35 +2075,31 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                     </div>
                   </section>
 
-                  {homeDrafts.length > 0 && (
-                    <section className="home-recent-section" aria-labelledby="home-recent-heading">
-                      <header>
-                        <div>
-                          <h2 id="home-recent-heading">最近文档</h2>
-                          <p>继续处理保存在本机的内容。</p>
-                        </div>
-                        <span>{homeDrafts.length} 篇本地稿件</span>
-                      </header>
-                      <div className="home-recent-grid">
-                        {homeDrafts.slice(0, 3).map(draft => (
-                          <button type="button" key={draft.id} onClick={() => void selectHistoryDraft(draft.id)} disabled={isOperationLocked}>
-                            <span className="home-recent-icon"><FileText size={20} aria-hidden="true" /></span>
-                            <span>
-                              <strong>{draft.title.trim() || '未命名稿件'}</strong>
-                              <small><Clock3 size={13} aria-hidden="true" /> {formatHomeDraftDate(draft.updatedAt)}</small>
-                            </span>
-                            <ArrowRight size={17} aria-hidden="true" />
-                          </button>
-                        ))}
+                  <section className="home-recent-section" aria-labelledby="home-recent-heading">
+                    <header>
+                      <div>
+                        <h2 id="home-recent-heading">最近编辑</h2>
                       </div>
-                    </section>
-                  )}
+                      {homeDrafts.length > 0 && <button type="button" className="directory-link" onClick={toggleHistorySidebar} disabled={isOperationLocked}>全部文档 · {homeDrafts.length}<ArrowRight size={14} aria-hidden="true" /></button>}
+                    </header>
+                    {homeDrafts.length > 0 ? <div className="home-recent-grid">
+                      {homeDrafts.slice(0, 3).map(draft => (
+                        <button type="button" key={draft.id} aria-label={`继续编辑：${draft.title.trim() || '未命名稿件'}`} onClick={() => void selectHistoryDraft(draft.id)} disabled={isOperationLocked}>
+                          <span className="home-recent-icon"><FileText size={20} aria-hidden="true" /></span>
+                          <strong title={draft.title.trim() || '未命名稿件'}>{draft.title.trim() || '未命名稿件'}</strong>
+                          <span className="home-recent-kind">{draft.kind === 'image' ? '图文' : '长文'}</span>
+                          <small><Clock3 size={13} aria-hidden="true" /><time dateTime={draft.updatedAt}>{formatHomeDraftDate(draft.updatedAt)}</time></small>
+                          <span className="home-recent-resume">继续编辑</span>
+                          <ArrowRight size={17} aria-hidden="true" />
+                        </button>
+                      ))}
+                    </div> : <div className="home-recent-empty"><Clock3 size={20} aria-hidden="true" /><p>{draftRepository ? '还没有编辑记录。开始写稿或导入文件后，可在这里继续。' : '本地存储不可用，编辑后请及时导出稿件。'}</p></div>}
+                  </section>
 
                   <section className="home-template-section" aria-labelledby="home-template-heading">
                     <header>
                       <div>
                         <h2 id="home-template-heading">常用模板</h2>
-                        <p>{homeDrafts.length === 0 ? '还没有最近文档，先用一个轻量结构开始。' : '需要新起一篇时，直接套用常用结构。'}</p>
                       </div>
                       <span>3 个起稿模板</span>
                     </header>
@@ -2053,9 +2115,30 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                             disabled={isOperationLocked}
                             aria-label={`使用${template.title}模板开始`}
                           >
-                            <span className={`platform-logo ${platform.id}`} aria-hidden="true"><img src={platform.logo} alt="" /></span>
+                            <svg className={`home-template-thumbnail ${platform.id}`} viewBox="0 0 72 88" fill="none" aria-hidden="true">
+                              {platform.id === 'wechat' ? <>
+                                <rect x="10" y="5" width="52" height="78" rx="3" fill="white" stroke="#dce5df" />
+                                <path d="M18 17h30M18 22h20" stroke="#253e30" strokeWidth="3" />
+                                <rect x="18" y="31" width="36" height="17" rx="1" fill="#cdebd8" />
+                                <path d="M18 55h36M18 60h36M18 65h27M18 73h16" stroke="#b0bdb5" strokeWidth="2" />
+                              </> : platform.id === 'xhs' ? <>
+                                <rect x="26" y="15" width="40" height="63" rx="3" fill="white" stroke="#efd5da" />
+                                <rect x="6" y="8" width="44" height="62" rx="3" fill="#fff0f2" stroke="#efccd4" />
+                                <rect x="13" y="16" width="15" height="4" rx="1" fill="#f34669" />
+                                <path d="M13 31h29M13 38h23" stroke="#762d3d" strokeWidth="4" />
+                                <path d="M13 49h29M13 54h20" stroke="#dba5b0" strokeWidth="2" />
+                                <circle cx="39" cy="61" r="3" fill="#f34669" />
+                              </> : <>
+                                <rect x="5" y="9" width="62" height="70" rx="3" fill="white" stroke="#dbe0e5" />
+                                <circle cx="16" cy="21" r="4" fill="#25303c" />
+                                <path d="M25 19h22M25 24h13" stroke="#adb5be" strokeWidth="2" />
+                                <path d="M13 37h45M13 43h35" stroke="#25303c" strokeWidth="3" />
+                                <path d="M13 53h45M13 58h45M13 63h29" stroke="#bbc2cb" strokeWidth="2" />
+                                <path d="M13 71h8M26 71h8M39 71h8" stroke="#d5dbe1" strokeWidth="2" />
+                              </>}
+                            </svg>
                             <span className="home-template-copy">
-                              <strong>{template.title}</strong>
+                              <strong><span className={`platform-logo ${platform.id}`} aria-hidden="true"><img src={platform.logo} alt="" /></span>{template.title}</strong>
                               <small>{template.description}</small>
                             </span>
                             <ArrowRight size={17} aria-hidden="true" />
@@ -2183,6 +2266,9 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                               syncScroll={syncScroll}
                               onChange={updateArticleSource}
                               onActiveBlockChange={updateActiveEditorLocation}
+                              onCollectSelection={collectEditorSelection}
+                              libraryInsertRequest={libraryInsertRequest?.draftId === article.id ? libraryInsertRequest : null}
+                              onLibraryInsertComplete={finishLibraryInsert}
                             />
                           </Suspense>
                         </WorkbenchErrorBoundary>
@@ -2257,9 +2343,11 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
             </div>
         </section>
       </main>
+      <div className="dispatch-sidebar-slot" ref={setDispatchSidebarTarget} />
       </div>
 
-      <WorkbenchPanels panel={panel} onClose={() => setPanel(null)}
+      <WorkbenchPanels panel={panel} onClose={() => openPanel(null)} libraryDismissGuardRef={libraryDismissGuardRef}
+        librarySelection={librarySelection} canInsertLibraryItem={Boolean(article)} onInsertLibraryItem={insertLibraryItem}
         onBlank={() => void createNewArticle()}
         onFile={() => fileInputRef.current?.click()} onDirectory={() => directoryInputRef.current?.click()}
         locked={isOperationLocked || hydrationPhase === 'loading'}

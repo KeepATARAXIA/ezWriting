@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom'
 import { basicSetup } from 'codemirror'
 import { html } from '@codemirror/lang-html'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
-import { history, redo, redoDepth, undo, undoDepth } from '@codemirror/commands'
+import { history, isolateHistory, redo, redoDepth, undo, undoDepth } from '@codemirror/commands'
 import { Annotation, Compartment, EditorState, Facet, Prec, StateField, Transaction } from '@codemirror/state'
 import {
   Decoration,
@@ -16,6 +16,7 @@ import {
 } from '@codemirror/view'
 import {
   Bold,
+  BookmarkPlus,
   Code2,
   Eye,
   EyeOff,
@@ -39,6 +40,9 @@ import {
   Video,
 } from 'lucide-react'
 import type { ArticleSourceLanguage } from '../domain/article'
+import type { LibraryContent, LibraryInsertRequest, LibraryItem } from '../domain/template-library'
+import { libraryTextForEditor } from '../lib/template-library'
+import { LIBRARY_DRAG_TYPE, readLibraryDrag } from '../lib/template-library-drag'
 import { isGifSource, mediaPlaceholder, mountGifPreview, mountVideoPreview } from '../lib/media-preview'
 import { sourceBlockIndexAtOffset } from '../lib/article-source'
 import { splitEditorDocument } from '../lib/article-editor-document'
@@ -81,6 +85,9 @@ interface SourceEditorProps {
   rowStripes?: boolean
   onShowSyntaxChange?: (enabled: boolean) => void
   titleInDocument?: boolean
+  onCollectSelection?: (selection: Extract<LibraryContent, { kind: 'text' }>) => void
+  libraryInsertRequest?: LibraryInsertRequest | null
+  onLibraryInsertComplete?: (requestId: number, error?: string) => void
 }
 
 export interface SourceEditorStatus {
@@ -1119,7 +1126,7 @@ function markdownLinkAtOffset(text: string, offset: number): string | null {
   return null
 }
 
-export function SourceEditor({ value, language, status, focusRequest, readOnly = false, onChange, onActiveBlockChange, syncScroll = false, showSyntax, rowStripes = false, onShowSyntaxChange, titleInDocument = false }: SourceEditorProps) {
+export function SourceEditor({ value, language, status, focusRequest, readOnly = false, onChange, onActiveBlockChange, syncScroll = false, showSyntax, rowStripes = false, onShowSyntaxChange, titleInDocument = false, onCollectSelection, libraryInsertRequest, onLibraryInsertComplete }: SourceEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
@@ -1140,6 +1147,10 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
   useEffect(() => () => { if (viewportTimerRef.current !== null) window.clearTimeout(viewportTimerRef.current) }, [])
   const readOnlyRef = useRef(readOnly)
   const lastFocusRequestRef = useRef(0)
+  const lastLibraryInsertRef = useRef(0)
+  const pendingLibraryRangeRef = useRef<{ from: number; to: number } | null>(null)
+  const onLibraryInsertCompleteRef = useRef(onLibraryInsertComplete)
+  onLibraryInsertCompleteRef.current = onLibraryInsertComplete
   const changeTimerRef = useRef<number | null>(null)
   const compositionEndTimerRef = useRef<number | null>(null)
   const compositionActiveRef = useRef(false)
@@ -1200,7 +1211,8 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
     const selectionTop = selectionCoords?.top ?? editorRect.top + 44
     const selectionBottom = selectionCoords?.bottom ?? selectionTop + 20
     const placement = selectionTop > 76 ? 'above' : 'below'
-    const left = Math.min(Math.max(rawLeft, 180), Math.max(180, window.innerWidth - 180))
+    const halfMenuWidth = Math.min(480, window.innerWidth - 20) / 2
+    const left = Math.min(Math.max(rawLeft, halfMenuWidth + 10), window.innerWidth - halfMenuWidth - 10)
     const top = placement === 'above' ? selectionTop - 10 : selectionBottom + 10
     setSelectionMenu(current => current
       && current.from === from
@@ -1282,13 +1294,13 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
     text: string,
     selectFrom = text.length,
     selectTo = selectFrom,
-    options: { preserveOuterScroll?: boolean; syncImmediately?: boolean; media?: boolean } = {},
+    options: { preserveOuterScroll?: boolean; syncImmediately?: boolean; media?: boolean; separateHistory?: boolean; range?: { from: number; to: number } } = {},
   ) => {
     if (readOnlyRef.current) return
     const view = viewRef.current
     if (!view) return
     const outerScroll = options.preserveOuterScroll ? captureOuterScroll(view) : null
-    let { from, to } = view.state.selection.main
+    let { from, to } = options.range ?? view.state.selection.main
     if (options.media && titleInDocument) {
       const heading = splitEditorDocument(view.state.doc.toString())
       if (heading.blockOffset && from < heading.prefix.length) {
@@ -1302,6 +1314,7 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
       changes: { from, to, insert: text },
       selection: { anchor: from + selectFrom, head: from + selectTo },
       scrollIntoView: true,
+      annotations: options.separateHistory ? isolateHistory.of('full') : undefined,
     })
     if (options.syncImmediately) emitSourceChange(view)
     if (outerScroll) {
@@ -1543,6 +1556,42 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
     if (file) void insertVideoFile(file)
   }
 
+  const collectSelection = () => {
+    const view = viewRef.current
+    if (!view || readOnlyRef.current || view.state.selection.main.empty) return
+    const { from, to } = view.state.selection.main
+    const content = view.state.sliceDoc(from, to)
+    if (!content.trim() || /dispatch-editor-(?:image|video):\/\//i.test(content)) return
+    if (changeTimerRef.current !== null) emitSourceChange(view)
+    onCollectSelection?.({ kind: 'text', content, language: languageRef.current })
+    setSelectionMenu(null)
+  }
+
+  const insertLibraryContent = async (item: LibraryItem, cancelled: () => boolean = () => false) => {
+    const view = viewRef.current
+    if (!view || readOnlyRef.current) return
+    if (pendingLibraryRangeRef.current) throw new Error('上一项素材正在读取，请稍后再添加。')
+    const { from, to } = view.state.selection.main
+    const range = { from, to }
+    pendingLibraryRangeRef.current = range
+    try {
+      let text: string
+      if (item.kind === 'image') {
+        const source = await readFileAsDataUrl(item.blob)
+        if (cancelled() || viewRef.current !== view || readOnlyRef.current) return
+        const token = addEmbeddedImage(embeddedImagesRef.current, source)
+        text = languageRef.current === 'html'
+          ? `<img src="${token}" alt="${escapeHtmlAttribute(item.title)}">`
+          : markdownImageSyntax(item.title.replace(/[\r\n]/g, ' '), token, '')
+      } else text = libraryTextForEditor(item, languageRef.current)
+      if (cancelled() || viewRef.current !== view || readOnlyRef.current) return
+      if (item.kind === 'image' || text.includes('\n')) text = `\n\n${text}\n\n`
+      insertText(text, undefined, undefined, { range, media: true, preserveOuterScroll: true, syncImmediately: true, separateHistory: true })
+    } finally {
+      if (pendingLibraryRangeRef.current === range) pendingLibraryRangeRef.current = null
+    }
+  }
+
   useEffect(() => {
     const host = hostRef.current
     if (!host) return
@@ -1658,8 +1707,10 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
             },
             blur: (_event, currentView) => {
               if (changeTimerRef.current !== null) emitSourceChange(currentView)
+              setSelectionMenu(null)
               return false
             },
+            focus: (_event, currentView) => { updateEditorUi(currentView); return false },
             click: (event, currentView) => {
               if (languageRef.current === 'markdown' && (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey) {
                 const decoratedLink = event.target instanceof Element
@@ -1689,12 +1740,32 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
               else if (video) void insertVideoFile(video)
               return true
             },
-            dragover: event => {
+            dragover: (event, currentView) => {
+              if (event.dataTransfer?.types.includes(LIBRARY_DRAG_TYPE)) {
+                event.preventDefault()
+                event.dataTransfer.dropEffect = readOnlyRef.current ? 'none' : 'copy'
+                if (!readOnlyRef.current) {
+                  const position = currentView.posAtCoords({ x: event.clientX, y: event.clientY })
+                  if (position !== null) currentView.dispatch({ selection: { anchor: position } })
+                }
+                return true
+              }
               if (!event.dataTransfer?.types.includes('Files')) return false
               event.preventDefault()
               return true
             },
-            drop: event => {
+            drop: (event, currentView) => {
+              if (event.dataTransfer?.types.includes(LIBRARY_DRAG_TYPE)) {
+                event.preventDefault()
+                const item = readLibraryDrag(event.dataTransfer)
+                if (readOnlyRef.current || !item) return true
+                const position = currentView.posAtCoords({ x: event.clientX, y: event.clientY })
+                if (position === null) return true
+                currentView.dispatch({ selection: { anchor: position } })
+                setVideoError(null)
+                void insertLibraryContent(item).catch(error => setVideoError(`素材插入失败：${(error as Error).message}`))
+                return true
+              }
               if (readOnlyRef.current) return false
               const files = Array.from(event.dataTransfer?.files || [])
               const image = files.find(file => file.type.startsWith('image/'))
@@ -1707,6 +1778,11 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
             },
           }),
           EditorView.updateListener.of(update => {
+            const pendingRange = pendingLibraryRangeRef.current
+            if (pendingRange && update.docChanged) {
+              pendingRange.from = update.changes.mapPos(pendingRange.from, 1)
+              pendingRange.to = Math.max(pendingRange.from, update.changes.mapPos(pendingRange.to, -1))
+            }
             const isControlledValueUpdate = update.transactions.some(
               transaction => transaction.annotation(controlledValueUpdate) === true,
             )
@@ -1857,6 +1933,24 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
 
   useEffect(() => {
     const view = viewRef.current
+    if (!view || !libraryInsertRequest || readOnly || libraryInsertRequest.requestId === lastLibraryInsertRef.current) return
+    let cancelled = false
+    const { item, requestId } = libraryInsertRequest
+    void (async () => {
+      try {
+        await insertLibraryContent(item, () => cancelled)
+        if (cancelled || viewRef.current !== view || readOnlyRef.current) return
+        lastLibraryInsertRef.current = requestId
+        onLibraryInsertCompleteRef.current?.(requestId)
+      } catch (error) {
+        if (!cancelled && viewRef.current === view) onLibraryInsertCompleteRef.current?.(requestId, `素材插入失败：${(error as Error).message}`)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [libraryInsertRequest, readOnly])
+
+  useEffect(() => {
+    const view = viewRef.current
     if (!view || !focusRequest || focusRequest.requestId === lastFocusRequestRef.current) return
     lastFocusRequestRef.current = focusRequest.requestId
     const lineNumber = Math.min(Math.max(1, focusRequest.line), view.state.doc.lines)
@@ -1906,6 +2000,7 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
             <ToolButton label="表格" onClick={insertTable}><Table2 size={17} /></ToolButton>
             <ToolButton label="分割线" onClick={() => insertText(languageRef.current === 'markdown' ? '\n\n---\n\n' : '<hr>')}><Minus size={17} /></ToolButton>
           </div>
+          {onCollectSelection && <div className="source-tool-group"><ToolButton label="收藏选中内容" preserveSelection disabled={readOnly || !selectionMenu} onClick={collectSelection}><BookmarkPlus size={17} /></ToolButton></div>}
           <input ref={imageInputRef} type="file" accept="image/*" hidden onChange={handleImageSelection} />
           <input ref={videoInputRef} type="file" accept={VIDEO_FILE_ACCEPT} hidden onChange={handleVideoSelection} />
         </div>
@@ -1952,6 +2047,7 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
           aria-label="选中文字快捷排版"
           style={{ left: selectionMenu.left, top: selectionMenu.top }}
         >
+          {onCollectSelection && <div className="source-selection-group"><ToolButton label="收藏到模板库" preserveSelection onClick={collectSelection} disabled={readOnly}><BookmarkPlus size={15} /></ToolButton></div>}
           <div className="source-selection-group">
             <ToolButton label="正文" preserveSelection onClick={setParagraph}><Pilcrow size={15} /></ToolButton>
             <ToolButton label="二级标题" shortcut="Ctrl+Alt+2" preserveSelection onClick={() => insertHeading(2)}><Heading2 size={15} /></ToolButton>

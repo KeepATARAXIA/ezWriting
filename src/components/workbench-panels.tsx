@@ -1,7 +1,11 @@
-import { Download, FileDown, FilePlus2, FileUp, FolderOpen, HardDrive, Image, LoaderCircle, MessageSquareText, Sparkles } from 'lucide-react'
+import { lazy, Suspense, type RefObject } from 'react'
+import { Download, FileDown, FilePlus2, FileUp, FolderOpen, HardDrive, LoaderCircle, Sparkles } from 'lucide-react'
+import type { LibraryContent, LibraryItem } from '../domain/template-library'
 import { WorkbenchDialog } from './workbench-dialog'
 import type { WorkbenchPanel } from './workbench-navigation'
 import type { WorkspaceMode } from '../lib/workbench-preferences'
+
+const TemplateLibrary = lazy(() => import('./template-library').then(module => ({ default: module.TemplateLibrary })))
 
 interface Props {
   panel: WorkbenchPanel
@@ -28,11 +32,16 @@ interface Props {
   onExportBackup: () => void
   onImportBackup: () => void
   onExportDiagnostics: () => void
+  librarySelection?: Extract<LibraryContent, { kind: 'text' }> | null
+  libraryDismissGuardRef: RefObject<() => boolean>
+  canInsertLibraryItem?: boolean
+  onInsertLibraryItem: (item: LibraryItem) => void
 }
 
 export function WorkbenchPanels(props: Props) {
   const { panel } = props
   if (!panel) return null
+  if (panel === 'library') return <Suspense fallback={<aside className="template-library-sidebar" aria-label="模板素材库"><p role="status">正在打开素材库…</p><button type="button" onClick={props.onClose}>关闭模板素材库</button></aside>}><TemplateLibrary dismissGuardRef={props.libraryDismissGuardRef} onClose={props.onClose} selection={props.librarySelection} canInsert={Boolean(props.canInsertLibraryItem) && !props.locked} onInsert={props.onInsertLibraryItem} /></Suspense>
   const backupLocked = props.locked || props.backupStatus !== 'idle' || !props.hasRepository
   const title = { new: '新建文档', settings: '设置', library: '模板素材库', ai: 'AI 工具' }[panel]
   return <WorkbenchDialog key={panel} title={title} onClose={props.onClose}>
@@ -65,7 +74,6 @@ export function WorkbenchPanels(props: Props) {
         {props.backupProgress && <p role="status">{props.backupProgress}<button type="button" onClick={props.onCancelBackup}>取消备份操作</button></p>}
       </section>
     </div>}
-    {panel === 'library' && <div className="planned-feature"><span className="planned-badge">规划中</span><h3>让常用素材随手可用</h3><p>计划建立跨文档复用的本地收藏，支持上传和整理自己的图片、表情包与常用语句。</p><div className="planned-items"><span><Image size={22} />图片与表情包</span><span><MessageSquareText size={22} />语句与内容模板</span></div><p className="dialog-footnote">当前稿件的素材，请在编辑区「文档素材」中管理。</p></div>}
     {panel === 'ai' && <div className="planned-feature"><span className="planned-badge">规划中</span><Sparkles size={36} /><h3>AI 创作辅助</h3><p>后续探索围绕写作、整理和平台适配的辅助能力。当前仅为预留入口，尚未接入模型。</p></div>}
   </WorkbenchDialog>
 }

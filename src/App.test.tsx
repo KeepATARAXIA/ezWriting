@@ -61,7 +61,9 @@ describe('App publishing engine onboarding', () => {
     expect(container.textContent).toContain('支持微信公众号、小红书、X 等平台的内容编辑、预览与分发')
     expect(container.querySelectorAll('.drop-actions .primary-button')).toHaveLength(1)
     expect(container.querySelector('.drop-actions .primary-button')?.textContent).toContain('开始写稿')
-    expect(container.querySelector('.drop-actions .folder-button')?.textContent).toContain('导入稿件')
+    expect(container.querySelectorAll('.drop-actions button')).toHaveLength(1)
+    expect(container.querySelector('#home-recent-heading')?.textContent).toBe('最近编辑')
+    expect(container.querySelector('.home-recent-empty')?.textContent).toContain('本地存储不可用')
     expect(container.querySelector('.home-import-zone .directory-link')?.textContent).toContain('选择文件夹')
     expect(container.querySelector('.home-import-copy')?.textContent).toContain('支持 Markdown、HTML、ZIP')
     expect(Array.from(container.querySelectorAll('.home-platform-list strong')).map(tag => tag.textContent)).toEqual(['公众号', '小红书', 'X'])
@@ -112,7 +114,8 @@ describe('App publishing engine onboarding', () => {
     })
 
     const newDocumentButton = container.querySelector<HTMLButtonElement>('.drop-actions .primary-button')!
-    await createBlankInWorkbench(container)
+    await act(async () => newDocumentButton.click())
+    await act(async () => vi.dynamicImportSettled())
     await act(async () => new Promise(resolve => window.setTimeout(resolve, 20)))
 
     expect(container.querySelector('.editor-shell.has-article')).not.toBeNull()

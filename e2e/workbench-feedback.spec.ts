@@ -83,7 +83,10 @@ test('unifies new/import, preserves the draft on cancel and failure, and offers 
   await page.reload()
   await expect(page.locator('.editor-grid')).toHaveClass(/workspace-mode-editor/)
   await expect(page.locator('.cm-content')).toContainText('# 正文里的标题')
-  for (const name of ['模板素材库（规划中）', 'AI 工具（规划中）']) {
+  await page.getByRole('button', { name: '模板素材库', exact: true }).click()
+  await expect(page.locator('.template-library')).toContainText('收藏常用图片')
+  await page.keyboard.press('Escape')
+  for (const name of ['AI 工具（规划中）']) {
     await page.getByRole('button', { name, exact: true }).click()
     await expect(page.locator('.planned-feature')).toContainText('规划中')
     await page.keyboard.press('Escape')

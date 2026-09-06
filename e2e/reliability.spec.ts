@@ -413,7 +413,6 @@ test('exports the Xiaohongshu card master at 1080 by 1440 pixels', async ({ page
 test('blocks publishing for a blank document', async ({ page }) => {
   await page.goto('/')
   await page.getByRole('button', { name: '开始写稿' }).click()
-  await page.getByRole('button', { name: '空白文档', exact: true }).click()
   await page.getByRole('button', { name: /打开发布面板/ }).click()
   await expect(page.locator('.publish-button')).toBeDisabled()
   await expect(page.locator('[aria-label="发布前检查"]')).toContainText('请先导入稿件')

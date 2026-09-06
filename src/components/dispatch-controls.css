@@ -1,0 +1,64 @@
+.drawer-layer:has(.dispatch-drawer) { top: 60px; }
+.drawer-layer .drawer-backdrop { background: #18264508; }
+.drawer-layer .dispatch-drawer { width: min(360px, 100vw); border-left: 1px solid #e2e7ee; box-shadow: -8px 0 24px #1826450c; overflow: hidden; }
+.dispatch-drawer .drawer-heading { min-height: 64px; padding: 16px; align-items: center; gap: 12px; flex-shrink: 0; }
+.dispatch-drawer .drawer-heading h2 { font-size: 17px; font-weight: 650; letter-spacing: 0; }
+.dispatch-drawer .drawer-close { width: 28px; height: 28px; flex-shrink: 0; border: 0; border-radius: 5px; }
+.dispatch-drawer .drawer-close:hover { background: #f3f5f8; }
+.dispatch-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 16px; }
+.dispatch-drawer .bridge-status { margin: 0; padding: 10px 0; min-height: 40px; border: 0; background: transparent; font-weight: 400; font-size: 12px; }
+.dispatch-drawer .bridge-status:is(.connected, .checking, .missing, .error) { border: 0; background: transparent; }
+.dispatch-drawer .bridge-status small { font-size: 11px; }
+.dispatch-refresh { width: 28px; height: 28px; border: 0; border-radius: 5px; display: grid; place-items: center; background: transparent; color: #7a8798; cursor: pointer; }
+.dispatch-refresh:hover:not(:disabled) { color: var(--blue); background: #f3f6fc; }
+.dispatch-drawer .drawer-platform-picker { margin: 4px 0 0; border: 0; }
+.dispatch-drawer .drawer-platform-heading { min-height: 32px; padding: 0; border: 0; background: transparent; }
+.dispatch-drawer .drawer-platform-heading strong { font-size: 13px; font-weight: 600; }
+.dispatch-drawer .drawer-platform-heading > span { font-size: 12px; color: #6c798c; }
+.dispatch-drawer .drawer-platform-heading b { font-size: 12px; color: var(--blue); font-weight: 650; }
+.platform-selection-actions { display: flex; align-items: center; gap: 10px; padding: 0 0 8px; }
+.platform-selection-actions > span { margin-right: auto; color: #8893a3; font-size: 11px; }
+.platform-selection-actions button { padding: 4px 0; border: 0; background: transparent; color: var(--blue); font: inherit; font-size: 12px; cursor: pointer; }
+.platform-selection-actions button:disabled, .dispatch-refresh:disabled { opacity: .4; cursor: not-allowed; }
+.dispatch-drawer .drawer-platform-picker .platform-list { max-height: none; overflow: visible; border: 0; display: grid; gap: 2px; }
+.dispatch-drawer .platform-row { min-height: 48px; padding: 6px 8px; grid-template-columns: 26px minmax(0, 1fr) auto 16px; gap: 9px; border: 0; border-radius: 6px; box-shadow: none; }
+.dispatch-drawer .platform-row:hover:not(:disabled) { background: #f5f7fb; }
+.dispatch-drawer .platform-row.selected { background: #edf2ff; box-shadow: none; }
+.dispatch-drawer .platform-row:disabled { cursor: not-allowed; color: #8791a0; }
+.dispatch-drawer .platform-row img, .dispatch-drawer .platform-fallback { width: 26px; height: 26px; border-radius: 6px; }
+.dispatch-drawer .platform-copy strong { font-size: 13px; font-weight: 550; margin-bottom: 3px; }
+.dispatch-drawer .platform-copy small { font-size: 10px; color: #8a94a3; }
+.dispatch-drawer .platform-check { width: 16px; height: 16px; border: 1px solid #ced5e0; border-radius: 4px; background: #fff; color: var(--blue); }
+.dispatch-drawer .selected .platform-check { border-color: transparent; background: transparent; }
+.platform-row-status { display: flex; align-items: center; gap: 4px; font-size: 10px; color: #8590a1; white-space: nowrap; }
+.selected .platform-row-status { color: var(--blue); }
+.platform-row-status.done { color: #18875b; }
+.platform-row-status.failed { color: #b42336; }
+.dispatch-downloads { margin-top: 12px; padding-top: 12px; border-top: 1px solid #edf0f4; }
+.dispatch-downloads h3 { margin: 0 0 8px; color: #59667b; font-size: 12px; font-weight: 550; }
+.dispatch-downloads h3 small { margin-left: 8px; color: #909baa; font-size: 10px; font-weight: 400; }
+.dispatch-drawer .dispatch-footer { padding: 14px 16px 16px; margin-top: 0; flex-shrink: 0; }
+.dispatch-drawer .readiness-list { border: 0; border-top: 1px solid #e8edf3; padding: 12px 0 0; background: transparent; gap: 7px; margin-bottom: 14px; }
+.dispatch-drawer .readiness-list h3, .dispatch-drawer .result-feedback h3 { margin: 0 0 3px; font-size: 12px; color: #58657a; font-weight: 600; }
+.dispatch-drawer .readiness-list > div { font-size: 11px; color: #8490a1; }
+.dispatch-drawer .readiness-list > div.ready { color: #5b6b7d; }
+.dispatch-drawer .readiness-list svg { border: 0; padding: 0; color: #18a16a; }
+.dispatch-check-warning { color: #9a5f00; font-size: 11px; line-height: 1.6; margin: 3px 0 0; }
+.dispatch-permission-note { color: #929ba8; font-size: 10px; margin: 1px 0 0; }
+.dispatch-drawer .publish-button { min-height: 44px; padding: 10px 12px; font-size: 14px; font-weight: 600; line-height: 1.5; box-shadow: none; }
+.dispatch-drawer .publish-button:disabled { background: #edf0f5; color: #7d8899; cursor: not-allowed; }
+.dispatch-drawer .publish-button svg { flex-shrink: 0; }
+.dispatch-drawer .draft-policy { font-size: 10px; margin-top: 9px; }
+.dispatch-drawer .result-feedback { margin: 16px 0 0; gap: 8px; }
+.dispatch-drawer .result-feedback-item { border: 0; border-radius: 6px; font-size: 11px; padding: 10px; overflow-wrap: anywhere; }
+.dispatch-drawer .result-feedback-heading { gap: 8px; }
+.dispatch-drawer .completion-note { font-size: 11px; padding-top: 10px; border-top: 1px solid #edf0f4; }
+.dispatch-drawer .privacy-note { margin-inline: 0; font-size: 11px; line-height: 1.7; }
+.dispatch-drawer :is(.bridge-onboarding, .bridge-empty, .bridge-recovery, .bridge-waiting) { margin: 8px 0; padding: 12px; border: 0; border-radius: 6px; box-shadow: none; }
+.dispatch-drawer :is(.bridge-card-copy, .bridge-empty p, .bridge-recovery p) { font-size: 12px; }
+.dispatch-drawer .setup-steps small { font-size: 11px; }
+@media (max-width: 700px) {
+  .dispatch-drawer .platform-row { min-height: 48px; }
+  .dispatch-drawer .platform-selection-actions button { min-height: 32px; }
+}
+@media (prefers-reduced-motion: reduce) { .drawer-layer .dispatch-drawer { animation: none; } }

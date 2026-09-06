@@ -44,7 +44,7 @@ export function WorkbenchNavigation(props: WorkbenchNavigationProps) {
       <button ref={props.historyTriggerRef} type="button" className="rail-action" aria-label="打开历史记录" title="历史记录" aria-expanded={props.historyOpen} aria-controls="history-sidebar-panel" onClick={props.onHistory}>
         <span className="rail-icon"><History size={21} />{props.draftCount > 0 && <span className="rail-count" aria-hidden="true">{props.draftCount > 99 ? '99+' : props.draftCount}</span>}</span><span>历史</span>
       </button>
-      <button type="button" className="rail-action" aria-label="模板素材库（规划中）" title="模板素材库 · 规划中" aria-expanded={props.panel === 'library'} onClick={() => props.onPanelChange('library')}><LayoutGrid size={21} /><span>模板</span></button>
+      <button type="button" className="rail-action" aria-label="模板素材库" title="模板素材库" aria-controls="template-library-sidebar" aria-expanded={props.panel === 'library'} disabled={props.interactionLocked} onClick={() => props.onPanelChange(props.panel === 'library' ? null : 'library')}><LayoutGrid size={21} /><span>模板</span></button>
       <button type="button" className="rail-action" aria-label="AI 工具（规划中）" title="AI 工具 · 规划中" aria-expanded={props.panel === 'ai'} onClick={() => props.onPanelChange('ai')}><Sparkles size={21} /><span>AI</span></button>
     </div>
     <div className="workbench-rail-utilities">

@@ -112,6 +112,76 @@ describe('App local draft history', () => {
     expect((await repository.listDrafts()).map(draft => draft.title)).toEqual(['本地历史测试稿'])
   })
 
+  it('saves before returning home and resumes the latest draft from recent edits', async () => {
+    await renderApp()
+    expect(container.querySelector('.home-recent-empty')?.textContent).toContain('还没有编辑记录')
+    await createBlankInWorkbench(container)
+    await act(async () => editWorkbenchTitle(container, '昨天的稿件'))
+    await createBlankInWorkbench(container)
+    await act(async () => editWorkbenchTitle(container, '刚刚修改的稿件'))
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('.brand')!.click()
+      await new Promise(resolve => window.setTimeout(resolve, 50))
+    })
+
+    expect(container.querySelector('.empty-workbench')).not.toBeNull()
+    expect(Array.from(container.querySelectorAll('.home-recent-grid strong')).map(node => node.textContent))
+      .toEqual(['刚刚修改的稿件', '昨天的稿件'])
+    expect((await repository.listDrafts())[0].title).toBe('刚刚修改的稿件')
+    expect(document.activeElement?.id).toBe('empty-workbench-title')
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[aria-label="继续编辑：刚刚修改的稿件"]')!.click()
+      await new Promise(resolve => window.setTimeout(resolve, 50))
+    })
+    expect(container.querySelector('.topbar-document-title')?.textContent).toBe('刚刚修改的稿件')
+    expect(await repository.listDrafts()).toHaveLength(2)
+  })
+
+  it('keeps the current editor when saving before returning home fails', async () => {
+    await renderApp()
+    await createBlankInWorkbench(container)
+    vi.spyOn(repository, 'saveDraft').mockRejectedValue(new DOMException('Storage quota exceeded', 'QuotaExceededError'))
+    await act(async () => editWorkbenchTitle(container, '不能丢失的修改'))
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('.brand')!.click()
+      await new Promise(resolve => window.setTimeout(resolve, 30))
+    })
+    expect(container.querySelector('.topbar-document-title')?.textContent).toBe('不能丢失的修改')
+    expect(container.querySelector('.empty-workbench')).toBeNull()
+    expect(container.textContent).toContain('返回首页失败，当前编辑已保留')
+  })
+
+  it('limits recent edits to three live drafts and exposes the complete history', async () => {
+    await renderApp()
+    for (let index = 1; index <= 5; index++) {
+      await createBlankInWorkbench(container)
+      await act(async () => editWorkbenchTitle(container, `稿件 ${index}`))
+    }
+    const deletedId = (await repository.listDrafts()).find(draft => draft.title === '稿件 4')!.id
+    await repository.softDeleteDraft(deletedId)
+    await act(async () => container.querySelector<HTMLButtonElement>('.brand')!.click())
+    await vi.waitFor(async () => {
+      await act(async () => {})
+      expect(container.querySelector('.empty-workbench'), container.textContent || '').not.toBeNull()
+    })
+    expect(Array.from(container.querySelectorAll('.home-recent-grid strong')).map(node => node.textContent))
+      .toEqual(['稿件 5', '稿件 3', '稿件 2'])
+    expect(container.querySelector('.home-recent-section header')?.textContent).toContain('全部文档 · 4')
+    await act(async () => container.querySelector<HTMLButtonElement>('.home-recent-section header button')!.click())
+    expect(container.querySelector('.history-sidebar')?.classList.contains('collapsed')).toBe(false)
+    expect(container.querySelectorAll('.history-draft-open')).toHaveLength(4)
+  })
+
+  it('preserves a memory-only draft when local storage is unavailable', async () => {
+    await act(async () => root.render(<App draftRepository={null} />))
+    await createBlankInWorkbench(container)
+    await act(async () => editWorkbenchTitle(container, '仅在内存中的稿件'))
+    await act(async () => container.querySelector<HTMLButtonElement>('.brand')!.click())
+    expect(container.querySelector('.topbar-document-title')?.textContent).toBe('仅在内存中的稿件')
+    expect(container.textContent).toContain('本地存储不可用，请先导出当前稿件')
+  })
+
   it('preserves source undo, redo and selection across the resources view', async () => {
     await renderApp()
     await createBlankInWorkbench(container)

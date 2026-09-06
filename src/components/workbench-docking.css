@@ -1,0 +1,69 @@
+/* Side panels reserve space in the workbench; the document stays interactive. */
+.workbench-layout:has(.dispatch-dock) { grid-template-columns: 72px auto minmax(0, 1fr) auto; }
+.dispatch-sidebar-slot { min-width: 0; min-height: 0; height: 100%; }
+.dispatch-sidebar-slot:empty { display: none; }
+.dispatch-sidebar-slot .dispatch-dock { position: relative; inset: auto; z-index: auto; display: grid; grid-template-columns: 10px minmax(0, 1fr); width: calc(var(--dispatch-sidebar-width) + 10px); height: 100%; min-height: 0; pointer-events: auto; }
+.dispatch-sidebar-slot .dispatch-dock .dispatch-drawer { width: 100%; min-width: 0; min-height: 0; height: 100%; margin: 0; box-shadow: none; animation: none; }
+.dispatch-resizer { min-width: 0; display: grid; place-items: center; cursor: col-resize; touch-action: none; user-select: none; background: #f5f7f8; }
+.dispatch-resizer span { width: 2px; height: 34px; border-radius: 2px; background: #b7c1ca; }
+.dispatch-resizer:hover, .dispatch-resizer:focus-visible { background: #e8eeff; }
+.dispatch-resizer:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
+.workbench-layout:has(.dispatch-dock) > .workspace { width: auto; }
+.workbench-layout:has(.dispatch-dock) .editor-grid.workspace-mode-split { --preview-pane-min-width: 280px; grid-template-columns: minmax(240px, var(--editor-weight)) 14px minmax(0, var(--preview-weight)); }
+
+.preview-workbench { container-type: inline-size; container-name: preview-workbench; }
+.preview-workbench :is(.wechat-layout, .x-layout, .xhs-layout).tool-rail-open { grid-template-columns: minmax(280px, 1fr) 10px clamp(240px, var(--preview-tool-rail-width), calc(100% - 290px)); grid-template-rows: minmax(0, 1fr); }
+.preview-workbench .tool-rail-open .preview-tool-rail { position: relative; inset: auto; width: auto; max-width: none; height: 100%; grid-column: 3; grid-row: 1; z-index: auto; padding: 14px 12px; border-left: 1px solid #e7ebf1; box-shadow: none; animation: none; }
+.preview-workbench .preview-tool-resizer { position: relative; inset: auto; display: grid; width: 10px; grid-column: 2; grid-row: 1; z-index: auto; background: #f5f7f8; }
+
+/* The WeChat inspector shares the editor's white surface; only choices are outlined. */
+.preview-workbench .tool-rail-open .wechat-theme-rail { display: flex; flex-direction: column; padding: 16px 18px; overflow: hidden; border-left: 0; background: #fff; }
+.wechat-theme-rail > .inspector-settings { flex: 1; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; scroll-padding-block: 8px; padding-bottom: 8px; }
+.wechat-theme-rail .inspector-tabs { border: 0; padding-bottom: 4px; }
+.wechat-theme-rail .wechat-theme-categories { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 16px; }
+.wechat-theme-rail .wechat-theme-categories button { padding-inline: 8px; font-size: 12px; }
+.wechat-layout > .preview-tool-resizer { background: #fff; }
+.wechat-theme-actions { flex-shrink: 0; padding-top: 16px; margin-top: 12px; border-top: 1px solid #edf0f5; background: #fff; }
+.wechat-theme-actions [role="status"] { display: grid; gap: 5px; }
+.wechat-theme-actions strong { color: #26324a; font-size: 13px; font-weight: 600; }
+.wechat-theme-actions [role="status"] > span { color: #788398; font-size: 12px; line-height: 1.5; }
+.wechat-theme-action-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+.wechat-theme-action-buttons button { display: flex; align-items: center; justify-content: center; min-width: 0; min-height: 40px; padding: 8px; border: 0; border-radius: 7px; background: #f4f6fa; color: #526078; font-size: 13px; cursor: pointer; }
+.wechat-theme-action-buttons .primary-button { background: #1648ff; color: #fff; }
+.wechat-theme-action-buttons button:disabled { background: #f4f6fa; color: #9aa4b4; cursor: default; }
+.wechat-theme-action-buttons button:focus-visible { outline: 2px solid #1648ff; outline-offset: 2px; }
+
+/* When two readable columns cannot fit, settings use a separate lower row. */
+@container preview-workbench (max-width: 529px) {
+  .preview-workbench :is(.wechat-layout, .x-layout, .xhs-layout).tool-rail-open { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(100px, 1fr) minmax(0, 1fr); }
+  .preview-workbench .wechat-layout.tool-rail-open { grid-template-rows: minmax(100px, 1fr) minmax(0, 2fr); }
+  .preview-workbench .tool-rail-open .preview-tool-rail { grid-column: 1; grid-row: 2; border-left: 0; border-top: 1px solid #e7ebf1; }
+  .preview-workbench .preview-tool-resizer { display: none; }
+}
+@media (min-width: 701px) and (max-width: 1440px) {
+  .workbench-layout:has(.dispatch-dock) { grid-template-columns: 72px minmax(0, 1fr) auto; }
+}
+@media (min-width: 701px) and (max-width: 1200px) {
+  .workbench-layout.library-open:has(.dispatch-dock) .editor-grid.workspace-mode-split { grid-template-columns: minmax(0, 1fr); }
+}
+@media (min-width: 701px) and (max-width: 1100px) {
+  .workbench-layout:has(.dispatch-dock) { grid-template-columns: 72px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
+  .workbench-layout:has(.dispatch-dock) > .workbench-rail { grid-row: 1 / -1; }
+  .workbench-layout:has(.dispatch-dock) > .dispatch-sidebar-slot { grid-column: 2; grid-row: 2; }
+  .workbench-layout.library-open:has(.dispatch-dock) > .dispatch-sidebar-slot { margin-left: 280px; }
+}
+@media (max-width: 1100px) {
+  .dispatch-sidebar-slot .dispatch-dock { width: 100%; grid-template-columns: minmax(0, 1fr); }
+  .dispatch-sidebar-slot .dispatch-resizer { display: none; }
+  .dispatch-sidebar-slot .dispatch-drawer { border-left: 0; border-top: 1px solid #e2e7ee; }
+  .dispatch-sidebar-slot .drawer-heading { min-height: 44px; padding: 8px 14px; }
+  .dispatch-sidebar-slot .dispatch-footer { padding: 8px 14px; }
+  .dispatch-sidebar-slot .readiness-list { gap: 4px; padding: 0 0 6px; }
+  .dispatch-sidebar-slot .dispatch-permission-note { margin: 2px 0 0; }
+}
+@media (max-width: 700px) {
+  .workbench-layout:has(.dispatch-dock), .workbench-layout.library-open:has(.dispatch-dock) { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(160px, 1fr) minmax(0, 1.6fr); padding-bottom: 0; }
+  .workbench-layout:has(.dispatch-dock) > .workspace { grid-row: 1; height: 100%; }
+  .workbench-layout:has(.dispatch-dock) > .dispatch-sidebar-slot { grid-row: 2; }
+  .app-shell:has(.dispatch-dock) .template-library-sidebar { display: none; }
+}
