@@ -93,21 +93,21 @@ describe('App local draft history', () => {
     expect(container.querySelector('.history-draft-title')?.textContent).toBe('本地历史测试稿')
 
     const deleteButton = container.querySelector<HTMLButtonElement>('.history-delete-action')!
-    await act(async () => {
-      deleteButton.click()
-      await new Promise(resolve => window.setTimeout(resolve, 50))
+    await act(async () => deleteButton.click())
+    await vi.waitFor(async () => {
+      await act(async () => {})
+      expect(container.textContent).toContain('本地历史测试稿”已删除')
+      expect(await repository.listDrafts()).toHaveLength(0)
     })
-    expect(container.textContent).toContain('本地历史测试稿”已删除')
-    expect(await repository.listDrafts()).toHaveLength(0)
 
     const undoButton = Array.from(container.querySelectorAll<HTMLButtonElement>('.history-undo-notice button'))[0]
     expect(undoButton.closest('[hidden], [inert]')).toBeNull()
     expect(undoButton.closest('.history-sidebar-slot')).toBeNull()
-    await act(async () => {
-      undoButton.click()
-      await new Promise(resolve => window.setTimeout(resolve, 50))
+    await act(async () => undoButton.click())
+    await vi.waitFor(async () => {
+      await act(async () => {})
+      expect((await repository.listDrafts()).map(draft => draft.title)).toEqual(['本地历史测试稿'])
     })
-    expect((await repository.listDrafts()).map(draft => draft.title)).toEqual(['本地历史测试稿'])
   })
 
   it('saves before returning home and resumes the latest draft from recent edits', async () => {
