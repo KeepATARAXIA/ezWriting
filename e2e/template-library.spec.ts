@@ -11,6 +11,7 @@ test('collects selected Markdown, inserts it in another draft, and preserves und
   await page.goto('/')
   const sentence = '**这句话值得反复使用**，保留原有格式。'
   await page.locator('input[accept*=".md"]').setInputFiles({ name: 'collect.md', mimeType: 'text/markdown', buffer: Buffer.from(`# 收藏测试\n\n${sentence}\n\n原文的下一段。`) })
+  await page.getByRole('button', { name: '显示 Markdown 语法', exact: true }).click()
   const line = page.locator('.cm-line').filter({ hasText: '这句话值得反复使用' })
   await line.click()
   await page.keyboard.press('Home')

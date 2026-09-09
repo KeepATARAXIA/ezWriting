@@ -1,7 +1,7 @@
 import { editTitle } from './workbench-helpers'
 import { expect, test } from '@playwright/test'
 
-test('keeps two toolbar rows and opens formatting without narrowing either document', async ({ page }, testInfo) => {
+test('keeps two toolbar rows and docks formatting beside the preview without narrowing the editor', async ({ page }, testInfo) => {
   await page.addInitScript(() => {
     localStorage.setItem('dispatch.preview-tool-rail-open.v2', JSON.stringify({ wechat: true, xhs: true, x: true }))
   })
@@ -20,11 +20,15 @@ test('keeps two toolbar rows and opens formatting without narrowing either docum
     expect(toolbar.y).toBe(80)
     expect(await page.locator('.workbench-toolbar').evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true)
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
-    const before = (await page.locator('.wechat-document').boundingBox())!
+    const viewport = page.locator('.preview-platform-stage .platform-preview-viewport')
+    const before = (await viewport.boundingBox())!
     const editorBefore = (await page.locator('.paper-panel').boundingBox())!
     await page.locator('.preview-settings-toggle').click()
     await expect(page.locator('.inspector-tabs').getByRole('tab', { name: '主题', exact: true })).toBeVisible()
-    expect((await page.locator('.wechat-document').boundingBox())!.width).toBeCloseTo(before.width, 0)
+    const after = (await viewport.boundingBox())!
+    const rail = (await page.locator('.preview-tool-rail:not([hidden])').boundingBox())!
+    expect(after.x + after.width <= rail.x + 1 || after.y + after.height <= rail.y + 1).toBe(true)
+    expect(after.width).toBeLessThanOrEqual(before.width)
     expect((await page.locator('.paper-panel').boundingBox())!.width).toBeCloseTo(editorBefore.width, 0)
     await page.keyboard.press('Escape')
     await expect(page.locator('.preview-settings-toggle')).toBeFocused()

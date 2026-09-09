@@ -46,8 +46,7 @@ test('keeps last-draft recovery visible after the mobile history drawer closes',
   await page.setViewportSize({ width: 390, height: 844 })
   await openArticle(page)
   await page.getByRole('button', { name: '打开历史记录', exact: true }).click()
-  await page.locator('.history-draft-menu-button').first().click()
-  await page.getByRole('menuitem', { name: '删除', exact: true }).click()
+  await page.locator('.history-delete-action').first().click()
   await expect(page.locator('.history-sidebar-slot')).not.toHaveClass(/overlay-open/)
   const undo = page.locator('.history-undo-notice').getByRole('button', { name: '撤销', exact: true })
   await expectUncovered(undo)
@@ -78,17 +77,20 @@ for (const width of [1440, 1366, 1025]) {
         return rects.every((rect, index) => rects.slice(index + 1).every(other =>
           rect.right <= other.left || other.right <= rect.left || rect.bottom <= other.top || other.bottom <= rect.top))
       })).toBe(true)
-      if (width > 1100) {
+      if (await page.locator('.preview-tool-resizer').isVisible()) {
         await page.locator('.preview-tool-resizer').press('End')
-        await expect.poll(async () => (await viewport.boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(439)
+        await expect.poll(async () => (await viewport.boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(280)
         await expect.poll(async () => {
           const actual = (await page.locator('.preview-tool-rail:not([hidden])').boundingBox())!.width
-          return Math.abs(Number(await page.locator('.preview-tool-resizer').getAttribute('aria-valuenow')) - actual)
+          const requested = Number(await page.locator('.preview-tool-resizer').getAttribute('aria-valuenow'))
+          const available = (await page.locator('.preview-workbench').boundingBox())!.width - 290
+          return Math.abs(Math.max(240, Math.min(requested, available)) - actual)
         }).toBeLessThan(1)
       } else {
-        // Settings overlay smaller laptop previews instead of squeezing the article.
-        await expect(page.locator('.preview-tool-resizer')).toBeVisible()
-        await expect(page.locator('.preview-tool-rail:not([hidden])')).toHaveCSS('position', 'absolute')
+        const previewBounds = (await viewport.boundingBox())!
+        const railBounds = (await page.locator('.preview-tool-rail:not([hidden])').boundingBox())!
+        expect(previewBounds.y + previewBounds.height).toBeLessThanOrEqual(railBounds.y + 1)
+        await expect(page.locator('.preview-tool-rail:not([hidden])')).toHaveCSS('position', 'relative')
       }
       const bar = (await separator.boundingBox())!
       await page.mouse.move(bar.x + bar.width / 2, bar.y + bar.height / 2)

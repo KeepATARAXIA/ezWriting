@@ -103,8 +103,10 @@ test('switches between Markdown source and presentation editing without losing s
   const formattedText = page.locator('.cm-md-strong').filter({ hasText: '重点内容' })
   await formattedText.hover()
   await formattedText.click()
-  await expect(page.locator('.source-editor .cm-activeLine')).toContainText('**重点内容**')
+  await expect(page.locator('.source-editor .cm-activeLine')).toContainText('重点内容')
+  await expect(page.locator('.source-editor .cm-activeLine')).not.toContainText('**')
   await page.getByRole('button', { name: '显示 Markdown 语法' }).click()
+  await expect(page.locator('.source-editor .cm-content')).toContainText('**重点内容**')
   await expect(page.locator('.source-editor .cm-content')).toContainText('## 正文小标题')
   await expect(page.locator('.source-editor .cm-content')).toContainText('<mark>HTML 标签高亮内容</mark>')
   await expect(page.locator('.source-editor .cm-content')).toContainText('https://example.test/guide')
@@ -415,7 +417,7 @@ test('blocks publishing for a blank document', async ({ page }) => {
   await page.getByRole('button', { name: '开始写稿' }).click()
   await page.getByRole('button', { name: /打开发布面板/ }).click()
   await expect(page.locator('.publish-button')).toBeDisabled()
-  await expect(page.locator('[aria-label="发布前检查"]')).toContainText('请先导入稿件')
+  await expect(page.locator('[aria-label="发布前检查"]')).toContainText('请先填写正文')
 })
 
 test('sanitizes imported HTML before previews can trigger hidden requests or forged actions', async ({ page }) => {
@@ -509,8 +511,7 @@ test('flushes an immediate edit before delete and restores the latest version', 
 
   await editTitle(page, '删除前最后一版')
   await openHistory(page)
-  await page.locator('.history-draft-menu-button').first().click()
-  await page.getByRole('menuitem', { name: '删除' }).click()
+  await page.locator('.history-delete-action').first().click()
   await page.locator('.history-undo-notice').getByRole('button', { name: '撤销', exact: true }).click()
   await openHistory(page)
   await page.locator('.history-draft-open').first().click()

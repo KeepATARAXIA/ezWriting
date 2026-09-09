@@ -16,7 +16,8 @@ test('previews without saving, restores styles, and persists only the applied re
   await choose.click()
   await expect(theme).toHaveAttribute('data-wechat-theme', 'klein')
   await expect(panel.getByRole('status')).toContainText('预览中 · 克莱因蓝')
-  await expect(panel.locator('.wechat-theme-card.selected')).toHaveCSS('border-top-color', 'rgb(22, 72, 255)')
+  await expect(choose).toHaveAttribute('aria-pressed', 'true')
+  await expect(panel.locator('.wechat-theme-card.selected .wechat-theme-check')).toBeVisible()
   await expect(page.locator('.wechat-copy-button')).toBeDisabled()
   await page.screenshot({ path: info.outputPath('theme-preview-desktop.png') })
   await panel.getByRole('tab', { name: '样式', exact: true }).click()
@@ -45,8 +46,8 @@ test('previews without saving, restores styles, and persists only the applied re
     await page.getByRole('navigation', { name: '手机工作区' }).getByRole('button', { name: '预览', exact: true }).click()
     await expect(apply).toBeInViewport()
     await expect(restore).toBeInViewport()
-    await panel.locator('.wechat-theme-card.selected').scrollIntoViewIfNeeded()
-    await expect(panel.locator('.wechat-theme-card.selected')).toBeInViewport({ ratio: 1 })
+    await panel.locator('.wechat-theme-card.selected footer').scrollIntoViewIfNeeded()
+    await expect(panel.locator('.wechat-theme-card.selected footer')).toBeInViewport({ ratio: 1 })
     await page.screenshot({ path: info.outputPath(`theme-preview-${width}.png`) })
   }
 })
@@ -74,7 +75,7 @@ test('uses a compact inspector with exclusive tabs, preview confirmation, resizi
   await expect(panel.getByRole('tabpanel')).toHaveCount(1)
   await panel.getByRole('radio', { name: '宋体', exact: true }).click()
   await expect(panel.getByRole('radio', { name: '宋体', exact: true })).toHaveAttribute('aria-checked', 'true')
-  await tabs.getByRole('tab', { name: '样式', exact: true }).click()
+  await tabs.getByRole('tab', { name: '主题', exact: true }).click()
   await expect(panel.getByRole('button', { name: '重置配色' })).toBeVisible()
   await tabs.getByRole('tab', { name: '样式', exact: true }).click()
   await panel.getByRole('radio', { name: '宽松', exact: true }).click()
@@ -134,15 +135,23 @@ test('shares theme and style inspectors across all platforms and mobile sizes', 
     await expect(panel.getByRole('radiogroup', { name: '选择文章字号' })).toBeVisible()
     await expect(panel.getByRole('radiogroup', { name: '选择文章行距' })).toBeVisible()
     if (platform === '小红书') {
+      await tabs.getByRole('tab', { name: '主题', exact: true }).click()
       const palettes = panel.getByRole('radiogroup', { name: '选择小红书模板色板' })
       await palettes.getByRole('radio').nth(1).click()
       await expect(palettes.getByRole('radio').nth(1)).toHaveAttribute('aria-checked', 'true')
+      await tabs.getByRole('tab', { name: '样式', exact: true }).click()
       await expect(panel.getByRole('checkbox', { name: '显示底部信息' })).toBeVisible()
       await panel.getByRole('textbox', { name: '左下角文字' }).fill('我的署名')
       await expect(page.locator('.xhs-card-page footer').first()).toContainText('我的署名')
     } else {
+      if (platform === '微信公众号') {
+        await tabs.getByRole('tab', { name: '主题', exact: true }).click()
+        await panel.getByRole('button', { name: /^预览克莱因蓝主题/ }).click()
+        await panel.getByRole('button', { name: '立即应用', exact: true }).click()
+      }
       await panel.getByRole('radio', { name: 'orange', exact: true }).click()
       await expect(panel.getByRole('radio', { name: 'orange', exact: true })).toHaveAttribute('aria-checked', 'true')
+      await tabs.getByRole('tab', { name: '样式', exact: true }).click()
     }
     await page.screenshot({ path: testInfo.outputPath(`${panelId}-style.png`), animations: 'disabled' })
     const resize = page.locator('.preview-tool-resizer')
