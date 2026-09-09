@@ -1,8 +1,8 @@
 import { registerLocalImage, expandLocalImageReferences, localImageBlob } from '../lib/local-image-registry'
-import { useEffect, useRef, useState, type ChangeEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ChangeEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { basicSetup } from 'codemirror'
-import { html } from '@codemirror/lang-html'
+import { html, htmlLanguage } from '@codemirror/lang-html'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { history, isolateHistory, redo, redoDepth, undo, undoDepth } from '@codemirror/commands'
 import { Annotation, Compartment, EditorState, Facet, Prec, StateField, Transaction } from '@codemirror/state'
@@ -15,6 +15,8 @@ import {
   type DecorationSet,
 } from '@codemirror/view'
 import {
+  ArrowDownToLine,
+  ArrowUpToLine,
   Bold,
   BookmarkPlus,
   Code2,
@@ -34,6 +36,7 @@ import {
   Redo2,
   RemoveFormatting,
   Strikethrough,
+  Sparkles,
   Table2,
   TriangleAlert,
   Undo2,
@@ -41,6 +44,7 @@ import {
 } from 'lucide-react'
 import type { ArticleSourceLanguage } from '../domain/article'
 import type { LibraryContent, LibraryInsertRequest, LibraryItem } from '../domain/template-library'
+import { AI_SELECTION_LIMIT, nearbyPolishContext, type AiSelection } from '../lib/ai-polish'
 import { libraryTextForEditor } from '../lib/template-library'
 import { LIBRARY_DRAG_TYPE, readLibraryDrag } from '../lib/template-library-drag'
 import { isGifSource, mediaPlaceholder, mountGifPreview, mountVideoPreview } from '../lib/media-preview'
@@ -61,10 +65,12 @@ import {
 import './video-media.css'
 import './source-editor-layout.css'
 import { editorRowStripes } from './source-editor-stripes'
+import { markdownInlineStrongRanges, renderMarkdownToSafeHtml, sanitizeContentHtml } from '../lib/markdown-compatibility'
 
 export interface SourceEditorFocusRequest {
   line: number
   requestId: number
+  scrollOnly?: boolean
 }
 
 export interface SourceEditorActiveLocation {
@@ -86,6 +92,7 @@ interface SourceEditorProps {
   onShowSyntaxChange?: (enabled: boolean) => void
   titleInDocument?: boolean
   onCollectSelection?: (selection: Extract<LibraryContent, { kind: 'text' }>) => void
+  onAiSelection?: (selection: AiSelection) => void
   libraryInsertRequest?: LibraryInsertRequest | null
   onLibraryInsertComplete?: (requestId: number, error?: string) => void
 }
@@ -152,7 +159,6 @@ async function registerVideoFile(file: File): Promise<string> {
 }
 
 const MARKDOWN_IMAGE_SOURCE = /!\[([^\]\n]*)\]\(\s*(?:<([^>\n]+)>|([^\s)\n]+))(?:\s+(?:"((?:\\.|[^"\\\n])*)"|'((?:\\.|[^'\\\n])*)'))?\s*\)/g
-const HTML_MARK_SOURCE = /<mark\b[^>]*>([\s\S]*?)<\/mark\s*>/gi
 const HTML_EMBEDDED_MEDIA_SOURCE = /(<(?:img|video)\b[^>]*?\bsrc\s*=\s*)(["'])((?:data:(?:image|video)\/|dispatch-local-video:\/\/|blob:)[^"']+)\2/gi
 const VIDEO_ELEMENT_SOURCE = /<video\b[^>]*>[\s\S]*?<\/video>/gi
 const EMBEDDED_MEDIA_TOKEN = /dispatch-editor-(?:image|video):\/\/[a-z0-9-]+/gi
@@ -163,7 +169,7 @@ const externalFocusUpdate = Annotation.define<boolean>()
 const sourceFocusField = StateField.define<DecorationSet>({
   create: () => Decoration.none,
   update: (value, transaction) => {
-    if (transaction.annotation(externalFocusUpdate)) {
+    if (transaction.annotation(externalFocusUpdate) && transaction.selection) {
       const line = transaction.state.doc.lineAt(transaction.state.selection.main.head)
       return Decoration.set([Decoration.line({ class: 'source-focus-line' }).range(line.from)])
     }
@@ -907,31 +913,28 @@ class MarkdownPresentationWidget extends WidgetType {
   }
 }
 
+// Only already-sanitized media HTML enters the live editor DOM. Text stays in
+// CodeMirror so edits retain their exact source offsets and undo history.
+class MarkdownHtmlMediaWidget extends WidgetType {
+  constructor(readonly safeHtml: string) { super() }
+  eq(other: MarkdownHtmlMediaWidget): boolean { return this.safeHtml === other.safeHtml }
+  toDOM(): HTMLElement {
+    const element = document.createElement('span')
+    element.className = 'cm-md-html-media'
+    element.innerHTML = this.safeHtml
+    return element
+  }
+}
+
 function markdownPresentationDecorations(state: EditorState): DecorationSet {
   if (!state.facet(markdownPresentationFacet) || state.facet(sourceLanguageFacet) !== 'markdown') {
     return Decoration.none
   }
 
   const ranges = []
-  const activeLines = new Set<number>()
   const lineClasses = new Map<number, Set<string>>()
   const highlightProtectedRanges: Array<{ from: number; to: number }> = []
-  for (const selection of state.selection.ranges) {
-    const firstLine = state.doc.lineAt(selection.from).number
-    const lastLine = state.doc.lineAt(selection.to).number
-    for (let line = firstLine; line <= lastLine; line += 1) activeLines.add(line)
-  }
-
-  const isActiveRange = (from: number, to: number) => {
-    const firstLine = state.doc.lineAt(from).number
-    const lastLine = state.doc.lineAt(Math.max(from, to - 1)).number
-    for (let line = firstLine; line <= lastLine; line += 1) {
-      if (activeLines.has(line)) return true
-    }
-    return false
-  }
   const addLineClass = (line: number, className: string) => {
-    if (activeLines.has(line)) return
     const classes = lineClasses.get(line) ?? new Set<string>()
     classes.add(className)
     lineClasses.set(line, classes)
@@ -942,21 +945,117 @@ function markdownPresentationDecorations(state: EditorState): DecorationSet {
     while (end < line.to && /[\t ]/.test(state.doc.sliceString(end, end + 1))) end += 1
     return end
   }
-  const replace = (from: number, to: number, widget?: MarkdownPresentationWidget) => {
-    if (from >= to || isActiveRange(from, to)) return
-    ranges.push(Decoration.replace(widget ? { widget } : {}).range(from, to))
+  const hidden: Array<{ from: number; to: number }> = []
+  const replace = (from: number, to: number, widget?: WidgetType) => {
+    if (from >= to || hidden.some(range => from < range.to && to > range.from)) return
+    hidden.push({ from, to })
+    ranges.push(Decoration.replace({ widget, protectedSyntax: true }).range(from, to))
   }
   const mark = (from: number, to: number, className: string) => {
-    if (from >= to || isActiveRange(from, to)) return
+    if (from >= to) return
     ranges.push(Decoration.mark({ class: className }).range(from, to))
   }
 
   const tree = markdownTreeForState(state)
+  const text = state.doc.toString()
+  const htmlRanges: Array<{ from: number; to: number }> = []
+  const codeRanges: Array<{ from: number; to: number }> = []
+  const strongCandidates: Array<{ from: number; to: number }> = []
+  const nativeStrong: Array<{ from: number; to: number }> = []
+  const scan = tree.cursor()
+  do {
+    if (scan.name === 'StrongEmphasis') nativeStrong.push({ from: scan.from, to: scan.to })
+    if (/^(Paragraph|ATXHeading[1-6]|SetextHeading[12]|TableCell)$/.test(scan.name)) {
+      strongCandidates.push({ from: scan.from, to: scan.to })
+    }
+    if (scan.name === 'HTMLBlock' || scan.name === 'HTMLTag' || scan.name === 'CommentBlock') {
+      htmlRanges.push({ from: scan.from, to: scan.to })
+      const comment = /^( {0,3}<!--[\s\S]*?-->)(?=[^\S\n]*[^\s<])/.exec(text.slice(scan.from, scan.to))
+      if (comment) strongCandidates.push({ from: scan.from + comment[1].length, to: scan.to })
+    }
+    if (scan.name === 'FencedCode' || scan.name === 'InlineCode' || scan.name === 'CodeBlock') codeRanges.push({ from: scan.from, to: scan.to })
+  } while (scan.next())
+
+  if (htmlRanges.length) {
+    // A literal <script> in a code example must not swallow later HTML blocks.
+    let htmlSource = text
+    for (const range of codeRanges) htmlSource = htmlSource.slice(0, range.from)
+      + htmlSource.slice(range.from, range.to).replace(/[^\r\n]/g, ' ') + htmlSource.slice(range.to)
+    const htmlCursor = htmlLanguage.parser.parse(htmlSource).cursor()
+    const inHtml = (from: number) => htmlRanges.some(range => from >= range.from && from < range.to)
+    const htmlClasses: Record<string, string> = {
+      strong: 'cm-md-strong', b: 'cm-md-strong', em: 'cm-md-emphasis', i: 'cm-md-emphasis',
+      del: 'cm-md-strikethrough', s: 'cm-md-strikethrough', mark: 'cm-md-highlight',
+      code: 'cm-md-inline-code', sub: 'cm-md-subscript', sup: 'cm-md-superscript', u: 'cm-md-underline',
+      p: 'cm-md-html-paragraph', div: 'cm-md-html-paragraph', blockquote: 'cm-md-html-quote',
+      pre: 'cm-md-code-text cm-md-html-pre', tr: 'cm-md-html-table-row',
+      td: 'cm-md-table-cell', th: 'cm-md-table-cell cm-md-strong',
+    }
+    const visitHtml = () => {
+      const { from, to, name } = htmlCursor
+      if (name === 'Element') {
+        const opening = htmlCursor.node.getChild('OpenTag') ?? htmlCursor.node.getChild('SelfClosingTag')
+        const tagNode = opening?.getChild('TagName')
+        const tag = tagNode ? text.slice(tagNode.from, tagNode.to).toLowerCase() : ''
+        if (opening && inHtml(opening.from)) {
+          if (/^(script|style|iframe|object|embed|template|head)$/.test(tag)) {
+            replace(from, to)
+            return
+          }
+          if (tag === 'video' || tag === 'img' || tag === 'audio') {
+            let hasMedia = false
+            state.field(imagePreviewField).between(from, to, () => { hasMedia = true })
+            if (!hasMedia) {
+              const safeHtml = renderMarkdownToSafeHtml(text.slice(from, to))
+              replace(from, to, safeHtml ? new MarkdownHtmlMediaWidget(safeHtml) : undefined)
+            }
+            return
+          }
+          const closing = htmlCursor.node.getChild('CloseTag')
+          const contentTo = closing?.from ?? to
+          if (contentTo > opening.to) {
+            const className = htmlClasses[tag] ?? (/^h[1-6]$/.test(tag) ? `cm-md-heading-text cm-md-heading-${tag[1]}` : '')
+            // Reuse the preview's style/protocol allowlist, never copy raw HTML attributes.
+            const safe = new DOMParser().parseFromString(sanitizeContentHtml(`${text.slice(opening.from, opening.to)}x</${tag}>`), 'text/html').body.firstElementChild
+            const cellWidth = tag === 'td' || tag === 'th'
+              ? `width: ${100 / Math.max(1, htmlCursor.node.parent?.getChildren('Element').length ?? 1)}%;` : ''
+            const style = `${cellWidth}${safe?.getAttribute('style') ?? ''}`
+            const url = tag === 'a' ? safeExternalUrl(safe?.getAttribute('href') ?? '') : null
+            if (className || style || url) ranges.push(Decoration.mark({
+              class: `${className}${url ? ' cm-md-link cm-editor-direct-link' : ''}`,
+              attributes: {
+                ...(style ? { style } : {}),
+                ...(url ? { 'data-editor-link-url': url, title: 'Ctrl / Command + 点击打开链接' } : {}),
+              },
+            }).range(opening.to, contentTo))
+          }
+          if (tag === 'br') replace(opening.from, opening.to, new MarkdownPresentationWidget('', 'cm-md-line-break'))
+          if (tag === 'hr') replace(opening.from, opening.to, new MarkdownPresentationWidget('', 'cm-md-horizontal-rule'))
+        }
+      }
+      if (inHtml(from) && /^(OpenTag|CloseTag|SelfClosingTag|Comment|ProcessingInst|DoctypeDecl)$/.test(name)) {
+        replace(from, to)
+        return
+      }
+      if (inHtml(from) && (name === 'EntityReference' || name === 'CharacterReference')) {
+        const decoded = new DOMParser().parseFromString(text.slice(from, to), 'text/html').body.textContent ?? ''
+        replace(from, to, new MarkdownPresentationWidget(decoded, 'cm-md-entity'))
+        return
+      }
+      if (htmlCursor.firstChild()) {
+        do visitHtml(); while (htmlCursor.nextSibling())
+        htmlCursor.parent()
+      }
+    }
+    visitHtml()
+  }
   const cursor = tree.cursor()
   const visit = (parentName = '') => {
     const name = cursor.name
     const from = cursor.from
     const to = cursor.to
+
+    if (hidden.some(range => from >= range.from && to <= range.to)) return
 
     if (name === 'Image') {
       highlightProtectedRanges.push({ from, to })
@@ -966,12 +1065,54 @@ function markdownPresentationDecorations(state: EditorState): DecorationSet {
       highlightProtectedRanges.push({ from, to })
     }
 
+    if (name === 'HTMLBlock' || name === 'HTMLTag' || name === 'CommentBlock') {
+      highlightProtectedRanges.push({ from, to })
+      return
+    }
+
+    if (name === 'TableHeader' || name === 'TableRow') {
+      const delimiters = cursor.node.getChildren('TableDelimiter')
+      let start = from
+      const cells: Array<{ from: number; to: number }> = []
+      for (const delimiter of delimiters) {
+        if (delimiter.from > start) cells.push({ from: start, to: delimiter.from })
+        replace(delimiter.from, delimiter.to)
+        start = delimiter.to
+      }
+      if (start < to) cells.push({ from: start, to })
+      const header = cursor.node.parent?.getChild('TableHeader')
+      const headerText = header ? text.slice(header.from, header.to) : ''
+      const columns = Math.max(cells.length, headerText.replace(/^\s*\||\|\s*$/g, '').split(/(?<!\\)\|/).length)
+      const alignmentNode = cursor.node.parent?.getChild('TableDelimiter')
+      const alignments = alignmentNode ? text.slice(alignmentNode.from, alignmentNode.to)
+        .replace(/^\s*\||\|\s*$/g, '').split('|').map(cell => cell.trim()) : []
+      addLineClass(state.doc.lineAt(from).number, `cm-md-table-row${name === 'TableHeader' ? ' cm-md-table-header' : ''}`)
+      cells.forEach((cell, index) => {
+        const alignment = alignments[index] ?? ''
+        const textAlign = alignment.endsWith(':') ? alignment.startsWith(':') ? 'center' : 'right' : 'left'
+        ranges.push(Decoration.mark({
+          class: 'cm-md-table-cell', attributes: { style: `width: ${100 / columns}%; text-align: ${textAlign}` },
+        }).range(cell.from, cell.to))
+      })
+    } else if (name === 'TableDelimiter' && parentName === 'Table') {
+      replace(from, to)
+      addLineClass(state.doc.lineAt(from).number, 'cm-md-syntax-line')
+      return
+    } else if (name === 'Escape') {
+      replace(from, from + 1)
+      return
+    } else if (name === 'Entity') {
+      const decoded = new DOMParser().parseFromString(text.slice(from, to), 'text/html').body.textContent ?? ''
+      replace(from, to, new MarkdownPresentationWidget(decoded, 'cm-md-entity'))
+      return
+    }
+
     const headingMatch = /^ATXHeading([1-6])$/.exec(name)
-    if (headingMatch && !isActiveRange(from, to)) {
+    if (headingMatch) {
       const line = state.doc.lineAt(from)
       addLineClass(line.number, `cm-md-heading-line cm-md-heading-${headingMatch[1]}`)
       mark(from, to, `cm-md-heading-text cm-md-heading-${headingMatch[1]}`)
-    } else if ((name === 'SetextHeading1' || name === 'SetextHeading2') && !isActiveRange(from, to)) {
+    } else if (name === 'SetextHeading1' || name === 'SetextHeading2') {
       const titleLine = state.doc.lineAt(from)
       const level = name === 'SetextHeading1' ? '1' : '2'
       addLineClass(titleLine.number, `cm-md-heading-line cm-md-heading-${level}`)
@@ -982,6 +1123,8 @@ function markdownPresentationDecorations(state: EditorState): DecorationSet {
       mark(from, to, 'cm-md-emphasis')
     } else if (name === 'Strikethrough') {
       mark(from, to, 'cm-md-strikethrough')
+    } else if (name === 'Subscript' || name === 'Superscript') {
+      mark(from, to, name === 'Subscript' ? 'cm-md-subscript' : 'cm-md-superscript')
     } else if (name === 'InlineCode') {
       mark(from, to, 'cm-md-inline-code')
     } else if (name === 'Link') {
@@ -1021,8 +1164,11 @@ function markdownPresentationDecorations(state: EditorState): DecorationSet {
       || name === 'StrikethroughMark'
       || name === 'CodeMark'
       || name === 'CodeInfo'
+      || name === 'SubscriptMark'
+      || name === 'SuperscriptMark'
     ) {
       replace(from, name === 'HeaderMark' ? extendThroughSpacing(to) : to)
+      if (parentName === 'FencedCode' || /^SetextHeading/.test(parentName)) addLineClass(state.doc.lineAt(from).number, 'cm-md-syntax-line')
     } else if (parentName === 'Link' && (
       name === 'LinkMark'
       || name === 'LinkLabel'
@@ -1032,6 +1178,10 @@ function markdownPresentationDecorations(state: EditorState): DecorationSet {
       replace(from, to)
     }
 
+    if (name === 'Link' && /^\[![-\w]+\][+-]?/.test(text.slice(from, to))) {
+      replace(from, to, new MarkdownPresentationWidget('ⓘ', 'cm-md-callout-marker'))
+      return
+    }
     if (cursor.firstChild()) {
       do visit(name)
       while (cursor.nextSibling())
@@ -1040,27 +1190,22 @@ function markdownPresentationDecorations(state: EditorState): DecorationSet {
   }
   visit()
 
+  for (const candidate of strongCandidates) {
+    for (const span of markdownInlineStrongRanges(text.slice(candidate.from, candidate.to))) {
+      const from = candidate.from + span.from, to = candidate.from + span.to
+      if (nativeStrong.some(range => range.from === from && range.to === to)) continue
+      replace(from, from + 2)
+      mark(from + 2, to - 2, 'cm-md-strong')
+      replace(to - 2, to)
+    }
+  }
+
   for (const [lineNumber, classes] of lineClasses) {
     ranges.push(Decoration.line({ class: Array.from(classes).join(' ') }).range(state.doc.line(lineNumber).from))
   }
 
-  for (const match of state.doc.toString().matchAll(HTML_MARK_SOURCE)) {
-    if (match.index === undefined) continue
-    const openingTagLength = match[0].indexOf('>') + 1
-    const closingTagOffset = match[0].toLocaleLowerCase().lastIndexOf('</mark')
-    if (openingTagLength <= 0 || closingTagOffset < openingTagLength) continue
-    const from = match.index
-    const to = from + match[0].length
-    highlightProtectedRanges.push({ from, to })
-    if (isActiveRange(from, to)) continue
-    replace(from, from + openingTagLength)
-    mark(from + openingTagLength, from + closingTagOffset, 'cm-md-highlight')
-    replace(from + closingTagOffset, to)
-  }
-
   for (const match of state.doc.toString().matchAll(/==([^=\n](?:.*?[^=\n])?)==/g)) {
     if (match.index === undefined
-      || isActiveRange(match.index, match.index + match[0].length)
       || highlightProtectedRanges.some(range => match.index! < range.to && match.index! + match[0].length > range.from)) continue
     replace(match.index, match.index + 2)
     mark(match.index + 2, match.index + match[0].length - 2, 'cm-md-highlight')
@@ -1073,12 +1218,121 @@ function markdownPresentationDecorations(state: EditorState): DecorationSet {
 const markdownPresentationField = StateField.define<DecorationSet>({
   create: markdownPresentationDecorations,
   update: (decorations, transaction) => transaction.docChanged
-    || transaction.selection
     || transaction.startState.facet(markdownPresentationFacet) !== transaction.state.facet(markdownPresentationFacet)
     || transaction.startState.facet(sourceLanguageFacet) !== transaction.state.facet(sourceLanguageFacet)
     ? markdownPresentationDecorations(transaction.state)
     : decorations.map(transaction.changes),
   provide: field => EditorView.decorations.from(field),
+})
+
+function hiddenMarkdownRanges(state: EditorState): Array<{ from: number; to: number }> {
+  const ranges: Array<{ from: number; to: number }> = []
+  state.field(markdownPresentationField).between(0, state.doc.length, (from, to, decoration) => {
+    if (decoration.spec.protectedSyntax) ranges.push({ from, to })
+  })
+  return ranges.sort((a, b) => a.from - b.from)
+}
+
+function deleteRenderedCharacter(view: EditorView, backward: boolean): boolean {
+  if (!view.state.facet(markdownPresentationFacet) || !view.state.selection.main.empty || view.state.readOnly) return false
+  const head = view.state.selection.main.head
+  let position = head
+  const ranges = hiddenMarkdownRanges(view.state)
+  let skipped = false
+  for (;;) {
+    const range = ranges.find(range => backward ? range.to === position : range.from === position)
+    if (!range) break
+    position = backward ? range.from : range.to
+    skipped = true
+  }
+  if (!skipped) return false
+  const line = view.state.doc.lineAt(head)
+  // Do not merge a heading, table or an invisible HTML block into its neighbor.
+  if (backward ? position <= line.from : position >= line.to) return true
+  const text = view.state.doc.toString()
+  const length = backward
+    ? (/[\uDC00-\uDFFF]/.test(text[position - 1]) && /[\uD800-\uDBFF]/.test(text[position - 2] ?? '') ? 2 : 1)
+    : ((text.codePointAt(position) ?? 0) > 0xffff ? 2 : 1)
+  const from = backward ? position - length : position
+  const to = backward ? position : position + length
+  view.dispatch({ changes: { from, to }, selection: { anchor: from }, userEvent: backward ? 'delete.backward' : 'delete.forward', scrollIntoView: true })
+  return true
+}
+
+// DOM input can span invisible source characters (including mobile deletion and
+// IME replacement). Split that edit around the hidden syntax instead of deleting
+// it. Toolbar commands, controlled updates and history intentionally bypass this.
+const protectMarkdownPresentation = EditorState.transactionFilter.of(transaction => {
+  if (!transaction.docChanged || !transaction.startState.facet(markdownPresentationFacet)
+    || !(transaction.isUserEvent('input') || transaction.isUserEvent('delete'))) return transaction
+  const state = transaction.startState
+  const hidden = hiddenMarkdownRanges(state)
+  if (!hidden.length) return transaction
+  const changes: Array<{ from: number; to: number; insert: string }> = []
+  let adjusted = false
+  let caret: number | undefined
+  transaction.changes.iterChanges((from, to, _fromB, _toB, inserted) => {
+    let position = from
+    let insert = inserted.toString()
+    const affected = hidden.filter(range => range.from < to && range.to > from)
+    if (from === to) {
+      const inside = hidden.find(range => position > range.from && position < range.to
+        || position === range.from && range.from === state.doc.lineAt(position).from)
+      if (inside) {
+        position = inside.to
+        adjusted = true
+      }
+      changes.push({ from: position, to: position, insert })
+      caret = position + insert.length
+      return
+    }
+    if (!affected.length) {
+      changes.push({ from, to, insert })
+      caret = from + insert.length
+      return
+    }
+    adjusted = true
+    for (const range of affected) {
+      if (position < range.from) {
+        changes.push({ from: position, to: range.from, insert })
+        if (caret === undefined) caret = position + insert.length
+        insert = ''
+      }
+      position = Math.max(position, range.to)
+    }
+    if (position < to || insert) {
+      changes.push({ from: position, to: Math.max(position, to), insert })
+      if (caret === undefined) caret = position + insert.length
+    }
+  })
+  const changeSet = adjusted ? state.changes(changes) : transaction.changes
+  const base = adjusted ? {
+    changes: changeSet,
+    selection: { anchor: Math.min(changeSet.newLength, caret ?? state.selection.main.head) },
+    userEvent: transaction.annotation(Transaction.userEvent),
+    scrollIntoView: transaction.scrollIntoView,
+    effects: transaction.effects,
+  } : transaction
+  // Empty Markdown wrappers have different meanings (**** is a rule). Remove
+  // only wrappers whose text this edit emptied, as part of the same undo step.
+  const emptyPatterns: Record<string, RegExp> = {
+    StrongEmphasis: /^(\*\*|__)\s*\1$/,
+    Emphasis: /^(\*|_)\s*\1$/,
+    Strikethrough: /^~~\s*~~$/,
+    InlineCode: /^(`+)\s*\1$/,
+    Link: /^\[\s*\](?:\([^\n]*\)|\[[^\n]*\])$/,
+  }
+  const next = changeSet.apply(state.doc)
+  const cleanup: Array<{ from: number; to: number }> = []
+  const cursor = markdownTreeForState(state).cursor()
+  do {
+    const pattern = emptyPatterns[cursor.name]
+    if (!pattern || !changeSet.touchesRange(cursor.from, cursor.to)) continue
+    const from = changeSet.mapPos(cursor.from, -1), to = changeSet.mapPos(cursor.to, 1)
+    if (from < to && pattern.test(next.sliceString(from, to))
+      && !cleanup.some(range => from >= range.from && to <= range.to)) cleanup.push({ from, to })
+  } while (cursor.next())
+  return cleanup.length ? [base, { changes: cleanup, sequential: true }] : base
 })
 
 interface SelectionMenuState {
@@ -1126,7 +1380,7 @@ function markdownLinkAtOffset(text: string, offset: number): string | null {
   return null
 }
 
-export function SourceEditor({ value, language, status, focusRequest, readOnly = false, onChange, onActiveBlockChange, syncScroll = false, showSyntax, rowStripes = false, onShowSyntaxChange, titleInDocument = false, onCollectSelection, libraryInsertRequest, onLibraryInsertComplete }: SourceEditorProps) {
+export function SourceEditor({ value, language, status, focusRequest, readOnly = false, onChange, onActiveBlockChange, syncScroll = false, showSyntax, rowStripes = false, onShowSyntaxChange, titleInDocument = false, onCollectSelection, onAiSelection, libraryInsertRequest, onLibraryInsertComplete }: SourceEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
@@ -1157,10 +1411,21 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
   const activeBlockTimerRef = useRef<number | null>(null)
   const pendingLocalEchoesRef = useRef<string[]>([])
   const [selectionMenu, setSelectionMenu] = useState<SelectionMenuState | null>(null)
+  const selectionMenuRef = useRef<HTMLDivElement>(null)
+  const selectionPointerRef = useRef<number | null>(null)
+  const aiSelectionMenuDismissedRef = useRef(false)
   const [historyAvailability, setHistoryAvailability] = useState({ undoCount: 0, redoCount: 0 })
   const [videoError, setVideoError] = useState<string | null>(null)
   const [localShowSyntax, setLocalShowSyntax] = useState(false)
   const showMarkdownSyntax = showSyntax ?? localShowSyntax
+
+  useLayoutEffect(() => {
+    const menu = selectionMenuRef.current
+    if (!menu || !selectionMenu) return
+    const halfWidth = menu.getBoundingClientRect().width / 2
+    const left = Math.min(Math.max(selectionMenu.left, halfWidth + 10), window.innerWidth - halfWidth - 10)
+    if (left !== selectionMenu.left) setSelectionMenu({ ...selectionMenu, left })
+  }, [selectionMenu])
 
   languageRef.current = language
   onChangeRef.current = onChange
@@ -1198,20 +1463,20 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
       ? current
       : nextHistoryAvailability)
 
-    const { from, to, empty } = view.state.selection.main
+    const { from, to, head, empty } = view.state.selection.main
     const selectedText = empty ? '' : view.state.sliceDoc(from, to)
-    if (empty || !selectedText.trim() || /dispatch-editor-(?:image|video):\/\//i.test(selectedText)) {
+    if (selectionPointerRef.current !== null || aiSelectionMenuDismissedRef.current || empty || !selectedText.trim() || /dispatch-editor-(?:image|video):\/\//i.test(selectedText)) {
       setSelectionMenu(null)
       return
     }
 
     const editorRect = view.dom.getBoundingClientRect()
-    const selectionCoords = view.coordsAtPos(to)
+    const selectionCoords = view.coordsAtPos(head)
     const rawLeft = selectionCoords?.left ?? editorRect.left + editorRect.width / 2
     const selectionTop = selectionCoords?.top ?? editorRect.top + 44
     const selectionBottom = selectionCoords?.bottom ?? selectionTop + 20
     const placement = selectionTop > 76 ? 'above' : 'below'
-    const halfMenuWidth = Math.min(480, window.innerWidth - 20) / 2
+    const halfMenuWidth = (selectionMenuRef.current?.getBoundingClientRect().width ?? 0) / 2
     const left = Math.min(Math.max(rawLeft, halfMenuWidth + 10), window.innerWidth - halfMenuWidth - 10)
     const top = placement === 'above' ? selectionTop - 10 : selectionBottom + 10
     setSelectionMenu(current => current
@@ -1334,6 +1599,19 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
   const redoChange = () => {
     const view = viewRef.current
     if (view && runStableHistoryCommand(redo)) focusEditorWithoutPageScroll(view)
+  }
+
+  const scrollToEdge = (edge: 'top' | 'bottom') => {
+    const view = viewRef.current
+    if (!view) return
+    if (activeBlockTimerRef.current !== null) window.clearTimeout(activeBlockTimerRef.current)
+    activeBlockTimerRef.current = null
+    userScrollUntilRef.current = Date.now() + 1200
+    // Use document positions so CodeMirror renders the destination in long documents.
+    view.dispatch({ effects: EditorView.scrollIntoView(edge === 'top' ? 0 : view.state.doc.length, {
+      y: edge === 'top' ? 'start' : 'end',
+      yMargin: Math.max(0, Math.min(view.scrollDOM.clientHeight - 1, view.documentPadding[edge] + view.defaultLineHeight)),
+    }) })
   }
 
   const wrapSelection = (markdownBefore: string, markdownAfter: string, placeholderText: string, htmlTag: string) => {
@@ -1556,6 +1834,37 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
     if (file) void insertVideoFile(file)
   }
 
+  const optimizeSelection = () => {
+    const view = viewRef.current
+    if (!view || readOnlyRef.current || view.state.selection.main.empty || compositionActiveRef.current || view.compositionStarted) return
+    const { from, to } = view.state.selection.main
+    const snapshot = view.state.doc.toString()
+    const original = snapshot.slice(from, to)
+    if (titleInDocument && from < splitEditorDocument(snapshot).prefix.length) {
+      setVideoError('请选择标题下方的正文文字进行 AI 润色。'); return
+    }
+    if (!original.trim() || original.length > AI_SELECTION_LIMIT) {
+      setVideoError(`每次请选择 1–${AI_SELECTION_LIMIT.toLocaleString()} 字正文进行润色。`); return
+    }
+    if (/dispatch-editor-(?:image|video):\/\//i.test(original)) return
+    setVideoError(null)
+    if (changeTimerRef.current !== null) emitSourceChange(view)
+    aiSelectionMenuDismissedRef.current = true
+    onAiSelection?.({
+      id: crypto.randomUUID(), original, language: languageRef.current,
+      ...nearbyPolishContext(snapshot, from, to),
+      apply: text => {
+        if (viewRef.current !== view) return '当前稿件已切换，请重新选择文字。'
+        if (readOnlyRef.current || compositionActiveRef.current || view.compositionStarted) return '编辑器暂不可修改，请完成当前操作后重试。'
+        if (view.state.doc.toString() !== snapshot) return '稿件已发生变化，为保护你的编辑，请重新选择文字并生成方案。'
+        insertText(text, 0, text.length, { range: { from, to }, separateHistory: true, syncImmediately: true, preserveOuterScroll: true })
+        aiSelectionMenuDismissedRef.current = true
+        setSelectionMenu(null)
+      },
+    })
+    setSelectionMenu(null)
+  }
+
   const collectSelection = () => {
     const view = viewRef.current
     if (!view || readOnlyRef.current || view.state.selection.main.empty) return
@@ -1615,11 +1924,13 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
           markdownLinkField,
           markdownPresentationCompartment.of(markdownPresentationFacet.of(false)),
           markdownPresentationField,
+          protectMarkdownPresentation,
           readOnlyCompartment.of([
             EditorState.readOnly.of(readOnly),
             EditorView.editable.of(!readOnly),
           ]),
           EditorView.atomicRanges.of(view => view.state.field(imagePreviewField)),
+          EditorView.atomicRanges.of(view => view.state.field(markdownPresentationField).update({ filter: (_from, _to, decoration) => decoration.spec.protectedSyntax === true })),
           languageCompartment.of([
             sourceLanguageFacet.of(language),
             language === 'markdown' ? markdown() : html(),
@@ -1627,6 +1938,7 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
           Prec.high(EditorView.domEventHandlers({
             keydown: event => {
               if (readOnlyRef.current) return false
+              aiSelectionMenuDismissedRef.current = false
               const hasCommandModifier = event.ctrlKey || event.metaKey
               if (!hasCommandModifier || event.altKey) return false
               const key = event.key.toLocaleLowerCase()
@@ -1644,6 +1956,8 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
             },
           })),
           Prec.high(keymap.of([
+            { key: 'Backspace', run: view => deleteRenderedCharacter(view, true) },
+            { key: 'Delete', run: view => deleteRenderedCharacter(view, false) },
             { key: 'Mod-b', run: () => { wrapSelection('**', '**', '加粗文字', 'strong'); return true }, preventDefault: true },
             { key: 'Mod-i', run: () => { wrapSelection('*', '*', '斜体文字', 'em'); return true }, preventDefault: true },
             { key: 'Mod-k', run: () => { insertLink(); return true }, preventDefault: true },
@@ -1666,7 +1980,7 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
           EditorView.domEventHandlers({
             wheel: () => { userScrollUntilRef.current = Date.now() + 1200; return false },
             touchmove: () => { userScrollUntilRef.current = Date.now() + 1200; return false },
-            pointerdown: () => { userScrollUntilRef.current = Date.now() + 1200; return false },
+            pointerdown: () => { aiSelectionMenuDismissedRef.current = false; userScrollUntilRef.current = Date.now() + 1200; return false },
             pointermove: event => { if (event.buttons === 1) userScrollUntilRef.current = Date.now() + 1200; return false },
             scroll: (_event, currentView) => {
               if (!syncScrollRef.current || Date.now() > userScrollUntilRef.current) return false
@@ -1710,7 +2024,7 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
               setSelectionMenu(null)
               return false
             },
-            focus: (_event, currentView) => { updateEditorUi(currentView); return false },
+            focus: (_event, currentView) => { aiSelectionMenuDismissedRef.current = false; updateEditorUi(currentView); return false },
             click: (event, currentView) => {
               if (languageRef.current === 'markdown' && (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey) {
                 const decoratedLink = event.target instanceof Element
@@ -1841,6 +2155,33 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
       event.stopPropagation()
       window.open(link, '_blank', 'noopener,noreferrer')
     }
+    let selectionReleaseFrame: number | null = null
+    const beginSelection = (event: PointerEvent) => {
+      if (event.button !== 0) return
+      if (selectionReleaseFrame !== null) window.cancelAnimationFrame(selectionReleaseFrame)
+      selectionReleaseFrame = null
+      selectionPointerRef.current = event.pointerId
+      setSelectionMenu(null)
+    }
+    const finishSelection = (event: PointerEvent) => {
+      if (event.pointerId !== selectionPointerRef.current) return
+      // Wait for CodeMirror's mouseup handler to commit the final selection.
+      selectionReleaseFrame = window.requestAnimationFrame(() => {
+        selectionReleaseFrame = null
+        selectionPointerRef.current = null
+        if (view.hasFocus) updateEditorUi(view)
+      })
+    }
+    const cancelSelection = () => {
+      if (selectionReleaseFrame !== null) window.cancelAnimationFrame(selectionReleaseFrame)
+      selectionReleaseFrame = null
+      selectionPointerRef.current = null
+      setSelectionMenu(null)
+    }
+    view.dom.addEventListener('pointerdown', beginSelection, true)
+    window.addEventListener('pointerup', finishSelection)
+    window.addEventListener('pointercancel', cancelSelection)
+    window.addEventListener('blur', cancelSelection)
     view.dom.addEventListener('click', handleDecoratedLinkClick, true)
     viewRef.current = view
     updateEditorUi(view)
@@ -1850,6 +2191,12 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
       compositionActiveRef.current = false
       if (activeBlockTimerRef.current !== null) window.clearTimeout(activeBlockTimerRef.current)
       view.dom.removeEventListener('click', handleDecoratedLinkClick, true)
+      view.dom.removeEventListener('pointerdown', beginSelection, true)
+      window.removeEventListener('pointerup', finishSelection)
+      window.removeEventListener('pointercancel', cancelSelection)
+      window.removeEventListener('blur', cancelSelection)
+      if (selectionReleaseFrame !== null) window.cancelAnimationFrame(selectionReleaseFrame)
+      selectionPointerRef.current = null
       view.destroy()
       viewRef.current = null
     }
@@ -1953,8 +2300,18 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
     const view = viewRef.current
     if (!view || !focusRequest || focusRequest.requestId === lastFocusRequestRef.current) return
     lastFocusRequestRef.current = focusRequest.requestId
+    userScrollUntilRef.current = 0
+    if (viewportTimerRef.current !== null) window.clearTimeout(viewportTimerRef.current)
+    viewportTimerRef.current = null
     const lineNumber = Math.min(Math.max(1, focusRequest.line), view.state.doc.lines)
     const position = view.state.doc.line(lineNumber).to
+    if (focusRequest.scrollOnly) {
+      view.dispatch({
+        effects: EditorView.scrollIntoView(position, { y: 'center', yMargin: 32 }),
+        annotations: externalFocusUpdate.of(true),
+      })
+      return
+    }
     view.dispatch({
       selection: { anchor: position },
       effects: EditorView.scrollIntoView(position, { y: 'center', yMargin: 32 }),
@@ -2000,6 +2357,7 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
             <ToolButton label="表格" onClick={insertTable}><Table2 size={17} /></ToolButton>
             <ToolButton label="分割线" onClick={() => insertText(languageRef.current === 'markdown' ? '\n\n---\n\n' : '<hr>')}><Minus size={17} /></ToolButton>
           </div>
+          {onAiSelection && <div className="source-tool-group"><ToolButton label="AI 优化选中文字" preserveSelection disabled={readOnly || !selectionMenu} onClick={optimizeSelection}><Sparkles size={17} /></ToolButton></div>}
           {onCollectSelection && <div className="source-tool-group"><ToolButton label="收藏选中内容" preserveSelection disabled={readOnly || !selectionMenu} onClick={collectSelection}><BookmarkPlus size={17} /></ToolButton></div>}
           <input ref={imageInputRef} type="file" accept="image/*" hidden onChange={handleImageSelection} />
           <input ref={videoInputRef} type="file" accept={VIDEO_FILE_ACCEPT} hidden onChange={handleVideoSelection} />
@@ -2037,16 +2395,22 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
               <span>{showMarkdownSyntax ? '隐藏语法' : '显示语法'}</span>
             </button>
           )}
+          <div className="source-scroll-actions" role="group" aria-label="编辑区快速滚动">
+            <ToolButton label="到顶部" preserveSelection onClick={() => scrollToEdge('top')}><ArrowUpToLine size={16} /></ToolButton>
+            <ToolButton label="到底部" preserveSelection onClick={() => scrollToEdge('bottom')}><ArrowDownToLine size={16} /></ToolButton>
+          </div>
         </footer>
       </div>
 
       {selectionMenu && createPortal(
         <div
           className={`source-selection-menu ${selectionMenu.placement}`}
+          ref={selectionMenuRef}
           role="toolbar"
           aria-label="选中文字快捷排版"
           style={{ left: selectionMenu.left, top: selectionMenu.top }}
         >
+          {onAiSelection && <div className="source-selection-group"><ToolButton label="AI 优化选中文字" preserveSelection onClick={optimizeSelection} disabled={readOnly}><Sparkles size={15} /></ToolButton></div>}
           {onCollectSelection && <div className="source-selection-group"><ToolButton label="收藏到模板库" preserveSelection onClick={collectSelection} disabled={readOnly}><BookmarkPlus size={15} /></ToolButton></div>}
           <div className="source-selection-group">
             <ToolButton label="正文" preserveSelection onClick={setParagraph}><Pilcrow size={15} /></ToolButton>

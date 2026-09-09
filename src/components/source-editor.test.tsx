@@ -32,6 +32,28 @@ describe('SourceEditor', () => {
     vi.restoreAllMocks()
   })
 
+  it('handles preview scrolling without changing the selection, focus or source', async () => {
+    const onChange = vi.fn()
+    const onActiveBlockChange = vi.fn()
+    const props = { value: '第一段\n\n第二段\n\n第三段', language: 'markdown' as const, onChange, onActiveBlockChange }
+    await act(async () => root.render(<SourceEditor {...props} />))
+    const view = EditorView.findFromDOM(container.querySelector<HTMLElement>('.cm-content')!)!
+    await act(async () => view.dispatch({ selection: { anchor: 0, head: 2 } }))
+    const selection = view.state.selection
+    const focused = document.activeElement
+    onActiveBlockChange.mockClear()
+    await act(async () => {
+      root.render(<SourceEditor {...props} focusRequest={{ line: 5, requestId: 1, scrollOnly: true }} />)
+    })
+    await act(async () => new Promise(resolve => window.setTimeout(resolve, 150)))
+    expect(view.state.selection.eq(selection)).toBe(true)
+    expect(document.activeElement).toBe(focused)
+    expect(view.state.doc.toString()).toBe(props.value)
+    expect(onChange).not.toHaveBeenCalled()
+    expect(onActiveBlockChange).not.toHaveBeenCalled()
+    expect(container.querySelector('.source-focus-line')).toBeNull()
+  })
+
   it('renders a line-numbered Markdown source surface and inserts warning syntax', async () => {
     const onChange = vi.fn()
     await act(async () => root.render(
@@ -107,7 +129,14 @@ describe('SourceEditor', () => {
     })
 
     expect(editor.textContent).not.toContain('# 标题')
-    expect(editor.textContent).toContain('**正在编辑的内容**')
+    expect(editor.textContent).toContain('正在编辑的内容')
+    expect(editor.textContent).not.toContain('**')
+    await act(async () => view.dispatch({
+      changes: { from: source.indexOf('正在'), to: source.indexOf('正在') + 2, insert: '继续' },
+      userEvent: 'input.type',
+    }))
+    expect(view.state.doc.toString()).toBe(source.replace('正在', '继续'))
+    expect(editor.textContent).not.toContain('**')
   })
 
   it('hides paired HTML mark tags while preserving the highlighted Markdown source', async () => {
@@ -132,11 +161,11 @@ describe('SourceEditor', () => {
     expect(onChange).not.toHaveBeenCalled()
 
     await act(async () => view.dispatch({ selection: { anchor: view.state.doc.line(1).to } }))
-    expect(editor.textContent).toContain('<mark>')
-    expect(editor.textContent).toContain('</mark>')
+    expect(editor.textContent).not.toContain('<mark>')
+    expect(editor.textContent).not.toContain('</mark>')
   })
 
-  it('keeps an unclosed HTML mark tag visible in presentation mode', async () => {
+  it('renders an unclosed HTML mark tag without exposing its source', async () => {
     const source = '<mark>未闭合的高亮\n\n后续正文'
     await act(async () => root.render(
       <SourceEditor value={source} language="markdown" onChange={vi.fn()} />,
@@ -149,7 +178,8 @@ describe('SourceEditor', () => {
       view.dispatch({ selection: { anchor: view.state.doc.line(3).to } })
     })
 
-    expect(editor.textContent).toContain('<mark>未闭合的高亮')
+    expect(editor.textContent).toContain('未闭合的高亮')
+    expect(editor.textContent).not.toContain('<mark>')
   })
 
   it('does not offer the Markdown syntax toggle for HTML sources', async () => {
@@ -159,6 +189,59 @@ describe('SourceEditor', () => {
     await act(async () => new Promise(resolve => window.setTimeout(resolve, 0)))
 
     expect(container.querySelector('button[aria-label*="Markdown 语法"]')).toBeNull()
+  })
+
+  it('renders tables and embedded HTML without modifying their source', async () => {
+    const source = '| 名称 | 说明 |\n| --- | --- |\n| 项目 | **重点** |\n\n<p><strong>HTML 加粗</strong>与<a href="https://example.test">链接</a></p>\n\n<video controls>\n<source src="./demo.mp4" type="video/mp4">\n视频回退文字\n</video>\n\n[打开视频](./demo.mp4)'
+    const onChange = vi.fn()
+    await act(async () => root.render(<SourceEditor value={source} language="markdown" onChange={onChange} />))
+    const editor = container.querySelector<HTMLElement>('.cm-content')!
+    const view = EditorView.findFromDOM(editor)!
+    expect(editor.textContent).toContain('HTML 加粗与链接')
+    for (const syntax of ['<strong>', '<video', '<source', '视频回退文字', '|', '---', '**', '](./']) expect(editor.textContent).not.toContain(syntax)
+    expect(editor.querySelectorAll('.cm-md-table-row')).toHaveLength(2)
+    await act(async () => view.dispatch({
+      changes: { from: source.indexOf('重点'), to: source.indexOf('重点') + 2, insert: '修改' }, userEvent: 'input.type',
+    }))
+    expect(view.state.doc.toString()).toBe(source.replace('重点', '修改'))
+    expect(editor.textContent).not.toContain('**')
+  })
+
+  it('preserves syntax during selection replacement and protects a heading prefix from deletion', async () => {
+    const source = '## 标题\n\n**加粗文字**'
+    await act(async () => root.render(<SourceEditor value={source} language="markdown" onChange={vi.fn()} />))
+    const editor = container.querySelector<HTMLElement>('.cm-content')!
+    const view = EditorView.findFromDOM(editor)!
+    await act(async () => view.dispatch({ changes: { from: 0, to: 3 }, userEvent: 'delete.backward' }))
+    expect(view.state.doc.toString()).toBe(source)
+    await act(async () => view.dispatch({ changes: { from: source.indexOf('**'), to: source.length, insert: '新的内容' }, userEvent: 'input.type' }))
+    expect(view.state.doc.toString()).toBe('## 标题\n\n**新的内容**')
+    expect(editor.textContent).not.toContain('**')
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="显示 Markdown 语法"]')!.click())
+    await act(async () => view.dispatch({ changes: { from: 0, to: 3 }, userEvent: 'delete.backward' }))
+    expect(view.state.doc.toString()).toBe('标题\n\n**新的内容**')
+  })
+
+  it('keeps literal HTML inside code visible and removes executable HTML from the rendered surface', async () => {
+    const source = '```html\n<mark>代码示例</mark>\n<script>\n```\n\n<script>alert("unsafe")</script>\n\n<p onclick="alert(1)"><em>安全正文</em> &amp; 实体</p>'
+    await act(async () => root.render(<SourceEditor value={source} language="markdown" onChange={vi.fn()} />))
+    const editor = container.querySelector<HTMLElement>('.cm-content')!
+    expect(editor.textContent).toContain('<mark>代码示例</mark>')
+    expect(editor.textContent).not.toContain('```')
+    expect(editor.textContent).not.toContain('unsafe')
+    expect(editor.textContent).toContain('安全正文')
+    expect(editor.textContent).toContain('& 实体')
+    expect(editor.textContent).not.toContain('&amp;')
+    expect(editor.querySelector('script, [onclick]')).toBeNull()
+  })
+
+  it('removes empty inline formatting when its last visible character is deleted', async () => {
+    await act(async () => root.render(<SourceEditor value="**字**" language="markdown" onChange={vi.fn()} />))
+    const editor = container.querySelector<HTMLElement>('.cm-content')!
+    const view = EditorView.findFromDOM(editor)!
+    await act(async () => view.dispatch({ changes: { from: 2, to: 3 }, userEvent: 'delete.backward' }))
+    expect(view.state.doc.toString()).toBe('')
+    expect(editor.querySelector('.cm-md-horizontal-rule')).toBeNull()
   })
 
   it('prevents editor and toolbar mutations while read-only', async () => {
@@ -352,12 +435,12 @@ describe('SourceEditor', () => {
 
     await press('y', { ctrlKey: true })
     await vi.waitFor(() => expect(onChange).toHaveBeenLastCalledWith('**快捷键正文**'), { timeout: 500 })
-    expect(editor.textContent).toBe('**快捷键正文**')
+    expect(editor.textContent).toBe('快捷键正文')
 
     await press('z', { ctrlKey: true })
     await press('z', { ctrlKey: true, shiftKey: true })
     await vi.waitFor(() => expect(onChange).toHaveBeenLastCalledWith('**快捷键正文**'), { timeout: 500 })
-    expect(editor.textContent).toBe('**快捷键正文**')
+    expect(editor.textContent).toBe('快捷键正文')
 
     await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="撤销"]')?.click())
     await vi.waitFor(() => expect(onChange).toHaveBeenLastCalledWith('快捷键正文'), { timeout: 500 })
@@ -605,7 +688,7 @@ describe('SourceEditor', () => {
   it('waits for Chinese IME composition to finish before syncing a Markdown heading', async () => {
     const onChange = vi.fn()
     await act(async () => root.render(
-      <SourceEditor value="企业缺的不是模型" language="markdown" onChange={onChange} />,
+      <SourceEditor value="企业缺的不是模型" language="markdown" showSyntax onChange={onChange} />,
     ))
     await act(async () => new Promise(resolve => window.setTimeout(resolve, 0)))
 

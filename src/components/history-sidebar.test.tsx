@@ -38,7 +38,6 @@ describe('HistorySidebar', () => {
       isExpanded: true,
       onToggleExpanded: vi.fn(),
       onSelectDraft: vi.fn(),
-      onChangeKind: vi.fn(),
       onDeleteDraft: vi.fn(),
       now: NOW,
     }
@@ -126,61 +125,18 @@ describe('HistorySidebar', () => {
     expect(document.activeElement).toBe(openButtons[1])
   })
 
-  it('selects drafts and exposes editable kind and soft-delete actions in an accessible menu', async () => {
-    const onSelectDraft = vi.fn()
-    const onChangeKind = vi.fn()
-    const onDeleteDraft = vi.fn()
-    await render({
-      onSelectDraft,
-      onChangeKind,
-      onDeleteDraft,
-      drafts: [draft({ id: 'draft-1', title: '内容策略', kind: 'image' })],
-    })
-
-    const openButton = container.querySelector<HTMLButtonElement>('.history-draft-open')!
-    await act(async () => openButton.dispatchEvent(new MouseEvent('click', { bubbles: true })))
-    expect(onSelectDraft).toHaveBeenCalledWith('draft-1')
-
-    const menuButton = container.querySelector<HTMLButtonElement>('.history-draft-menu-button')!
-    await act(async () => {
-      menuButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-      await Promise.resolve()
-    })
-    expect(menuButton.getAttribute('aria-expanded')).toBe('true')
-    const menu = container.querySelector<HTMLElement>('[role="menu"]')!
-    expect(menu.getAttribute('aria-label')).toContain('内容策略')
-    expect(document.activeElement?.getAttribute('role')).toBe('menuitemradio')
-
-    const longformAction = Array.from(menu.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]'))
-      .find(button => button.textContent?.includes('长文'))!
-    await act(async () => longformAction.dispatchEvent(new MouseEvent('click', { bubbles: true })))
-    expect(onChangeKind).toHaveBeenCalledWith('draft-1', 'longform')
-    expect(container.querySelector('[role="menu"]')).toBeNull()
-
-    await act(async () => {
-      menuButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-      await Promise.resolve()
-    })
-    const deleteAction = container.querySelector<HTMLButtonElement>('.history-delete-action')!
-    await act(async () => deleteAction.dispatchEvent(new MouseEvent('click', { bubbles: true })))
-    expect(onDeleteDraft).toHaveBeenCalledWith('draft-1')
-  })
-
-  it('closes a draft menu with Escape and restores focus to its trigger', async () => {
-    await render({ drafts: [draft({ id: 'escape', title: '键盘稿件' })] })
-    const menuButton = container.querySelector<HTMLButtonElement>('.history-draft-menu-button')!
-    await act(async () => {
-      menuButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-      await Promise.resolve()
-    })
-
-    const menu = container.querySelector<HTMLElement>('[role="menu"]')!
-    const escapeEvent = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
-    await act(async () => menu.dispatchEvent(escapeEvent))
-
-    expect(escapeEvent.defaultPrevented).toBe(true)
-    expect(container.querySelector('[role="menu"]')).toBeNull()
-    expect(document.activeElement).toBe(menuButton)
+  it('opens drafts and deletes directly without a category menu', async () => {
+    await render({ drafts: [draft({ id: 'draft-1', title: '内容策略' })] })
+    await act(async () => container.querySelector<HTMLButtonElement>('.history-draft-open')!.click())
+    expect(props.onSelectDraft).toHaveBeenCalledWith('draft-1')
+    vi.mocked(props.onSelectDraft).mockClear()
+    const button = container.querySelector<HTMLButtonElement>('.history-delete-action')!
+    expect(button.getAttribute('aria-label')).toBe('删除稿件“内容策略”')
+    expect(button.querySelector('.lucide-trash-2')).not.toBeNull()
+    expect(container.querySelector('[role="menu"], [role="menuitemradio"], .history-draft-kind')).toBeNull()
+    await act(async () => button.click())
+    expect(props.onDeleteDraft).toHaveBeenCalledWith('draft-1')
+    expect(props.onSelectDraft).not.toHaveBeenCalled()
   })
 
   it('disables draft mutations while an exclusive operation is running', async () => {

@@ -35,6 +35,7 @@ import {
 } from 'lucide-react'
 import type { ArticleDraft, MissingImageAction, MissingImageTarget, PlatformAccount, PublishResult } from './domain/article'
 import type { LibraryContent, LibraryInsertRequest, LibraryItem } from './domain/template-library'
+import type { AiSelection } from './lib/ai-polish'
 import { DEFAULT_ARTICLE_FORMATTING, type ArticleFormatting } from './domain/formatting'
 import { DispatchControls, type BridgeState, type WorkState } from './components/dispatch-controls'
 import { HistorySidebar } from './components/history-sidebar'
@@ -587,6 +588,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   const [panel, setPanel] = useState<WorkbenchPanel>(null)
   const [librarySelection, setLibrarySelection] = useState<Extract<LibraryContent, { kind: 'text' }> | null>(null)
   const [libraryInsertRequest, setLibraryInsertRequest] = useState<(LibraryInsertRequest & { draftId: string }) | null>(null)
+  const [aiSelection, setAiSelection] = useState<(AiSelection & { draftId: string }) | null>(null)
   const libraryInsertIdRef = useRef(0)
   const libraryDismissGuardRef = useRef<() => boolean>(() => true)
   const [helpOpen, setHelpOpen] = useState(false)
@@ -718,6 +720,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   const toggleHistorySidebar = useCallback(() => {
     if (!libraryDismissGuardRef.current()) return
     setPanel(null)
+    setAiSelection(null)
     setEditorView('edit')
     setMobileWorkspace(current => current === 'resources' ? 'edit' : current)
     if (historyOverlayOpen || isHistoryOverlayViewport()) {
@@ -1367,9 +1370,12 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     updateEditorPanePercent(next, true, activePlatform)
   }
 
-  const editPreviewTarget = (target: PreviewEditTarget) => {
-    setMobileWorkspace('edit')
-    setEditorView('edit')
+  const editPreviewTarget = (target: PreviewEditTarget, scrollOnly = false) => {
+    if (!syncScroll) return
+    if (!scrollOnly) {
+      setMobileWorkspace('edit')
+      setEditorView('edit')
+    }
     setActiveEditorLocation(null)
     setPreviewLocateRequest(null)
     if (target.kind === 'title') {
@@ -1382,6 +1388,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     setEditorFocusRequest({
       line: target.line ?? sourceLineForBlock(source.text, source.language, target.blockIndex),
       requestId: focusRequestIdRef.current,
+      scrollOnly,
     })
   }
 
@@ -1434,29 +1441,6 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
       setHistoryError(`无法打开稿件：${(switchError as Error).message}`)
     } finally {
       endExclusiveOperation('switch-draft')
-    }
-  }
-
-  const changeHistoryDraftKind = async (id: string, kind: DraftKind) => {
-    if (!draftRepository || !beginExclusiveOperation('change-kind')) return
-    setHistoryError(null)
-    try {
-      if (id === activeDraftIdRef.current) {
-        setDraftKind(kind)
-        markDraftDirty()
-        return
-      }
-      const persisted = await draftRepository.getDraft(id)
-      if (!persisted || persisted.deletedAt) return
-      await draftRepository.saveDraft(
-        { ...persisted, kind },
-        { expectedUpdatedAt: persisted.updatedAt },
-      )
-      await refreshDraftSummaries()
-    } catch (kindError) {
-      setHistoryError(`类型修改失败：${(kindError as Error).message}`)
-    } finally {
-      endExclusiveOperation('change-kind')
     }
   }
 
@@ -1701,17 +1685,25 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     saveWorkbenchPreference('dispatch.show-syntax.v1', String(enabled))
   }
   const openPanel = (next: WorkbenchPanel) => {
-    if (panel === 'library' && !libraryDismissGuardRef.current()) return
+    if (panel === 'library' && !libraryDismissGuardRef.current()) return false
     closeHistoryOverlay(false)
     setNotificationsOpen(false)
     setLibrarySelection(null)
     setPanel(next)
-    if (next === 'library') {
+    if (next !== 'ai') setAiSelection(null)
+    if (next === 'library' || next === 'ai') {
       setHistoryExpanded(false)
       setWorkspaceMode(current => current === 'preview' ? 'split' : current)
       setEditorView('edit'); setMobileWorkspace('edit')
     }
+    if (panel === 'ai' && next === null) window.requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('.rail-action[aria-controls="ai-sidebar"]')?.focus())
     if (panel === 'library' && next === null) window.requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('.rail-action[aria-controls="template-library-sidebar"]')?.focus())
+    return true
+  }
+  const optimizeEditorSelection = (selection: AiSelection) => {
+    if (!article || exclusiveOperationRef.current !== null) return
+    if (!openPanel('polish')) return
+    setAiSelection({ ...selection, draftId: article.id })
   }
   const collectEditorSelection = (selection: Extract<LibraryContent, { kind: 'text' }>) => {
     if (exclusiveOperationRef.current !== null) return
@@ -1740,7 +1732,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   const mediaNotice = [missing ? `${missing} 张图片待补齐` : '', videos ? `${videos} 个视频需在目标平台手动上传` : '', activePlatform === 'xhs' && gifs ? `${gifs} 个 GIF 将输出为静态图片` : ''].filter(Boolean).join(' · ')
   const notificationCount = (article?.warnings.length || 0) + [mediaNotice, error, historyError, autosave.error, backupNotice, backupProgress, undoDraft, previewNotice, bridgeState === 'missing' || bridgeState === 'error'].filter(Boolean).length
   useEffect(() => {
-    if (error || historyError || autosave.error || backupNotice || undoDraft || previewNotice) { setPanel(current => current === 'library' ? current : null); setNotificationsOpen(true) }
+    if (error || historyError || autosave.error || backupNotice || undoDraft || previewNotice) { setPanel(current => current === 'library' || current === 'ai' ? current : null); setNotificationsOpen(true) }
   }, [error, historyError, autosave.error, backupNotice, undoDraft, previewNotice])
 
   return (
@@ -1845,7 +1837,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
         )}
       </header>
 
-      <div className={`workbench-layout${panel === 'library' ? ' library-open' : ''}`}>
+      <div className={`workbench-layout${panel === 'library' ? ' library-open' : panel === 'ai' ? ' ai-open' : ''}`}>
         <WorkbenchNavigation
           historyOpen={historyUsesOverlay ? historyOverlayOpen : historyExpanded}
           draftCount={homeDrafts.length}
@@ -1919,7 +1911,6 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
             isExpanded={historyUsesOverlay ? historyOverlayOpen : historyExpanded}
             onToggleExpanded={toggleHistorySidebar}
             onSelectDraft={id => void selectHistoryDraft(id)}
-            onChangeKind={(id, kind) => void changeHistoryDraftKind(id, kind)}
             onDeleteDraft={id => void deleteHistoryDraft(id)}
             interactionLocked={isOperationLocked}
           />
@@ -2267,6 +2258,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                               onChange={updateArticleSource}
                               onActiveBlockChange={updateActiveEditorLocation}
                               onCollectSelection={collectEditorSelection}
+                              onAiSelection={optimizeEditorSelection}
                               libraryInsertRequest={libraryInsertRequest?.draftId === article.id ? libraryInsertRequest : null}
                               onLibraryInsertComplete={finishLibraryInsert}
                             />
@@ -2331,6 +2323,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                               onPreviewDeviceChange={setPreviewDevice}
                               locateRequest={previewLocateRequest}
                               onEditTarget={editPreviewTarget}
+                              onScrollTarget={syncScroll ? target => editPreviewTarget(target, true) : undefined}
                               onMissingImageAction={requestMissingImageAction}
                             />
                           </div>
@@ -2347,12 +2340,14 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
       </div>
 
       <WorkbenchPanels panel={panel} onClose={() => openPanel(null)} libraryDismissGuardRef={libraryDismissGuardRef}
+        onConfigureAi={() => openPanel('ai')}
+        aiSelection={aiSelection?.draftId === article?.id ? aiSelection : null}
         librarySelection={librarySelection} canInsertLibraryItem={Boolean(article)} onInsertLibraryItem={insertLibraryItem}
         onBlank={() => void createNewArticle()}
         onFile={() => fileInputRef.current?.click()} onDirectory={() => directoryInputRef.current?.click()}
         locked={isOperationLocked || hydrationPhase === 'loading'}
         syncScroll={syncScroll} onSyncScroll={enabled => {
-          setSyncScroll(enabled); setActiveEditorLocation(null); setPreviewLocateRequest(null)
+          setSyncScroll(enabled); setActiveEditorLocation(null); setPreviewLocateRequest(null); setEditorFocusRequest(null)
           saveWorkbenchPreference('dispatch.sync-scroll.v1', String(enabled))
         }}
         showSyntax={showSyntax} onShowSyntax={changeShowSyntax}

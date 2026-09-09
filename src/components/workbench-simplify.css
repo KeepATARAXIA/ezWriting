@@ -15,10 +15,10 @@
 .wechat-theme-rail .wechat-theme-categories { position: static; margin: 0 0 10px; padding: 0; gap: 1px; border: 0; border-radius: 0; background: #fff; box-shadow: none; }
 .wechat-theme-rail .wechat-theme-categories button { min-height: 30px; padding: 0 1px; border-radius: 4px; color: #526078; font-size: 11px; font-weight: 400; }
 .wechat-theme-rail .wechat-theme-categories button[aria-selected="true"] { color: #1648ff; background: #edf2ff; font-weight: 600; }
-.wechat-theme-rail .wechat-theme-grid { grid-template-columns: repeat(auto-fit, minmax(min(140px, 100%), 1fr)); gap: 12px; }
+.wechat-theme-rail .wechat-theme-grid { grid-template-columns: minmax(0, 1fr); gap: 12px; }
 .wechat-theme-rail .wechat-theme-card { padding: 7px; border: 2px solid transparent; border-radius: 9px; background: #fff; box-shadow: none; transition: background 120ms ease, border-color 120ms ease; }
 .wechat-theme-rail .wechat-theme-card:hover { background: #f5f7fb; transform: none; box-shadow: none; }
-.wechat-theme-rail .wechat-theme-card.selected { border-color: #1648ff; background: #edf2ff; box-shadow: none; }
+.wechat-theme-rail .wechat-theme-card.selected { border-color: transparent; background: #edf2ff; box-shadow: none; }
 .wechat-theme-rail .wechat-theme-graphic { height: 92px; border: 0; border-radius: 4px; outline: 1px solid #e7ebf1; outline-offset: -1px; }
 .wechat-theme-rail .wechat-theme-graphic-index { top: 9px; right: 10px; font-size: 8px; }
 .wechat-theme-rail .wechat-theme-graphic-mark { top: 12px; left: 12px; scale: 1; transform-origin: top left; }
@@ -49,11 +49,11 @@
 .xhs-tool-rail .xhs-template-category-nav { position: static; margin: 0 0 10px; padding: 0; gap: 2px; border: 0; border-radius: 0; background: #fff; box-shadow: none; }
 .xhs-tool-rail .xhs-template-category-nav button { min-height: 30px; padding: 0 2px; border-radius: 4px; font-size: 11px; font-weight: 400; color: #526078; }
 .xhs-tool-rail .xhs-template-category-nav button[aria-selected="true"] { color: #1648ff; background: #edf2ff; font-weight: 600; }
-.xhs-tool-rail .xhs-template-gallery { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 6px; }
-.xhs-tool-rail .xhs-template-showcase { min-width: 0; padding: 4px; border: 0; border-radius: 5px; background: #fff; box-shadow: none; transition: none; }
+.xhs-tool-rail .xhs-template-gallery { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+.xhs-tool-rail .xhs-template-showcase { min-width: 0; padding: 9px; border: 0; border-radius: 9px; background: #fff; box-shadow: none; transition: none; }
 .xhs-tool-rail .xhs-template-showcase:hover { background: #f5f7fb; box-shadow: none; transform: none; }
 .xhs-tool-rail .xhs-template-showcase.selected { background: #edf2ff; box-shadow: none; }
-.xhs-tool-rail .xhs-template-graphic { height: 60px; padding: 3px; gap: 3px; border: 0; border-radius: 3px; }
+.xhs-tool-rail .xhs-template-graphic { height: 112px; padding: 5px; gap: 5px; border: 0; border-radius: 3px; }
 .xhs-tool-rail .xhs-template-graphic-panel.is-cover, .xhs-tool-rail .xhs-template-graphic-panel.is-article { padding: 5px 3px; }
 .xhs-tool-rail .xhs-template-graphic-heading { margin-top: 7px; gap: 3px; }
 .xhs-tool-rail .xhs-template-graphic-heading > span { height: 4px; }
@@ -62,10 +62,10 @@
 .xhs-tool-rail .xhs-template-graphic-lines { gap: 3px; }
 .xhs-tool-rail .xhs-template-graphic-quote { height: 12px; padding: 3px; right: 3px; left: 3px; bottom: 4px; border-left-width: 2px; }
 .xhs-tool-rail .xhs-template-graphic-panel.is-image { padding: 3px; }
-.xhs-tool-rail .xhs-template-graphic-picture { height: 32px; }
+.xhs-tool-rail .xhs-template-graphic-picture { height: 70px; }
 .xhs-tool-rail .xhs-template-graphic-caption { margin-top: 5px; }
-.xhs-tool-rail .xhs-template-card-meta { min-height: 25px; padding: 6px 1px 0; border: 0; display: flex; align-items: center; justify-content: space-between; gap: 4px; }
-.xhs-tool-rail .xhs-template-card-meta strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; font-weight: 500; color: #26324a; }
+.xhs-tool-rail .xhs-template-card-meta { min-height: 34px; padding: 6px 1px 0; border: 0; display: flex; align-items: center; justify-content: space-between; gap: 4px; }
+.xhs-tool-rail .xhs-template-card-meta strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 500; color: #26324a; }
 .xhs-tool-rail .xhs-template-card-meta svg { flex-shrink: 0; color: #1648ff; }
 .xhs-tool-rail .xhs-template-showcase.selected strong { color: #1648ff; font-weight: 600; }
 .inspector-tab-panel .xhs-template-font-intro { grid-column: 1 / -1; padding: 0; border: 0; background: transparent; }
@@ -76,6 +76,14 @@
 .inspector-tab-panel .xhs-palette-control-heading { margin-bottom: 10px; }
 .inspector-tab-panel .xhs-palette-control-heading strong { font-size: 12px; font-weight: 500; color: #526078; }
 .inspector-tab-panel .xhs-palette-control-heading small { display: none; }
+/* Keep palette inputs above the card-wide template selection target. */
+.theme-card-colors { position: relative; z-index: 7; margin-top: 8px; padding: 0 2px; border-top: 1px solid #dce4f4; }
+.inspector-tab-panel .theme-card-colors .xhs-palette-controls { padding: 12px 0 4px; border: 0; background: transparent; }
+.inspector-tab-panel .theme-card-colors .xhs-palette-control-heading { margin: 0; }
+.inspector-tab-panel .theme-card-colors .xhs-palette-control-heading small { display: block; }
+.inspector-tab-panel .theme-card-colors .x-formatting-section { grid-template-columns: minmax(0, 1fr); border: 0; }
+.inspector-tab-panel .theme-card-colors .wechat-theme-settings { margin: 0 0 4px; }
+.inspector-tab-panel .theme-card-colors .wechat-theme-setting-title strong { font-size: 12px; color: #526078; font-weight: 500; }
 .inspector-output-settings { margin-top: 16px; padding: 0; border: 0; background: #fff; }
 .inspector-output-settings > strong { font-size: 12px; font-weight: 500; color: #526078; }
 .inspector-output-settings .xhs-decoration-options { margin: 8px 0; padding: 0; background: #fff; }

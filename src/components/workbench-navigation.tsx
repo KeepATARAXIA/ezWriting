@@ -1,7 +1,7 @@
 import { useEffect, useRef, type ReactNode, type Ref } from 'react'
 import { Bell, FilePlus2, History, LayoutGrid, CircleHelp, Settings2, Sparkles, X } from 'lucide-react'
 
-export type WorkbenchPanel = 'new' | 'settings' | 'library' | 'ai' | null
+export type WorkbenchPanel = 'new' | 'settings' | 'library' | 'ai' | 'polish' | null
 export interface WorkbenchNavigationProps {
   historyOpen: boolean
   draftCount: number
@@ -45,7 +45,7 @@ export function WorkbenchNavigation(props: WorkbenchNavigationProps) {
         <span className="rail-icon"><History size={21} />{props.draftCount > 0 && <span className="rail-count" aria-hidden="true">{props.draftCount > 99 ? '99+' : props.draftCount}</span>}</span><span>历史</span>
       </button>
       <button type="button" className="rail-action" aria-label="模板素材库" title="模板素材库" aria-controls="template-library-sidebar" aria-expanded={props.panel === 'library'} disabled={props.interactionLocked} onClick={() => props.onPanelChange(props.panel === 'library' ? null : 'library')}><LayoutGrid size={21} /><span>模板</span></button>
-      <button type="button" className="rail-action" aria-label="AI 工具（规划中）" title="AI 工具 · 规划中" aria-expanded={props.panel === 'ai'} onClick={() => props.onPanelChange('ai')}><Sparkles size={21} /><span>AI</span></button>
+      <button type="button" className="rail-action" aria-label="AI 工具" title="AI 工具" aria-controls="ai-sidebar" aria-expanded={props.panel === 'ai'} disabled={props.interactionLocked} onClick={() => props.onPanelChange(props.panel === 'ai' ? null : 'ai')}><Sparkles size={21} /><span>AI</span></button>
     </div>
     <div className="workbench-rail-utilities">
       <div ref={notificationRef} className="notification-anchor">

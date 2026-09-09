@@ -1,12 +1,18 @@
 import { protectLocalImageReferences } from './local-image-registry'
 import DOMPurify from 'dompurify'
-import { Marked } from 'marked'
+import { Marked, type Token } from 'marked'
 import { isLocalVideoReference, localVideoBlob } from './local-video-registry'
 import { isSupportedVideoDataUri, localVideoFileName, supportedVideoDataMimeType } from './video-assets'
 
 // Keep this compatibility rule local to article rendering, without changing the global lexer.
 const articleMarkdown = new Marked({
   tokenizer: {
+    html(source) {
+      // A leading editorial comment must not turn the following prose into raw HTML.
+      const comment = /^( {0,3}<!--[\s\S]*?-->)(?=[^\S\n]*[^\s<])/.exec(source)
+      if (!comment) return false
+      return { type: 'html', raw: comment[1], text: comment[1], block: true, pre: false }
+    },
     emStrong(source, maskedSource, previousCharacter = '') {
       if (!source.startsWith('**') || previousCharacter === '*') return false
 
@@ -26,6 +32,25 @@ const articleMarkdown = new Marked({
     },
   },
 })
+
+// Use the preview lexer for additional editor spans, keeping original source offsets.
+export function markdownInlineStrongRanges(source: string): Array<{ from: number; to: number }> {
+  const ranges: Array<{ from: number; to: number }> = []
+  const visit = (tokens: Token[], offset: number) => {
+    for (const token of tokens) {
+      if (token.type === 'strong' && /^(\*\*|__)/.test(token.raw)) {
+        ranges.push({ from: offset, to: offset + token.raw.length })
+      }
+      if (['strong', 'em', 'del', 'link'].includes(token.type) && 'tokens' in token && token.tokens && 'text' in token) {
+        const start = token.raw.indexOf(token.text)
+        if (start >= 0) visit(token.tokens, offset + start)
+      }
+      offset += token.raw.length
+    }
+  }
+  visit(articleMarkdown.Lexer.lexInline(source, articleMarkdown.defaults), 0)
+  return ranges
+}
 
 export const MARKDOWN_CALLOUT_TYPES = [
   'note',

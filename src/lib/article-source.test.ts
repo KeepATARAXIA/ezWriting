@@ -8,6 +8,7 @@ import {
   sourceBlockIndexAtOffset,
   sourceLineForBlock,
   sourceLinesByBlock,
+  previewSourceBlocks,
   updateArticleFromSource,
 } from './article-source'
 
@@ -29,6 +30,12 @@ function article(overrides: Partial<ArticleDraft> = {}): ArticleDraft {
 }
 
 describe('article source', () => {
+  it('maps prose following an editorial comment to its original source block', () => {
+    const source = '<!-- 说明 -->缓一缓：**先解决问题。**\n\n下一段'
+    expect(previewSourceBlocks(source, 'markdown')).toEqual([
+      { blockIndex: 0, lines: [1] }, { blockIndex: 1, lines: [3] },
+    ])
+  })
   it('keeps Markdown as the canonical source and derives safe HTML', () => {
     const next = updateArticleFromSource(article(), '> [!warning] 先备份\n> 再接入同步')
     expect(resolveArticleSource(next)).toEqual({
@@ -99,6 +106,23 @@ describe('article source', () => {
 
     expect(sourceLinesByBlock(source, 'markdown')).toEqual([[1], [3, 4]])
     expect(sourceLineForBlock(source, 'markdown', 1)).toBe(3)
+  })
+
+  it('keeps original source identities after filtered HTML and multiple HTML siblings', () => {
+    const source = '开头\n\n<video controls>\n<source src="./demo.mp4">\n回退文字\n</video>\n\n<p>第一块</p>\n<p>第二块</p>\n\n## 后续标题\n\n- 第一项\n  第一项的续行\n- 第二项'
+    expect(previewSourceBlocks(source, 'markdown')).toEqual([
+      { blockIndex: 0, lines: [1] },
+      { blockIndex: 2, lines: [8] },
+      { blockIndex: 2, lines: [9] },
+      { blockIndex: 3, lines: [11] },
+      { blockIndex: 4, lines: [13, 15] },
+    ])
+  })
+
+  it('does not count link definitions as visible preview nodes', () => {
+    expect(previewSourceBlocks('[地址]: https://example.test\n\n正文\n\n结束', 'markdown')).toEqual([
+      { blockIndex: 1, lines: [3] }, { blockIndex: 2, lines: [5] },
+    ])
   })
 
   it('maps source lines without sending an embedded large video payload through the Markdown lexer', () => {

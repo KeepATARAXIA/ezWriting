@@ -1,4 +1,5 @@
 import type { WorkerEnv } from './types'
+import { handleAi } from './ai'
 
 const SECURITY_HEADERS = {
   'Content-Security-Policy': "base-uri 'self'; frame-ancestors 'none'; object-src 'none'",
@@ -24,6 +25,8 @@ function json(body: unknown, status = 200): Response {
 export default {
   async fetch(request: Request, env: WorkerEnv): Promise<Response> {
     const { pathname } = new URL(request.url)
+    if (pathname === '/api/ai/generate') return withSecurityHeaders(await handleAi(request))
+    if (pathname.startsWith('/api/ai/')) return json({ error: { code: 'not_found' } }, 404)
     if (request.method === 'GET' && pathname === '/health') {
       return json({ status: 'ok', storage: 'local-only' })
     }

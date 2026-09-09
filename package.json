@@ -17,7 +17,9 @@
     "node": ">=24.15.0"
   },
   "scripts": {
-    "dev": "vite",
+    "dev": "node scripts/dev.mjs",
+    "dev:frontend": "vite",
+    "codex:bridge": "vite build --config local-codex/vite.config.ts && node local-codex/dist/bridge.mjs",
     "build": "npm run typecheck && vite build",
     "preview": "vite preview",
     "test": "vitest run",

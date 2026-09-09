@@ -119,6 +119,12 @@ describe('sanitizeContentHtml', () => {
 })
 
 describe('renderMarkdownToSafeHtml', () => {
+  it('parses bold punctuation in prose immediately following an HTML comment', () => {
+    const html = renderMarkdownToSafeHtml('<!-- 编辑说明 -->先缓一缓：**先解决问题。**')
+    expect(html).toContain('<strong>先解决问题。</strong>')
+    expect(html).not.toContain('编辑说明')
+  })
+
   it('renders a single Markdown newline as a visible line break', () => {
     const html = renderMarkdownToSafeHtml('第一行\n第二行')
     const document = new DOMParser().parseFromString(html, 'text/html')
@@ -216,6 +222,10 @@ describe('renderMarkdownToSafeHtml', () => {
   })
 
   it.each([
+    ['先深呼吸缓一缓：**咱完全可以先用 AI 顺手解决一个你天天碰到的破事，再决定要不要彻底推倒重来换职业。**', '咱完全可以先用 AI 顺手解决一个你天天碰到的破事，再决定要不要彻底推倒重来换职业。'],
+    ['先深呼吸缓一缓：**咱完全可以先用 AI 顺手解决一个你天天碰到的破事，再决定要不要彻底推倒重来换职业。 **', '咱完全可以先用 AI 顺手解决一个你天天碰到的破事，再决定要不要彻底推倒重来换职业。'],
+    ['缓一缓：**先解决问题。**', '先解决问题。'],
+    ['缓一缓：**先解决问题。**再决定', '先解决问题。'],
     ['是**“整次请求”**都算', '“整次请求”'],
     ['是**（整次请求）**都算', '（整次请求）'],
     ['是**【整次请求】**都算', '【整次请求】'],

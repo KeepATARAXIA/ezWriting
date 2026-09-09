@@ -86,7 +86,7 @@ import {
   type WechatThemeId,
 } from '../lib/wechat-theme'
 import type { ArticleSourceLanguage, MissingImageAction, MissingImageTarget, PlatformAccount } from '../domain/article'
-import { sourceLinesByBlock } from '../lib/article-source'
+import { previewSourceBlocks, type PreviewSourceBlock } from '../lib/article-source'
 import { paragraphBreakTargets } from './preview-line-targets'
 import { applyPlatformCompatibilityToDocument, type PlatformContentTarget } from '../lib/platform-compatibility'
 import { prepareXhsImageLayout, type XhsPreparedImage } from '../lib/xhs-image-layout'
@@ -141,6 +141,7 @@ interface PlatformPreviewsProps {
   onPreviewDeviceChange: (device: PreviewDevice) => void
   locateRequest?: PreviewLocateRequest | null
   onEditTarget?: (target: PreviewEditTarget) => void
+  onScrollTarget?: (target: PreviewEditTarget) => void
   onMissingImageAction?: (target: MissingImageTarget, action: MissingImageAction) => void
 }
 
@@ -582,7 +583,7 @@ function makePreviewTarget(element: HTMLElement, blockIndex: number, line?: numb
 
 function mapPreviewBlocks(
   html: string,
-  sourceLines: number[][] = [],
+  sourceMap: PreviewSourceBlock[] = [],
   target: PlatformContentTarget = 'generic',
 ): { html: string; blockCount: number } {
   const document = parseHtml(html)
@@ -590,13 +591,16 @@ function mapPreviewBlocks(
   const themedContainer = document.body.querySelector<HTMLElement>(':scope > [data-wechat-theme]')
   const blocks = Array.from(themedContainer?.children ?? document.body.children) as HTMLElement[]
   let blockIndex = 0
+  let renderedIndex = 0
   blocks.forEach(element => {
     if (element.hasAttribute('data-source-spacer')) return
-    const index = blockIndex
-    blockIndex += 1
+    const source = sourceMap[renderedIndex]
+    const index = source?.blockIndex ?? renderedIndex
+    renderedIndex += 1
+    blockIndex = Math.max(blockIndex, index + 1)
     element.setAttribute('data-source-block', String(index))
     if (element.classList.contains('missing-image-card')) return
-    const lines = sourceLines[index] ?? []
+    const lines = source?.lines ?? []
     const targets = lines.length ? previewLineTargets(element, lines.length) : [element]
     targets.forEach((target, targetIndex) => {
       makePreviewTarget(target, index, lines[targetIndex] ?? lines[lines.length - 1])
@@ -727,7 +731,7 @@ const FORMATTING_SECTION_META: Array<{ value: FormattingSection; label: string }
 
 function FormattingPanel({
   idPrefix, label, openSections, onSectionToggle, formatting, onFormattingChange,
-  layoutContent, fontContent, colorControls, colorContent, outputContent,
+  layoutContent, fontContent, colorControls, outputContent,
 }: {
   idPrefix: string
   label: string
@@ -738,7 +742,6 @@ function FormattingPanel({
   layoutContent: ReactNode
   fontContent?: ReactNode
   colorControls?: ReactNode
-  colorContent?: ReactNode
   outputContent?: ReactNode
 }) {
   const contentBySection: Record<FormattingSection, ReactNode> = {
@@ -747,7 +750,6 @@ function FormattingPanel({
       {fontContent ?? <FontControls formatting={formatting} onChange={onFormattingChange} />}
       <SpacingControls formatting={formatting} onChange={onFormattingChange} />
       {colorControls ?? <AccentControls formatting={formatting} onChange={onFormattingChange} />}
-      {colorContent}
       {outputContent}
     </>,
   }
@@ -789,7 +791,7 @@ function FormattingPanel({
   )
 }
 
-export function PlatformPreviews({ toolbarTarget, activePlatform, title, html, sourceText, sourceLanguage, formatting, renderFormatting, onFormattingChange, xhsSettings: controlledXhsSettings, onXhsSettingsChange, previewAccount, previewDevice, isUpdating = false, onPreviewDeviceChange, locateRequest, onEditTarget, onMissingImageAction, onNotice }: PlatformPreviewsProps) {
+export function PlatformPreviews({ toolbarTarget, activePlatform, title, html, sourceText, sourceLanguage, formatting, renderFormatting, onFormattingChange, xhsSettings: controlledXhsSettings, onXhsSettingsChange, previewAccount, previewDevice, isUpdating = false, onPreviewDeviceChange, locateRequest, onEditTarget, onScrollTarget, onMissingImageAction, onNotice }: PlatformPreviewsProps) {
   const [wechatThemeDraft, setWechatThemeDraft] = useState<{ base: ArticleFormatting; value: ArticleFormatting } | null>(null)
   // Draft previews never enter autosave or publishing until explicitly applied.
   const pendingWechatFormatting = activePlatform === 'wechat' && wechatThemeDraft?.base === formatting ? wechatThemeDraft.value : null
@@ -838,7 +840,7 @@ export function PlatformPreviews({ toolbarTarget, activePlatform, title, html, s
   }, [xhsSettings.template])
 
   const sourceLineMap = useMemo(
-    () => sourceText ? sourceLinesByBlock(sourceText, sourceLanguage ?? 'markdown') : [],
+    () => sourceText ? previewSourceBlocks(sourceText, sourceLanguage ?? 'markdown') : [],
     [sourceLanguage, sourceText],
   )
   const playableHtml = useMemo(() => materializeLocalVideoHtml(html), [html])
@@ -932,6 +934,7 @@ export function PlatformPreviews({ toolbarTarget, activePlatform, title, html, s
   const exportCardRefs = useRef<Array<HTMLElement | null>>([])
   const scrollPositionsRef = useRef<Record<PreviewPlatform, number>>({ wechat: 0, xhs: 0, x: 0 })
   const handledLocateRequestRef = useRef(0)
+  const userScrollUntilRef = useRef(0)
   const pendingLocateRequestRef = useRef<PreviewLocateRequest | null>(null)
   const locatedTargetTimerRef = useRef<number | null>(null)
   const locatedTargetRef = useRef<HTMLElement | null>(null)
@@ -977,6 +980,7 @@ export function PlatformPreviews({ toolbarTarget, activePlatform, title, html, s
   }
 
   const centerPreviewTarget = (anchor: HTMLElement) => {
+    userScrollUntilRef.current = 0
     const viewport = viewportRef.current
     if (!viewport || !viewport.contains(anchor)) return
 
@@ -1575,7 +1579,11 @@ export function PlatformPreviews({ toolbarTarget, activePlatform, title, html, s
   }, [positionXhsImageSelection, renderedXhsImage])
 
   useLayoutEffect(() => {
-    if (!locateRequest || locateRequest.requestId === handledLocateRequestRef.current) return
+    if (!locateRequest) {
+      cancelEditorDrivenPreviewLocate()
+      return
+    }
+    if (locateRequest.requestId === handledLocateRequestRef.current) return
     if (locateRequest.blockIndex < 0 || locateRequest.blockIndex >= activePreviewBlockCount) return
 
     handledLocateRequestRef.current = locateRequest.requestId
@@ -1651,7 +1659,13 @@ export function PlatformPreviews({ toolbarTarget, activePlatform, title, html, s
         ? `[data-source-block="${effectiveTarget.blockIndex}"]`
         : `[data-source-block="${effectiveTarget.blockIndex}"][data-source-line="${effectiveTarget.line}"]`
       : `[data-edit-target="${effectiveTarget.kind}"]`
+    const precedingLine = effectiveTarget.kind === 'body' && effectiveTarget.line !== undefined
+      ? Array.from(stage.querySelectorAll<HTMLElement>(`[data-source-block="${effectiveTarget.blockIndex}"][data-source-line]`))
+        .filter(element => Number(element.dataset.sourceLine) <= effectiveTarget.line!)
+        .sort((left, right) => Number(right.dataset.sourceLine) - Number(left.dataset.sourceLine))[0]
+      : undefined
     const anchor = stage.querySelector<HTMLElement>(selector)
+      ?? precedingLine
       ?? (effectiveTarget.kind === 'body' && effectiveTarget.line !== undefined
         ? stage.querySelector<HTMLElement>(`[data-source-block="${effectiveTarget.blockIndex}"]`)
         : null)
@@ -1692,6 +1706,60 @@ export function PlatformPreviews({ toolbarTarget, activePlatform, title, html, s
     scrollPositionsRef.current[activePlatform] = event.currentTarget.scrollTop
     if (activePlatform === 'xhs' && xhsImagePopover) closeXhsImagePopover()
   }
+
+  useEffect(() => {
+    const viewport = viewportRef.current
+    if (!viewport || !onScrollTarget || isUpdating) return
+    let timer: number | null = null
+    const takeOver = () => {
+      userScrollUntilRef.current = Date.now() + 1200
+      cancelEditorDrivenPreviewLocate()
+    }
+    const pointerMove = (event: PointerEvent) => { if (event.buttons === 1) takeOver() }
+    const keyDown = (event: KeyboardEvent) => {
+      if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) takeOver()
+    }
+    const scroll = () => {
+      if (Date.now() > userScrollUntilRef.current) return
+      if (timer !== null) window.clearTimeout(timer)
+      timer = window.setTimeout(() => {
+        timer = null
+        if (!userScrollUntilRef.current) return
+        const bounds = viewport.getBoundingClientRect()
+        const center = bounds.top + viewport.clientHeight / 2
+        let closest: HTMLElement | null = null
+        let distance = Infinity
+        for (const element of viewport.querySelectorAll<HTMLElement>('[data-source-block]')) {
+          const rect = element.getBoundingClientRect()
+          if (!rect.height || rect.bottom <= bounds.top || rect.top >= bounds.bottom) continue
+          const nextDistance = Math.max(rect.top - center, center - rect.bottom, 0)
+          if (nextDistance <= distance) {
+            closest = element
+            distance = nextDistance
+          }
+        }
+        if (!closest) return
+        const blockIndex = Number(closest.dataset.sourceBlock)
+        const line = Number(closest.dataset.sourceLine)
+        if (Number.isInteger(blockIndex)) onScrollTarget({ kind: 'body', blockIndex, ...(line > 0 ? { line } : {}) })
+      }, 100)
+    }
+    viewport.addEventListener('wheel', takeOver, { passive: true })
+    viewport.addEventListener('touchmove', takeOver, { passive: true })
+    viewport.addEventListener('pointerdown', takeOver)
+    viewport.addEventListener('pointermove', pointerMove)
+    viewport.addEventListener('keydown', keyDown)
+    viewport.addEventListener('scroll', scroll, { passive: true })
+    return () => {
+      if (timer !== null) window.clearTimeout(timer)
+      viewport.removeEventListener('wheel', takeOver)
+      viewport.removeEventListener('touchmove', takeOver)
+      viewport.removeEventListener('pointerdown', takeOver)
+      viewport.removeEventListener('pointermove', pointerMove)
+      viewport.removeEventListener('keydown', keyDown)
+      viewport.removeEventListener('scroll', scroll)
+    }
+  }, [activePlatform, isUpdating, onScrollTarget])
 
   const selectTarget = (target: PreviewEditTarget) => {
     cancelEditorDrivenPreviewLocate()
@@ -2218,7 +2286,7 @@ export function PlatformPreviews({ toolbarTarget, activePlatform, title, html, s
                             className={`wechat-theme-card${wechatSettings.themeId === theme.id ? ' selected' : ''}`}
                             key={theme.id}
                             style={{
-                              '--theme-primary': theme.primary,
+                              '--theme-primary': wechatSettings.accentByTheme[theme.id] ?? theme.primary,
                               '--theme-surface': theme.surface,
                             } as CSSProperties}
                           >
@@ -2235,23 +2303,26 @@ export function PlatformPreviews({ toolbarTarget, activePlatform, title, html, s
                               <strong>{theme.name}</strong>
                               {wechatSettings.themeId === theme.id && <span className="wechat-theme-check"><Check size={14} aria-hidden="true" /></span>}
                             </footer>
+                            {wechatSettings.themeId === theme.id && (
+                              <div className="theme-card-colors">
+                                <AccentControls formatting={wechatControlFormatting} selectedColor={wechatSettings.accentByTheme[wechatSettings.themeId] ?? activeWechatTheme.primary} onChange={next => changeWechatFormatting({
+                                  ...next,
+                                  wechat: { ...wechatSettings, accentByTheme: { ...wechatSettings.accentByTheme, [wechatSettings.themeId]: ARTICLE_ACCENT_COLORS[next.accent] } },
+                                })} />
+                                <section className="wechat-theme-settings" aria-label={`${activeWechatTheme.name} 配色`}>
+                                  <div className="wechat-theme-setting-title"><span><strong>{activeWechatTheme.name}</strong><small>{activeWechatTheme.description}</small></span><button type="button" onClick={resetWechatThemeColors}>重置配色</button></div>
+                                  {activeWechatSlots.map(slot => (
+                                    <label key={slot.key}><span>{slot.label}</span><input type="color" value={wechatSettings.slotColorsByTheme[wechatSettings.themeId]?.[slot.key] ?? slot.base} onChange={event => updateWechatSlot(slot.key, event.target.value)} /></label>
+                                  ))}
+                                </section>
+                              </div>
+                            )}
                           </article>
                         ))}
                       </div>
                     </section>
                   )}
-                  colorControls={<AccentControls formatting={wechatControlFormatting} selectedColor={wechatSettings.accentByTheme[wechatSettings.themeId] ?? activeWechatTheme.primary} onChange={next => changeWechatFormatting({
-                    ...next,
-                    wechat: { ...wechatSettings, accentByTheme: { ...wechatSettings.accentByTheme, [wechatSettings.themeId]: ARTICLE_ACCENT_COLORS[next.accent] } },
-                  })} />}
-                  colorContent={(
-                    <section className="wechat-theme-settings" aria-label={`${activeWechatTheme.name} 配色`}>
-                      <div className="wechat-theme-setting-title"><span><strong>{activeWechatTheme.name}</strong><small>{activeWechatTheme.description}</small></span><button type="button" onClick={resetWechatThemeColors}>重置配色</button></div>
-                      {activeWechatSlots.map(slot => (
-                        <label key={slot.key}><span>{slot.label}</span><input type="color" value={wechatSettings.slotColorsByTheme[wechatSettings.themeId]?.[slot.key] ?? slot.base} onChange={event => updateWechatSlot(slot.key, event.target.value)} /></label>
-                      ))}
-                    </section>
-                  )}
+                  colorControls={false}
                 />
                 <footer className="wechat-theme-actions">
                   <div role="status" aria-live="polite">
@@ -2411,7 +2482,7 @@ export function PlatformPreviews({ toolbarTarget, activePlatform, title, html, s
                   formatting={formatting}
                   onFormattingChange={onFormattingChange}
                   fontContent={<XhsFontControls formatting={formatting} settings={xhsSettings} onFormattingChange={onFormattingChange} onFontModeChange={applyXhsFontMode} />}
-                  colorControls={<XhsPaletteControls template={xhsSettings.template} paletteId={xhsSettings.paletteId} onChange={applyXhsPalette} />}
+                  colorControls={false}
                   layoutContent={(
                     <section className="xhs-template-tools" aria-label="小红书视觉模板">
                       <div className="xhs-template-category-nav" role="tablist" aria-label="选择模板分类">
@@ -2459,6 +2530,11 @@ export function PlatformPreviews({ toolbarTarget, activePlatform, title, html, s
                                 <strong id={`xhs-template-${option.value}`}>{option.label}</strong>
                                 {xhsSettings.template === option.value && <Check size={13} aria-hidden="true" />}
                               </footer>
+                              {xhsSettings.template === option.value && (
+                                <div className="theme-card-colors">
+                                  <XhsPaletteControls template={option.value} paletteId={xhsSettings.paletteId} onChange={applyXhsPalette} />
+                                </div>
+                              )}
                             </section>
                           ))}
                         </div>

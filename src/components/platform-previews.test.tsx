@@ -447,6 +447,11 @@ describe('PlatformPreviews editor-to-preview locating', () => {
     await act(async () => render())
     await click('.preview-settings-toggle')
     await click('button[aria-label^="预览克莱因蓝主题"]')
+    expect(container.querySelectorAll('.wechat-theme-card.selected [aria-label="选择文章强调色"]')).toHaveLength(1)
+    expect(container.querySelector('#wechat-settings-style-panel [aria-label="选择文章强调色"]')).toBeNull()
+    await click('.wechat-theme-card.selected [aria-label="orange"]')
+    expect(container.querySelector('.wechat-theme-card.selected [aria-label="orange"]')?.getAttribute('aria-checked')).toBe('true')
+    expect(onFormattingChange).not.toHaveBeenCalled()
     await click('#wechat-settings-style-trigger')
     await click('[aria-label="选择文章字号"] button:last-child')
     expect(onFormattingChange).not.toHaveBeenCalled()
@@ -704,7 +709,7 @@ describe('PlatformPreviews editor-to-preview locating', () => {
         .map(label => label.textContent)
       expect(container.querySelector('.xhs-template-category-description')).toBeNull()
       expect(templateLabels).toEqual(expectedTemplates)
-      expect(container.querySelectorAll('.xhs-template-gallery [role="radio"]')).toHaveLength(4)
+      expect(container.querySelectorAll('.xhs-template-gallery .xhs-template-select-target')).toHaveLength(4)
       expect(container.querySelectorAll('.xhs-template-gallery .xhs-template-graphic')).toHaveLength(4)
       expect(container.querySelectorAll('.xhs-template-gallery .xhs-template-graphic-panel')).toHaveLength(12)
       expect(container.querySelectorAll('.xhs-template-gallery [data-preview-part="cover"]')).toHaveLength(4)
@@ -716,7 +721,7 @@ describe('PlatformPreviews editor-to-preview locating', () => {
       expect(container.querySelector('.xhs-template-gallery .xhs-template-preview-image')).toBeNull()
     }
     await act(async () => categoryTabs.find(tab => tab.textContent?.startsWith('信息'))?.click())
-    expect(container.querySelectorAll('.xhs-template-gallery [role="radio"][aria-checked="true"]')).toHaveLength(1)
+    expect(container.querySelectorAll('.xhs-template-gallery .xhs-template-select-target[aria-checked="true"]')).toHaveLength(1)
     expect(container.querySelector('#xhs-settings-layout-panel [aria-label="选择文章版式"]')).toBeNull()
 
     const xhsLayoutTrigger = container.querySelector<HTMLButtonElement>('#xhs-settings-layout-trigger')!
@@ -782,8 +787,8 @@ describe('PlatformPreviews editor-to-preview locating', () => {
     expect(wechatColorTrigger.getAttribute('aria-selected')).toBe('true')
     expect(container.querySelector(`#${wechatColorPanelId}`)?.getAttribute('role')).toBe('tabpanel')
     expect(container.querySelector(`#${wechatColorPanelId}`)?.getAttribute('aria-labelledby')).toBe(wechatColorTrigger.id)
-    expect(container.querySelector('#wechat-settings-style-panel')?.textContent).toContain('重置配色')
-    expect(container.querySelectorAll('#wechat-settings-style-panel input[type="color"]').length).toBeGreaterThan(0)
+    expect(container.querySelector('#wechat-settings-style-panel')?.textContent).not.toContain('重置配色')
+    expect(container.querySelectorAll('#wechat-settings-style-panel input[type="color"]')).toHaveLength(0)
 
     await renderPlatform('xhs')
     expect(container.querySelector('#xhs-settings-layout-trigger')?.getAttribute('aria-selected')).toBe('true')
@@ -1020,7 +1025,7 @@ describe('PlatformPreviews editor-to-preview locating', () => {
 
     await act(async () => container.querySelector<HTMLButtonElement>('#xhs-settings-style-trigger')?.click())
     expect(container.querySelectorAll('[aria-label="选择小红书模板色板"]')).toHaveLength(1)
-    const bluePalette = container.querySelector<HTMLButtonElement>('#xhs-settings-style-panel [aria-label="蓝标黑色板"]')!
+    const bluePalette = container.querySelector<HTMLButtonElement>('.xhs-template-showcase.selected [aria-label="蓝标黑色板"]')!
     await act(async () => bluePalette.click())
     expect(onXhsSettingsChange).toHaveBeenLastCalledWith({ ...memoSettings, paletteId: 'blue-note' })
 

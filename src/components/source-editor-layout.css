@@ -104,6 +104,57 @@
   pointer-events: none;
 }
 
+.source-editor-host .cm-line.cm-md-syntax-line {
+  min-height: 0;
+  height: 0;
+  padding-block: 0;
+  font-size: 0;
+  line-height: 0;
+}
+
+.source-editor-host .cm-line.cm-md-table-row {
+  padding: 0;
+  white-space: normal;
+  border-bottom: 1px solid #e1e6eb;
+  background: #fff;
+}
+
+.source-editor-host .cm-line.cm-md-table-header {
+  background: #f5f7fa;
+  font-weight: 750;
+}
+
+.source-editor-host .cm-md-table-cell {
+  box-sizing: border-box;
+  display: inline-block;
+  vertical-align: top;
+  min-height: 2.6em;
+  padding: 0.35em 0.65em;
+  border-right: 1px solid #e1e6eb;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.source-editor-host .cm-md-html-media img,
+.source-editor-host .cm-md-html-media video { max-width: 100%; }
+.source-editor-host .cm-md-line-break { display: block; }
+.source-editor-host .cm-md-subscript { vertical-align: sub; font-size: 0.8em; }
+.source-editor-host .cm-md-superscript { vertical-align: super; font-size: 0.8em; }
+.source-editor-host .cm-md-underline { text-decoration: underline; }
+.source-editor-host .cm-md-callout-marker { margin-right: 0.5em; color: #1648ff; }
+.source-editor-host .cm-md-html-paragraph { display: block; margin-block: 0.5em; }
+.source-editor-host .cm-md-html-quote { display: block; padding: 0.5em 1em; background: #f5f7fa; }
+.source-editor-host .cm-md-html-pre { display: block; padding: 0.75em; background: #f5f7fa; }
+.source-editor-host .cm-md-html-table-row { display: block; border-bottom: 1px solid #e1e6eb; }
+
+/* Source token colors and heading underlines must not override rendered text. */
+.markdown-presentation .cm-line span:not([class*="cm-"]):not([class*="source-"]) {
+  color: inherit;
+  font-weight: inherit;
+  font-style: inherit;
+  text-decoration: inherit;
+}
+
 .source-editor-statusbar {
   box-sizing: border-box;
   min-width: 0;
@@ -164,6 +215,18 @@
 .source-syntax-toggle {
   height: 28px;
   background: #fff;
+}
+
+.source-scroll-actions {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 2px;
+}
+
+.source-scroll-actions .source-tool {
+  width: 28px;
+  height: 28px;
 }
 
 .source-editor-host .cm-line:has(> .source-image-widget.block) {

@@ -1,4 +1,4 @@
-import { marked, type Token } from 'marked'
+import { marked, type Token, type Tokens } from 'marked'
 import type { ArticleDraft, ArticleSourceLanguage } from '../domain/article'
 import { renderMarkdownToSafeHtml, sanitizeContentHtml, sanitizeInternalContentHtml } from './markdown-compatibility'
 
@@ -308,6 +308,67 @@ export function sourceLinesByBlock(text: string, language: ArticleSourceLanguage
 
 export function sourceLinesForBlock(text: string, language: ArticleSourceLanguage, blockIndex: number): number[] {
   return sourceLinesByBlock(text, language)[blockIndex] ?? []
+}
+
+export interface PreviewSourceBlock {
+  blockIndex: number
+  lines: number[]
+}
+
+// Preview nodes are not one-to-one with lexer tokens: HTML may render several
+// siblings, definitions render nothing, and unsafe/unsupported media is removed.
+// Keep the original block identity while counting only actual rendered nodes.
+export function previewSourceBlocks(text: string, language: ArticleSourceLanguage): PreviewSourceBlock[] {
+  const analysis = compactEmbeddedMediaDataForAnalysis(text)
+  const result: PreviewSourceBlock[] = []
+  const footnotes: PreviewSourceBlock[] = []
+  sourceBlocks(analysis, language).forEach((block, blockIndex) => {
+    const raw = analysis.slice(block.from, block.to)
+    const lines = sourceLineNumbers(analysis, block)
+    if (language === 'markdown' && /^ {0,3}\[\^[^\]]+\]:/.test(raw)) {
+      footnotes.push({ blockIndex, lines })
+      return
+    }
+    const token = language === 'markdown' ? marked.lexer(raw, { gfm: true })[0] : undefined
+    if (token?.type === 'def') return
+    if (token?.type === 'code' && /^ {0,3}(?:`{3,}|~{3,})/.test(raw)) {
+      result.push({ blockIndex, lines: [block.line + 1] })
+      return
+    }
+    if (token?.type === 'list') {
+      let offset = 0
+      const itemLines = token.items.map((item: Tokens.ListItem) => {
+        const position = raw.indexOf(item.raw, offset)
+        if (position >= 0) offset = position + item.raw.length
+        return block.line + lineAtOffset(raw, Math.max(0, position)) - 1
+      })
+      result.push({ blockIndex, lines: itemLines })
+      return
+    }
+    if (language === 'html' || token?.type === 'html') {
+      if (language === 'markdown' && /^ {0,3}<!--[\s\S]*?-->[^\S\n]*[^\s<]/.test(raw)) {
+        const rendered = new DOMParser().parseFromString(renderArticleSource(raw, language), 'text/html')
+        for (const element of rendered.body.children) {
+          if (!element.hasAttribute('data-source-spacer')) result.push({ blockIndex, lines })
+        }
+        return
+      }
+      // Restore tiny valid stand-ins only for counting embedded media; never
+      // parse a multi-megabyte data URI or change the actual saved source.
+      const html = raw.replaceAll('data:video/embedded', 'data:video/mp4;base64,AA==')
+        .replaceAll('data:image/embedded', 'data:image/png;base64,AA==')
+      for (const child of htmlBlocks(html)) {
+        const safe = new DOMParser().parseFromString(renderArticleSource(html.slice(child.from, child.to), 'html'), 'text/html')
+        for (const element of safe.body.children) {
+          if (element.hasAttribute('data-source-spacer')) continue
+          result.push({ blockIndex, lines: sourceLineNumbers(html, child).map(line => block.line + line - 1) })
+        }
+      }
+      return
+    }
+    result.push({ blockIndex, lines })
+  })
+  return [...result, ...footnotes]
 }
 
 export function sourceBlockIndexAtOffset(text: string, language: ArticleSourceLanguage, offset: number): number | null {

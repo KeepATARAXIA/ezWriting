@@ -92,8 +92,6 @@ describe('App local draft history', () => {
     expect(container.querySelector('.topbar-document-title')?.textContent).toBe('本地历史测试稿')
     expect(container.querySelector('.history-draft-title')?.textContent).toBe('本地历史测试稿')
 
-    const menuButton = container.querySelector<HTMLButtonElement>('.history-draft-menu-button')!
-    await act(async () => menuButton.click())
     const deleteButton = container.querySelector<HTMLButtonElement>('.history-delete-action')!
     await act(async () => {
       deleteButton.click()
@@ -262,7 +260,6 @@ describe('App local draft history', () => {
       editWorkbenchTitle(container, '删除前最后一版')
     })
 
-    await act(async () => container.querySelector<HTMLButtonElement>('.history-draft-menu-button')?.click())
     await act(async () => {
       container.querySelector<HTMLButtonElement>('.history-delete-action')?.click()
       await new Promise(resolve => window.setTimeout(resolve, 50))

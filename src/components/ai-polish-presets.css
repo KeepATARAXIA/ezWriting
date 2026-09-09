@@ -1,0 +1,32 @@
+.ai-preset-settings { margin: 0 0 16px; border-block: 1px solid #e8ebf0; padding: 12px 0; }
+.ai-preset-settings > summary { cursor: pointer; font-size: 13px; color: #26324a; }
+.ai-preset-settings > summary span { margin-left: 8px; color: #788398; font-size: 12px; }
+.ai-preset-settings fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.ai-preset-hint { color: #788398; font-size: 12px; line-height: 1.7; margin: 10px 0; }
+.ai-preset-row { padding: 9px 12px; margin: 6px 0; border-radius: 8px; background: #f7f8fa; }
+.ai-preset-controls { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.ai-connections .ai-preset-choice { display: flex; align-items: center; gap: 8px; min-width: 0; color: #3c4961; font-size: 13px; overflow-wrap: anywhere; }
+.ai-connections .ai-preset-choice input { width: 15px; height: 15px; flex-shrink: 0; margin: 0; accent-color: #1648ff; }
+.ai-connections .ai-preset-strength { display: flex; flex-shrink: 0; align-items: center; gap: 10px; }
+.ai-connections .ai-preset-strength input { width: 120px; height: 20px; margin: 0; padding: 0; accent-color: #1648ff; cursor: pointer; }
+.ai-preset-strength output { min-width: 36px; text-align: right; color: #1648ff; font-size: 12px; font-variant-numeric: tabular-nums; }
+.ai-preset-edit { margin-top: 5px; font-size: 12px; color: #788398; }
+.ai-preset-edit summary { cursor: pointer; width: fit-content; }
+.ai-connections .ai-preset-edit label { display: grid; gap: 5px; margin-top: 10px; font-size: 12px; }
+.ai-connections .ai-preset-edit input, .ai-connections .ai-preset-edit textarea { width: 100%; box-sizing: border-box; font-size: 13px; line-height: 1.6; }
+.ai-preset-edit textarea { resize: vertical; min-height: 84px; }
+.ai-preset-edit-footer, .ai-preset-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: #788398; font-size: 11px; }
+.ai-preset-footer { margin-top: 8px; }
+.ai-connections .ai-preset-footer button, .ai-connections .ai-preset-edit-footer button { padding: 4px 0; min-height: 28px; font-size: 12px; }
+@media (max-width: 480px) {
+  .ai-preset-controls { flex-wrap: wrap; gap: 6px; }
+  .ai-connections .ai-preset-strength { width: 100%; }
+  .ai-connections .ai-preset-strength input { flex: 1; min-width: 0; }
+  .ai-preset-footer, .ai-preset-edit-footer { flex-wrap: wrap; gap: 2px; }
+}
+
+.ai-preset-manager .ai-preset-controls { flex-wrap: wrap; gap: 6px; }
+.ai-preset-manager .ai-preset-strength { width: 100%; }
+.ai-preset-manager .ai-preset-strength input { flex: 1; min-width: 0; }
+.ai-preset-manager .ai-preset-footer, .ai-preset-manager .ai-preset-edit-footer { flex-wrap: wrap; gap: 4px; }
+.ai-preset-manager summary:focus-visible { outline: 2px solid #1648ff; outline-offset: 3px; }

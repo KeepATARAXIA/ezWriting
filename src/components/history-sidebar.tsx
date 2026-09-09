@@ -1,22 +1,18 @@
 import {
-  useEffect,
   useMemo,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
 } from 'react'
 import {
-  CheckCircle2,
   FileText,
   HardDrive,
   History,
-  Image as ImageIcon,
   LoaderCircle,
-  MoreHorizontal,
   PanelLeftClose,
   Trash2,
 } from 'lucide-react'
-import type { DraftKind, DraftSummary } from '../domain/saved-draft'
+import type { DraftSummary } from '../domain/saved-draft'
 
 export type HistorySaveStatus = 'idle' | 'dirty' | 'saving' | 'saved' | 'error'
 
@@ -27,7 +23,6 @@ export interface HistorySidebarProps {
   isExpanded: boolean
   onToggleExpanded: () => void
   onSelectDraft: (id: string) => void
-  onChangeKind: (id: string, kind: DraftKind) => void
   onDeleteDraft: (id: string) => void
   interactionLocked?: boolean
   now?: Date
@@ -42,11 +37,6 @@ const HISTORY_GROUPS: Array<{ key: HistoryGroupKey; label: string }> = [
   { key: 'recent', label: '近 7 天' },
   { key: 'older', label: '更早' },
 ]
-
-const KIND_LABELS: Record<DraftKind, string> = {
-  image: '图文',
-  longform: '长文',
-}
 
 function startOfLocalDay(value: Date): Date {
   const date = new Date(value)
@@ -114,12 +104,6 @@ function displayTitle(title: string): string {
   return title.trim() || '未命名稿件'
 }
 
-function KindIcon({ kind }: { kind: DraftKind }) {
-  return kind === 'image'
-    ? <ImageIcon size={13} aria-hidden="true" />
-    : <FileText size={13} aria-hidden="true" />
-}
-
 export function HistorySidebar({
   drafts,
   activeDraftId = null,
@@ -127,16 +111,12 @@ export function HistorySidebar({
   isExpanded,
   onToggleExpanded,
   onSelectDraft,
-  onChangeKind,
   onDeleteDraft,
   interactionLocked = false,
   now = new Date(),
   className = '',
 }: HistorySidebarProps) {
-  const [openMenuId, setOpenMenuId] = useState<string | null>(null)
   const [query, setQuery] = useState('')
-  const menuButtonRefs = useRef(new Map<string, HTMLButtonElement>())
-  const menuRefs = useRef(new Map<string, HTMLDivElement>())
   const draftButtonRefs = useRef(new Map<string, HTMLButtonElement>())
 
   const visibleDrafts = useMemo(() => drafts
@@ -154,38 +134,6 @@ export function HistorySidebar({
     return groups
   }, [now, visibleDrafts])
 
-  useEffect(() => {
-    if (!isExpanded) {
-      setOpenMenuId(null)
-    }
-  }, [isExpanded])
-
-  useEffect(() => {
-    if (interactionLocked) setOpenMenuId(null)
-  }, [interactionLocked])
-
-  useEffect(() => {
-    if (!openMenuId) return
-    const menu = menuRefs.current.get(openMenuId)
-    menu?.querySelector<HTMLButtonElement>('[role^="menuitem"]')?.focus()
-
-    const closeOnOutsidePointer = (event: MouseEvent) => {
-      const target = event.target
-      const button = menuButtonRefs.current.get(openMenuId)
-      if (!(target instanceof Node) || menu?.contains(target) || button?.contains(target)) return
-      setOpenMenuId(null)
-    }
-
-    document.addEventListener('mousedown', closeOnOutsidePointer)
-    return () => document.removeEventListener('mousedown', closeOnOutsidePointer)
-  }, [openMenuId])
-
-  const closeMenu = (restoreFocus = false) => {
-    const currentMenuId = openMenuId
-    if (restoreFocus && currentMenuId) menuButtonRefs.current.get(currentMenuId)?.focus()
-    setOpenMenuId(null)
-  }
-
   const handleDraftKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>, draftId: string) => {
     if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return
     event.preventDefault()
@@ -196,25 +144,6 @@ export function HistorySidebar({
     if (event.key === 'ArrowUp') targetIndex = Math.max(0, currentIndex - 1)
     if (event.key === 'ArrowDown') targetIndex = Math.min(visibleDrafts.length - 1, currentIndex + 1)
     draftButtonRefs.current.get(visibleDrafts[targetIndex]?.id)?.focus()
-  }
-
-  const handleMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (!['ArrowUp', 'ArrowDown', 'Home', 'End', 'Escape'].includes(event.key)) return
-    event.preventDefault()
-    if (event.key === 'Escape') {
-      closeMenu(true)
-      return
-    }
-
-    const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role^="menuitem"]:not(:disabled)'))
-    if (items.length === 0) return
-    const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement)
-    let targetIndex = currentIndex
-    if (event.key === 'Home') targetIndex = 0
-    if (event.key === 'End') targetIndex = items.length - 1
-    if (event.key === 'ArrowDown') targetIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % items.length
-    if (event.key === 'ArrowUp') targetIndex = currentIndex < 0 ? items.length - 1 : (currentIndex - 1 + items.length) % items.length
-    items[targetIndex]?.focus()
   }
 
   const rootClassName = ['history-sidebar', isExpanded ? 'expanded' : 'collapsed', className].filter(Boolean).join(' ')
@@ -277,15 +206,13 @@ export function HistorySidebar({
                         saved: '已保存',
                         error: '保存失败',
                       }[saveState]
-                      const isMenuOpen = draft.id === openMenuId
-                      const menuId = `history-draft-menu-${draft.id}`
                       return (
                         <li className={`history-draft-item ${isActive ? 'selected' : ''}`} key={draft.id}>
                           <button
                             type="button"
                             className="history-draft-open"
                             aria-current={isActive ? 'page' : undefined}
-                            aria-label={`打开稿件“${title}”，${KIND_LABELS[draft.kind]}，${saveLabel}`}
+                            aria-label={`打开稿件“${title}”，${saveLabel}`}
                             ref={element => {
                               if (element) draftButtonRefs.current.set(draft.id, element)
                               else draftButtonRefs.current.delete(draft.id)
@@ -296,8 +223,7 @@ export function HistorySidebar({
                           >
                             <span className="history-draft-title">{title}</span>
                             <span className="history-draft-meta" aria-hidden="true">
-                              <span className="history-draft-kind"><KindIcon kind={draft.kind} />{KIND_LABELS[draft.kind]}</span>
-                              <span aria-hidden="true">·</span>
+                              <FileText size={13} />
                               <time dateTime={draft.updatedAt} title={absoluteTime(draft.updatedAt)}>{relativeTime(draft.updatedAt, now)}</time>
                             </span>
                             <span className={`history-sync-state local ${saveState}`} title={saveState === 'saved' ? '已保存到本机' : saveLabel}>
@@ -308,75 +234,14 @@ export function HistorySidebar({
 
                           <button
                             type="button"
-                            className="history-draft-menu-button"
-                            aria-label={`管理稿件“${title}”`}
-                            aria-haspopup="menu"
-                            aria-expanded={isMenuOpen}
-                            aria-controls={isMenuOpen ? menuId : undefined}
-                            ref={element => {
-                              if (element) menuButtonRefs.current.set(draft.id, element)
-                              else menuButtonRefs.current.delete(draft.id)
-                            }}
+                            className="history-draft-menu-button history-delete-action"
+                            aria-label={`删除稿件“${title}”`}
+                            title="删除稿件（可撤销）"
                             disabled={interactionLocked}
-                            onClick={() => setOpenMenuId(current => current === draft.id ? null : draft.id)}
+                            onClick={() => onDeleteDraft(draft.id)}
                           >
-                            <MoreHorizontal size={16} aria-hidden="true" />
+                            <Trash2 size={16} aria-hidden="true" />
                           </button>
-
-                          {isMenuOpen && (
-                            <div
-                              id={menuId}
-                              className="history-draft-menu"
-                              role="menu"
-                              aria-label={`稿件“${title}”操作`}
-                              ref={element => {
-                                if (element) menuRefs.current.set(draft.id, element)
-                                else menuRefs.current.delete(draft.id)
-                              }}
-                              onKeyDown={handleMenuKeyDown}
-                            >
-                              <p>主要类型</p>
-                              <button
-                                type="button"
-                                role="menuitemradio"
-                                aria-checked={draft.kind === 'image'}
-                                disabled={interactionLocked}
-                                onClick={() => {
-                                  if (draft.kind !== 'image') onChangeKind(draft.id, 'image')
-                                  closeMenu()
-                                }}
-                              >
-                                <ImageIcon size={14} aria-hidden="true" /> 图文
-                                {draft.kind === 'image' && <CheckCircle2 size={13} aria-hidden="true" />}
-                              </button>
-                              <button
-                                type="button"
-                                role="menuitemradio"
-                                aria-checked={draft.kind === 'longform'}
-                                disabled={interactionLocked}
-                                onClick={() => {
-                                  if (draft.kind !== 'longform') onChangeKind(draft.id, 'longform')
-                                  closeMenu()
-                                }}
-                              >
-                                <FileText size={14} aria-hidden="true" /> 长文
-                                {draft.kind === 'longform' && <CheckCircle2 size={13} aria-hidden="true" />}
-                              </button>
-                              <span className="history-menu-divider" role="separator" />
-                              <button
-                                type="button"
-                                role="menuitem"
-                                className="history-delete-action"
-                                disabled={interactionLocked}
-                                onClick={() => {
-                                  onDeleteDraft(draft.id)
-                                  closeMenu()
-                                }}
-                              >
-                                <Trash2 size={14} aria-hidden="true" /> 删除
-                              </button>
-                            </div>
-                          )}
                         </li>
                       )
                     })}

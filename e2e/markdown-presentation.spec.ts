@@ -1,0 +1,76 @@
+import { expect, test } from '@playwright/test'
+
+const source = '# 可视化编辑验收\n\n## 保留标题\n\n**加粗文字**与[链接文字](https://example.com)\n\n<mark>高亮文字</mark>\n\n> 引用正文\n\n| 项目 | 说明 |\n| --- | --- |\n| 第一项 | **单元格** |\n\n<video controls preload="metadata">\n<source src="./media/demo.mp4" type="video/mp4">\n当前编辑器不支持视频预览。\n</video>\n\n[打开本地视频](./media/demo.mp4)\n\n最后一段'
+
+test('edits rendered Markdown while preserving source, HTML filtering, tables and history', async ({ page }, info) => {
+  const errors: string[] = []
+  page.on('pageerror', error => errors.push(error.message))
+  await page.goto('/')
+  await page.locator('input[accept*=".md"]').setInputFiles({ name: 'rendered.md', mimeType: 'text/markdown', buffer: Buffer.from(source) })
+  const editor = page.locator('.cm-content')
+  await expect(editor).toContainText('加粗文字与链接文字')
+  await expect(editor).not.toContainText('**')
+  await expect(editor).not.toContainText('<video')
+  await expect(editor).not.toContainText('<source')
+  await expect(editor).not.toContainText('当前编辑器不支持视频预览')
+  await expect(editor).not.toContainText('|')
+  await expect(editor.locator('.cm-md-table-row')).toHaveCount(2)
+  expect(await editor.locator('.cm-md-strong').first().evaluate(node => Number(getComputedStyle(node).fontWeight))).toBeGreaterThanOrEqual(700)
+
+  // A click in bold text must keep it rendered, including while selecting it.
+  await editor.locator('.cm-md-strong').filter({ hasText: '加粗文字' }).dblclick()
+  await expect(editor).not.toContainText('**')
+  await page.keyboard.press('ArrowLeft')
+  await page.keyboard.insertText('新的')
+  await expect(editor).toContainText('新的')
+  await page.keyboard.press('Control+z')
+  await expect(editor).not.toContainText('新的')
+  await page.keyboard.press('Control+Shift+z')
+  await expect(editor).toContainText('新的')
+  await expect(editor).not.toContainText('**')
+
+  await page.getByRole('button', { name: '显示 Markdown 语法', exact: true }).click()
+  await expect(editor).toContainText('<video controls preload="metadata">')
+  await expect(editor).toContainText('https://example.com')
+  await page.getByRole('button', { name: '隐藏 Markdown 语法', exact: true }).click()
+  await expect(editor).not.toContainText('<video')
+  await page.screenshot({ path: info.outputPath('rendered-editor.png'), animations: 'disabled' })
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  expect(errors).toEqual([])
+})
+
+test('keeps formatting through boundary deletion, Chinese composition and text replacement', async ({ page }, info) => {
+  await page.goto('/')
+  await page.locator('input[accept*=".md"]').setInputFiles({ name: 'typing.md', mimeType: 'text/markdown', buffer: Buffer.from('# 输入验收\n\n**中文加粗**\n\n## 小标题\n\n结束') })
+  const editor = page.locator('.cm-content')
+  const bold = editor.locator('.cm-md-strong').first()
+  await bold.click()
+  await page.keyboard.press('End')
+  await page.keyboard.press('Backspace')
+  await expect(bold).toHaveText('中文加')
+  await expect(editor).not.toContainText('**')
+
+  // Use Chromium's IME path, rather than dispatching synthetic input events.
+  await bold.click()
+  await page.keyboard.press('Home')
+  await page.keyboard.press('ArrowRight')
+  const cdp = await page.context().newCDPSession(page)
+  await cdp.send('Input.imeSetComposition', { text: 'xian', selectionStart: 4, selectionEnd: 4 })
+  await expect(editor).not.toContainText('**')
+  await cdp.send('Input.insertText', { text: '现实' })
+  await expect(bold).toContainText('现实')
+  await expect(editor).not.toContainText('xian')
+
+  await page.getByRole('button', { name: '显示 Markdown 语法', exact: true }).click()
+  await expect(editor).toContainText(/\*\*[^*]*现实[^*]*\*\*/)
+  await expect(editor).toContainText('## 小标题')
+  await page.getByRole('button', { name: '隐藏 Markdown 语法', exact: true }).click()
+  const heading = editor.locator('.cm-md-heading-2.cm-md-heading-text')
+  await heading.click()
+  await page.keyboard.press('Home')
+  await page.keyboard.press('Backspace')
+  await expect(heading).toHaveText('小标题')
+  await expect(editor).not.toContainText('##')
+  await page.screenshot({ path: info.outputPath('typing-editor.png'), animations: 'disabled' })
+})
