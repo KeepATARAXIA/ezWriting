@@ -197,9 +197,9 @@
   .workbench-toolbar.mobile-workspace-preview .workbar-document-tools { width: 100%; height: 50px; justify-content: space-between; }
   .workbench-toolbar.mobile-workspace-preview .workbar-preview-tools { width: 100%; min-width: 0; height: 50px; overflow-x: auto; scrollbar-width: none; }
   .workbench-toolbar.mobile-workspace-preview .preview-context-actions { justify-content: flex-start; }
-  .workbench-rail-actions, .workbench-rail-utilities { display: flex; flex: none; gap: 0; justify-content: space-around; }
-  .workbench-rail { justify-content: flex-start; padding-inline: 2px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
-  .workbench-rail .rail-action { width: 44px; height: 56px; font-size: 10px; gap: 5px; }
+  .workbench-rail-actions, .workbench-rail-utilities { display: contents; }
+  .workbench-rail { justify-content: flex-start; padding-inline: 2px; overflow-x: hidden; overflow-y: hidden; }
+  .workbench-rail .rail-action { min-width: 0; width: auto; flex: 1 1 0; height: 56px; font-size: 10px; gap: 5px; }
   .workbench-rail .rail-count { font-size: 8px; }
   .notification-panel { bottom: calc(80px + env(safe-area-inset-bottom)); left: 12px; width: calc(100vw - 24px); max-height: calc(100dvh - 156px); }
   .workbench-help { right: 16px; bottom: calc(82px + env(safe-area-inset-bottom)); }

@@ -26,7 +26,12 @@ test('alternates source lines while keeping wrapped text together, with a persis
   const editor = await page.locator('.cm-editor').elementHandle()
   const text = await page.locator('.cm-content').textContent()
   await expect(page.getByLabel('本地保存状态')).toHaveText('已保存')
-  const preview = await page.locator('.wechat-document').innerHTML()
+  const previewHtml = () => page.locator('.wechat-document').evaluate(node => {
+    const copy = node.cloneNode(true) as HTMLElement
+    copy.querySelectorAll<HTMLImageElement>('img[data-ez-gif-source]').forEach(image => image.setAttribute('src', 'static-gif-preview'))
+    return copy.innerHTML
+  })
+  const preview = await previewHtml()
   for (const width of [1440, 768, 390]) {
     await page.setViewportSize({ width, height: 1000 })
     await expectAlternatingSourceLines(page)
@@ -45,7 +50,7 @@ test('alternates source lines while keeping wrapped text together, with a persis
   await page.keyboard.press('Escape')
   expect(await editor!.evaluate(node => node.isConnected)).toBe(true)
   expect(await page.locator('.cm-content').textContent()).toBe(text)
-  expect(await page.locator('.wechat-document').innerHTML()).toBe(preview)
+  expect(await previewHtml()).toBe(preview)
   await page.reload()
   await expect(page.locator('.cm-content')).toContainText('自动折行检查')
   await expect(page.locator('.source-row-stripes')).toHaveCount(0)

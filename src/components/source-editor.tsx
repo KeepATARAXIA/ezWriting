@@ -2281,7 +2281,14 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
       selectionPointerRef.current = null
       setSelectionMenu(null)
     }
+    const dismissSelectionOutside = (event: PointerEvent) => {
+      if (!(event.target instanceof Node)
+        || view.dom.contains(event.target)
+        || selectionMenuRef.current?.contains(event.target)) return
+      setSelectionMenu(null)
+    }
     view.dom.addEventListener('pointerdown', beginSelection, true)
+    document.addEventListener('pointerdown', dismissSelectionOutside, true)
     window.addEventListener('pointerup', finishSelection)
     window.addEventListener('pointercancel', cancelSelection)
     window.addEventListener('blur', cancelSelection)
@@ -2295,6 +2302,7 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
       if (activeBlockTimerRef.current !== null) window.clearTimeout(activeBlockTimerRef.current)
       view.dom.removeEventListener('click', handleDecoratedLinkClick, true)
       view.dom.removeEventListener('pointerdown', beginSelection, true)
+      document.removeEventListener('pointerdown', dismissSelectionOutside, true)
       window.removeEventListener('pointerup', finishSelection)
       window.removeEventListener('pointercancel', cancelSelection)
       window.removeEventListener('blur', cancelSelection)

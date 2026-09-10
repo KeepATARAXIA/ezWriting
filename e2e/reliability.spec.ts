@@ -206,7 +206,8 @@ test('keeps the preview position fixed when a preview target locates the source 
   })
   await expect(previewTarget).toBeVisible()
   await page.waitForTimeout(800)
-  await firstSourceLine.click()
+  await firstSourceLine.click({ position: { x: 10, y: 10 } })
+  await expect(page.locator('.source-editor .cm-activeLine')).toContainText(firstSourceText)
   await expect(page.locator('.wechat-content [data-preview-selected="true"]')).toContainText(firstSourceText)
   await expect.poll(() => previewCenterOffset(firstSourceText)).toBeLessThan(4)
 
@@ -230,7 +231,8 @@ test('keeps the preview position fixed when a preview target locates the source 
   expect(Math.abs(await previewViewport.evaluate(element => element.scrollTop) - settledScrollTop)).toBeLessThan(2)
   await expect(page.locator('.wechat-content [data-preview-selected="true"]')).toHaveCount(0, { timeout: 1000 })
 
-  await secondSourceLine.click()
+  await secondSourceLine.click({ position: { x: 10, y: 10 } })
+  await expect(page.locator('.source-editor .cm-activeLine')).toContainText(secondSourceText)
   await expect.poll(() => previewCenterOffset(secondSourceText)).toBeLessThan(4)
 
   await secondPreviewTarget.click()
@@ -296,7 +298,7 @@ test('keeps a deeply scrolled WeChat target visually fixed on its first click', 
     const viewportCenter = viewportRect.top + viewport.clientHeight / 2
     const visibleBlocks = blocks
       .map(element => ({ element, rect: element.getBoundingClientRect() }))
-      .filter(({ rect }) => rect.top >= viewportRect.top && rect.bottom <= viewportRect.bottom)
+      .filter(({ rect }) => rect.bottom > viewportRect.top + 1 && rect.top < viewportRect.bottom - 1)
       .sort((first, second) => (
         Math.abs(first.rect.top + first.rect.height / 2 - viewportCenter)
         - Math.abs(second.rect.top + second.rect.height / 2 - viewportCenter)
@@ -308,7 +310,7 @@ test('keeps a deeply scrolled WeChat target visually fixed on its first click', 
       line: target.element.dataset.sourceLine!,
       text: target.element.textContent?.trim() ?? '',
       clickX: target.rect.left + Math.min(target.rect.width / 2, 120),
-      clickY: target.rect.top + target.rect.height / 2,
+      clickY: Math.min(viewportRect.bottom - 2, Math.max(viewportRect.top + 2, target.rect.top + target.rect.height / 2)),
       viewportOffset: target.rect.top - viewportRect.top,
       scrollTop: viewport.scrollTop,
       scrollHeight: viewport.scrollHeight,

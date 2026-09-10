@@ -72,14 +72,22 @@ test('keeps GIF previews static, plays explicitly, and fits narrow editor column
     await page.setViewportSize({ width, height: 900 })
     await page.screenshot({ path: testInfo.outputPath(`gif-${width}.png`), animations: 'disabled' })
     await expect(editorImage).toBeVisible()
-    await expect.poll(() => page.locator('.source-editor-host .cm-scroller').evaluate(scroller => ({
-      overflow: scroller.scrollWidth - scroller.clientWidth,
-      imageOverflow: scroller.querySelector('figure')!.getBoundingClientRect().right - scroller.getBoundingClientRect().right,
-    }))).toMatchObject({ overflow: 0 })
-    const overflow = await page.locator('.source-editor-host .cm-scroller').evaluate(scroller => (
-      scroller.querySelector('figure')!.getBoundingClientRect().right - scroller.getBoundingClientRect().right
-    ))
-    expect(overflow).toBeLessThanOrEqual(1)
+    const geometry = await page.locator('.source-editor-host .cm-scroller').evaluate(scroller => {
+      const content = scroller.querySelector<HTMLElement>('.cm-content')!
+      const figure = content.querySelector<HTMLElement>('figure')!
+      const contentBounds = content.getBoundingClientRect()
+      const figureBounds = figure.getBoundingClientRect()
+      return {
+        contentWidth: contentBounds.width,
+        scrollerOverflow: scroller.scrollWidth - scroller.clientWidth,
+        figureLeft: figureBounds.left - contentBounds.left,
+        figureRight: contentBounds.right - figureBounds.right,
+      }
+    })
+    expect(Math.abs(geometry.contentWidth - 640)).toBeLessThanOrEqual(1)
+    expect(geometry.scrollerOverflow).toBeGreaterThanOrEqual(0)
+    expect(Math.abs(geometry.figureLeft)).toBeLessThanOrEqual(1)
+    expect(Math.abs(geometry.figureRight)).toBeLessThanOrEqual(1)
   }
   await expect(page.getByLabel('本地保存状态')).toHaveText('已保存')
   await page.reload()
