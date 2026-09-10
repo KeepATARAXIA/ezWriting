@@ -398,6 +398,13 @@ export async function publishDraft(
   if (!bridge) throw new Error('发布桥接已断开，请刷新平台状态。')
   if (accounts.length === 0) throw new Error('请至少选择一个发布平台。')
   const selected = selectedAccountsForPublish(accounts)
+  let content = article.html
+  let markdown = article.markdown
+  if (content.includes('data-ez-math')) {
+    const { mathHtmlForExport, mathMarkdownForExport } = await import('./math-export')
+    content = await mathHtmlForExport(content)
+    markdown = mathMarkdownForExport(markdown, content)
+  }
   const selectedByIdentity = new Map(selected.map(account => [account.identity, account]))
   const selectedByType = new Map<string, SelectedAccount[]>()
   for (const account of selected) {
@@ -444,8 +451,8 @@ export async function publishDraft(
         post: {
           title: article.title,
           desc: article.summary || '',
-          content: article.html,
-          markdown: article.markdown,
+          content,
+          markdown,
         },
         accounts: selected.map(account => account.raw),
       }, task => {

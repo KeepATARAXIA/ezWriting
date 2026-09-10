@@ -1,0 +1,13 @@
+.ez-math .katex-display { margin: 0; }
+.ez-math > .katex-display { width: max-content; margin-inline: auto; }
+.ez-math > .katex { width: max-content; }
+.ez-math .katex { text-indent: 0; }
+.ez-math .katex .cjk_fallback { font-family: 'Microsoft YaHei', 'PingFang SC', sans-serif; }
+.ez-math .katex .mathbf .cjk_fallback,
+.ez-math .katex .cjk_fallback.mathbf { font-weight: 700; }
+.ez-math[data-ez-math-error] { color: #b42318; overflow-wrap: anywhere; white-space: pre-wrap; }
+.ez-math[data-ez-math-error] small { display: inline; margin-left: 0.5em; font-size: 0.8em; }
+.cm-math-widget { display: inline-block; max-width: 100%; cursor: text; vertical-align: middle; }
+.cm-math-widget[data-display='true'] { width: 100%; }
+.cm-math-widget .ez-math-display { margin: 0; }
+.cm-math-widget:focus-visible { outline: 2px solid #1648ff; outline-offset: 3px; }

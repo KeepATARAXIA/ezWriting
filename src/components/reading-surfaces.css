@@ -1,0 +1,57 @@
+/* Match WeChat's neutral reading chrome; article themes only style the body. */
+.wechat-document > h1,
+.phone-device.platform-wechat .mobile-article-scroll > h1 {
+  font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1.4;
+}
+.phone-device.platform-wechat .mobile-article-scroll > h1 { font-size: 22px; }
+.phone-device.platform-wechat .mobile-wechat-preview { grid-template-rows: 52px minmax(0, 1fr) 58px; }
+.phone-device.platform-wechat .wechat-reading-nav { padding: 0 12px; border: 0; }
+.wechat-reading-nav > span:last-child { display: grid; place-items: center; }
+.phone-device.platform-wechat .mobile-article-scroll { padding-top: 20px; }
+.wechat-reading-meta { margin: 16px 0 34px; font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; font-size: 14px; line-height: 1.7; color: #a5a5a5; }
+.wechat-reading-byline { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 9px; }
+.wechat-original { padding: 0 4px; background: #f5f5f5; color: #aaa; line-height: 1.5; }
+.wechat-account-name { color: #576b95; }
+.wechat-reading-date { margin-top: 8px; }
+.wechat-reading-footer { min-width: 0; display: flex; align-items: center; gap: 12px; padding: 8px 16px; border-top: 1px solid #ededed; color: #181818; background: #fff; }
+.wechat-reading-account { min-width: 0; flex: 1; display: flex; align-items: center; gap: 8px; }
+.wechat-reading-account strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 600; }
+.wechat-reading-avatar { width: 28px; height: 28px; flex: 0 0 28px; display: grid; place-items: center; overflow: hidden; border-radius: 3px; }
+.wechat-reading-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.wechat-reading-actions { display: flex; align-items: center; gap: 18px; }
+.wechat-reading-actions > span { display: grid; place-items: center; }
+.wechat-reading-actions svg { stroke-width: 1.6; }
+
+/* The footer belongs to the whole panel, not the inset writing column. */
+.paper-panel .article-form { padding-inline: 0; }
+.paper-panel .source-toolbar { padding-inline: 18px; }
+.paper-panel .source-editor-statusbar { padding-inline: 18px; background: #f7f9fc; }
+
+/* Identify the existing editable title without creating a second title value. */
+.source-editor-host .cm-line.cm-article-title {
+  position: relative;
+  padding-top: 26px;
+  padding-bottom: 18px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid #e5eaf1;
+  background: #fff;
+}
+.cm-article-title::before {
+  content: '文章标题';
+  position: absolute;
+  top: 0;
+  left: 0;
+  font-family: "MiSans", "Microsoft YaHei", sans-serif;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 18px;
+  color: #8793a6;
+  pointer-events: none;
+}
+.cm-article-title[data-title-empty="true"]::after { content: '在这里写标题'; color: #a1aaba; font-size: 24px; pointer-events: none; }
+@media (max-width: 700px) {
+  .paper-panel .source-toolbar, .paper-panel .source-editor-statusbar { padding-inline: 12px; }
+}

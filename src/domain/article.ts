@@ -2,6 +2,7 @@ export type SourceKind = 'blank' | 'markdown' | 'html' | 'zip'
 export type ArticleSourceLanguage = 'markdown' | 'html'
 
 export interface ArticleDraft {
+  coverImage?: import('./artwork').CoverImage
   id: string
   title: string
   html: string

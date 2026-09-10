@@ -275,6 +275,10 @@ async function extractArticleAssets(article: ArticleDraft, cache: AssetSourceCac
     ? await replaceEmbeddedHtmlAssets(articleWithoutCover.html, register)
     : articleWithoutCover.html
 
+  const coverImage = articleWithoutCover.coverImage
+    ? { ...articleWithoutCover.coverImage, source: isPersistableAssetSource(articleWithoutCover.coverImage.source) ? await register(articleWithoutCover.coverImage.source) : articleWithoutCover.coverImage.source }
+    : undefined
+
   let markdown = articleWithoutCover.markdown
   let sourceText = articleWithoutCover.sourceText
   if (markdown && sourceText && markdown === sourceText) {
@@ -299,6 +303,7 @@ async function extractArticleAssets(article: ArticleDraft, cache: AssetSourceCac
   return {
     article: {
       ...articleWithoutCover,
+      coverImage,
       html,
       markdown,
       sourceText,
@@ -314,6 +319,8 @@ async function extractArticleAssets(article: ArticleDraft, cache: AssetSourceCac
 
 function referencedAssetIds(article: ArticleDraft): Set<string> {
   const ids = new Set<string>()
+  const coverId = assetIdFromReference(article.coverImage?.source)
+  if (coverId) ids.add(coverId)
   const document = new DOMParser().parseFromString(article.html, 'text/html')
   document.body.querySelectorAll<HTMLImageElement | HTMLVideoElement>('img[src], video[src]').forEach(media => {
     const id = assetIdFromReference(media.getAttribute('src') ?? undefined)
@@ -381,6 +388,7 @@ async function blobToDataUri(asset: StoredAsset): Promise<string> {
 async function hydrateArticle(article: ArticleDraft, assets: StoredAsset[], cache: AssetSourceCache, runtimeImages: boolean): Promise<ArticleDraft> {
   const { cover: _legacyCover, ...articleWithoutCover } = article as ArticleDraft & { cover?: unknown }
   const replacements = new Map<string, string>()
+  let coverImage = articleWithoutCover.coverImage
   cache.clear()
   await Promise.all(assets.map(async asset => {
     const reference = assetReference(asset.id)
@@ -390,6 +398,8 @@ async function hydrateArticle(article: ArticleDraft, assets: StoredAsset[], cach
       source = registerLocalVideo(new Blob([exactArrayBuffer(bytes)], { type: asset.mimeType }), asset.id)
     } else {
       const dataUri = await blobToDataUri(asset)
+      // Covers remain portable data URLs; the body registry only retains editor media.
+      if (coverImage?.source === reference) coverImage = { ...coverImage, source: dataUri }
       source = runtimeImages ? registerLocalImage(dataUri) : dataUri
     }
     replacements.set(reference, source)
@@ -420,6 +430,7 @@ async function hydrateArticle(article: ArticleDraft, assets: StoredAsset[], cach
 
   return {
     ...articleWithoutCover,
+    coverImage,
     html,
     markdown,
     sourceText,

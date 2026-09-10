@@ -5,10 +5,9 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from 'react'
 import {
-  FileText,
-  HardDrive,
+  Info,
+  Ellipsis,
   History,
-  LoaderCircle,
   PanelLeftClose,
   Trash2,
 } from 'lucide-react'
@@ -117,6 +116,7 @@ export function HistorySidebar({
   className = '',
 }: HistorySidebarProps) {
   const [query, setQuery] = useState('')
+  const [menuDraftId, setMenuDraftId] = useState<string | null>(null)
   const draftButtonRefs = useRef(new Map<string, HTMLButtonElement>())
 
   const visibleDrafts = useMemo(() => drafts
@@ -159,9 +159,7 @@ export function HistorySidebar({
       >
         <header className="history-sidebar-heading">
           <div>
-            <h2 id="history-sidebar-title">历史记录</h2>
-            <p>自动保存在当前浏览器</p>
-            <input className="history-search" type="search" aria-label="搜索历史稿件" placeholder="搜索稿件标题" value={query} onChange={event => setQuery(event.target.value)} />
+            <h2 id="history-sidebar-title">历史记录 <button type="button" className="history-info" aria-label="自动保存在当前浏览器" title="自动保存在当前浏览器"><Info size={14} aria-hidden="true" /></button></h2>
           </div>
           <button
             type="button"
@@ -174,6 +172,7 @@ export function HistorySidebar({
           >
             <PanelLeftClose size={18} aria-hidden="true" />
           </button>
+          <input className="history-search" type="search" aria-label="搜索历史稿件" placeholder="搜索历史记录" value={query} onChange={event => { setQuery(event.target.value); setMenuDraftId(null) }} />
         </header>
 
         <div
@@ -207,7 +206,15 @@ export function HistorySidebar({
                         error: '保存失败',
                       }[saveState]
                       return (
-                        <li className={`history-draft-item ${isActive ? 'selected' : ''}`} key={draft.id}>
+                        <li className={`history-draft-item ${isActive ? 'selected' : ''}`} key={draft.id}
+                          onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setMenuDraftId(null) }}
+                          onKeyDown={event => {
+                            if (event.key === 'Escape' && menuDraftId === draft.id) {
+                              event.stopPropagation()
+                              setMenuDraftId(null)
+                              event.currentTarget.querySelector<HTMLButtonElement>('.history-draft-menu-button')?.focus()
+                            }
+                          }}>
                           <button
                             type="button"
                             className="history-draft-open"
@@ -217,31 +224,34 @@ export function HistorySidebar({
                               if (element) draftButtonRefs.current.set(draft.id, element)
                               else draftButtonRefs.current.delete(draft.id)
                             }}
-                            onClick={() => onSelectDraft(draft.id)}
+                            onClick={() => { setMenuDraftId(null); onSelectDraft(draft.id) }}
                             onKeyDown={event => handleDraftKeyDown(event, draft.id)}
                             disabled={interactionLocked}
                           >
-                            <span className="history-draft-title">{title}</span>
+                            <span className="history-draft-title" title={title}>{title}</span>
                             <span className="history-draft-meta" aria-hidden="true">
-                              <FileText size={13} />
                               <time dateTime={draft.updatedAt} title={absoluteTime(draft.updatedAt)}>{relativeTime(draft.updatedAt, now)}</time>
                             </span>
-                            <span className={`history-sync-state local ${saveState}`} title={saveState === 'saved' ? '已保存到本机' : saveLabel}>
-                              {saveState === 'saving' ? <LoaderCircle className="spin" size={12} aria-hidden="true" /> : <HardDrive size={12} aria-hidden="true" />}
-                              <span>{saveLabel}</span>
-                            </span>
+                            {saveState === 'error' && <span className="history-sync-state local error" role="status">保存失败</span>}
                           </button>
 
                           <button
                             type="button"
-                            className="history-draft-menu-button history-delete-action"
-                            aria-label={`删除稿件“${title}”`}
-                            title="删除稿件（可撤销）"
+                            className="history-draft-menu-button"
+                            aria-label={`稿件“${title}”的更多操作`}
+                            title="更多操作"
+                            aria-expanded={menuDraftId === draft.id}
                             disabled={interactionLocked}
-                            onClick={() => onDeleteDraft(draft.id)}
+                            onClick={() => setMenuDraftId(menuDraftId === draft.id ? null : draft.id)}
                           >
-                            <Trash2 size={16} aria-hidden="true" />
+                            <Ellipsis size={18} aria-hidden="true" />
                           </button>
+                          {menuDraftId === draft.id && <div className="history-draft-menu">
+                            <button type="button" className="history-delete-action" aria-label={`删除稿件“${title}”`} disabled={interactionLocked}
+                              onClick={() => { setMenuDraftId(null); onDeleteDraft(draft.id) }}>
+                              <Trash2 size={15} aria-hidden="true" />删除稿件（可撤销）
+                            </button>
+                          </div>}
                         </li>
                       )
                     })}

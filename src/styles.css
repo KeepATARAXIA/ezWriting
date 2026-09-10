@@ -958,8 +958,7 @@ button:disabled { cursor: not-allowed; }
 .mobile-article-scroll::-webkit-scrollbar, .mobile-x-scroll::-webkit-scrollbar { display: none; }
 .mobile-article-scroll > h1 { margin: 0; font-family: "STZhongsong", "Songti SC", serif; font-size: 25px; line-height: 1.28; }
 .mobile-wechat-meta { margin: 8px 0 18px; color: #9aa1a8; font-size: 8px; }
-.mobile-wechat-content { font-family: var(--article-font-family); font-size: 12px; line-height: 1.82; }
-.mobile-wechat-content p, .mobile-wechat-content li, .mobile-wechat-content blockquote { font-size: 12px !important; line-height: 1.82 !important; }
+.mobile-wechat-content { font-family: var(--article-font-family); font-size: var(--article-font-size); line-height: var(--article-line-height); }
 .mobile-wechat-content img { max-width: 100%; height: auto; }
 
 .mobile-xhs-preview { display: grid; grid-template-rows: 48px minmax(0, 1fr) 48px; }
@@ -1819,7 +1818,6 @@ button:disabled { cursor: not-allowed; }
 .source-selection-menu .source-tool { width: 30px; flex-basis: 30px; height: 30px; border-radius: 4px; }
 .source-selection-menu .source-tool:hover, .source-selection-menu .source-tool:focus-visible { border-color: #aab5bf; background: #f5f7f9; }
 .source-selection-menu .source-tool.active { border-color: var(--blue); background: var(--blue); color: white; }
-.source-language-badge { margin-left: auto; padding: 5px 7px; flex: 0 0 auto; border-radius: 4px; background: transparent; color: #87919b; font-size: 9px; font-weight: 800; letter-spacing: 0.05em; }
 .source-syntax-toggle { height: 30px; padding: 0 9px; border: 1px solid #e1e6ea; border-radius: 7px; background: #fff; color: #66727c; display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; transition: border-color 140ms ease, background-color 140ms ease, color 140ms ease; }
 .source-syntax-toggle:hover { border-color: #b9c5cf; background: #f7f9fa; color: #33414c; }
 .source-syntax-toggle:focus-visible { outline: 2px solid rgba(22, 72, 255, 0.38); outline-offset: 1px; }
@@ -2180,7 +2178,6 @@ button:disabled { cursor: not-allowed; }
   .source-toolbar { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
   .source-toolbar::-webkit-scrollbar { display: none; }
   .source-tool-group { flex: 0 0 auto; }
-  .source-language-badge { flex: 0 0 auto; }
   .preview-contextbar { min-height: 50px; }
   .preview-context-actions { width: 100%; justify-content: flex-end; }
   .preview-tool-toggle { min-width: 38px; padding-inline: 9px; font-size: 0; }

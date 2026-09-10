@@ -1,0 +1,12 @@
+.image-frame-controls { display: grid; gap: 10px; padding: 12px 0; border-top: 1px solid #edf0f4; }
+.image-frame-controls > strong { font-size: 12px; color: #657184; }
+.image-frame-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.image-frame-options button { min-width: 0; padding: 6px 4px; border: 0; border-radius: 8px; background: #f7f8fa; color: #657184; cursor: pointer; }
+.image-frame-options button:hover { background: #f0f3f8; }
+.image-frame-options button[aria-pressed="true"] { background: #edf2ff; color: #1648ff; font-weight: 600; }
+.image-frame-options button:focus-visible { outline: 2px solid #1648ff; outline-offset: 2px; }
+.image-frame-sample { display: flex; height: 44px; align-items: center; justify-content: center; }
+.image-frame-sample > span { display: block; width: 56px; max-width: 100%; box-sizing: border-box; overflow: hidden; }
+.image-frame-sample svg { display: block; width: 100%; height: auto; }
+.image-frame-label { display: flex; min-height: 20px; align-items: center; justify-content: center; gap: 4px; font-size: 11px; }
+.image-frame-controls > p { margin: 0; color: #8993a3; font-size: 11px; line-height: 1.6; }

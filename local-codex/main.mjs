@@ -1,15 +1,15 @@
-import { randomBytes } from 'node:crypto'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CodexRpc, findCodex } from './runtime.mjs'
 import { CODEX_PORT, createBridge } from './server.mjs'
+import { readPairingToken } from './pairing.mjs'
 
 try {
   const binary = findCodex()
   const cwd = mkdtempSync(join(tmpdir(), 'ezwriting-codex-'))
-  const token = randomBytes(24).toString('hex')
-  const server = createBridge({ token, cwd, createRpc: () => new CodexRpc(binary, cwd) })
+  const token = readPairingToken()
+  const server = createBridge({ token, cwd, createRpc: options => new CodexRpc(binary, cwd, options) })
   server.on('error', error => {
     console.error(error.code === 'EADDRINUSE' ? '连接程序已在运行。请使用已有窗口中的连接码。' : '本机连接程序启动失败。')
     process.exitCode = 1

@@ -26,7 +26,7 @@ test('preserves original GIF bytes across short references, clipboard, undo, and
   await expect(page.locator('.wechat-content img[data-ez-gif-source]')).toHaveCount(0)
   await page.getByRole('button', { name: '撤销', exact: true }).click()
   await expect(image).toHaveAttribute('data-ez-gif-source', reference!)
-  await expect(page.locator('.history-sync-state').first()).toHaveText('已保存')
+  await expect(page.locator('.workbench-save-state')).toHaveText('已保存')
   await page.reload()
   await expect(image).toHaveAttribute('data-ez-gif-source', /^blob:/)
   await page.locator('.wechat-copy-button').click()

@@ -4,6 +4,7 @@ const PRESENTATION = /^(?:color|background(?:-.+)?|border(?:-.+)?|outline(?:-.+)
 
 export function prepareSourceStyles(document: Document, policy?: 'preserve' | 'theme'): void {
   document.body.querySelectorAll<HTMLElement>('*').forEach(element => {
+    if (element.closest('[data-ez-math]')) return
     element.removeAttribute(SOURCE_STYLE_ATTRIBUTE)
     const original = document.createElement('span').style
     Array.from(element.style).filter(property => PRESENTATION.test(property)).forEach(property => {

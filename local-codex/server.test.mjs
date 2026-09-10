@@ -39,6 +39,18 @@ async function fixture(factory = () => new FakeRpc()) {
 }
 
 describe('Codex subscription boundary', () => {
+  it('uses the article chat schema in an isolated tool-free subscription turn', async () => {
+    const payload = validatePayload({ action: 'chat', model: 'test', prompt: JSON.stringify({
+      instruction: '润色全文', document: { title: '标题', body: '文'.repeat(16_000), language: 'markdown' },
+      previousRevision: null, history: [], refinements: [], apiKey: 'not-a-prompt',
+    }) })
+    expect(payload.prompt).not.toContain('not-a-prompt')
+    const rpc = new FakeRpc()
+    await runGeneration(rpc, payload, '/empty', new AbortController().signal, () => {})
+    expect(rpc.request).toHaveBeenCalledWith('thread/start', expect.objectContaining({ ephemeral: true, environments: [], dynamicTools: [], developerInstructions: expect.stringContaining('previousRevision') }))
+    expect(rpc.request).toHaveBeenCalledWith('turn/start', expect.objectContaining({ outputSchema: expect.objectContaining({ required: ['reply', 'revision'] }) }))
+    expect(() => validatePayload({ action: 'chat', model: 'test', prompt: '{}' })).toThrow()
+  })
   it('uses the chosen preset count in the constrained output schema', async () => {
     const plans = [{ name: '自然表达', instruction: '只微调措辞。', strength: 10 }]
     const payload = validatePayload({ action: 'polish', model: 'test', prompt: JSON.stringify({

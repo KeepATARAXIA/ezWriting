@@ -212,8 +212,8 @@ function estimateElementHeight(element: Element, listItem = false, textScale = 1
 }
 
 function containsProtectedContent(element: Element): boolean {
-  return element.matches('img, table, pre, blockquote, aside[data-callout], [data-xhs-media-layout]')
-    || Boolean(element.querySelector('img, table, pre, blockquote, aside[data-callout], [data-xhs-media-layout]'))
+  return element.matches('img, table, pre, blockquote, aside[data-callout], [data-xhs-media-layout], [data-ez-math]')
+    || Boolean(element.querySelector('img, table, pre, blockquote, aside[data-callout], [data-xhs-media-layout], [data-ez-math]'))
 }
 
 function textNodes(element: Element): Text[] {

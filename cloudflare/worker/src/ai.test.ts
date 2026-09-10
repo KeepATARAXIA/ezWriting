@@ -16,6 +16,23 @@ function request(payload: Record<string, unknown> = {}, headers: Record<string, 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.useRealTimers() })
 
 describe('AI forwarding boundary', () => {
+  it('forwards explicit article context with the shared chat contract and strips unknown fields', async () => {
+    const fetch = vi.fn().mockResolvedValue(streamResponse()); vi.stubGlobal('fetch', fetch)
+    const chat = { instruction: '继续精简', document: { title: '文章', body: '文'.repeat(16_000), language: 'markdown' },
+      previousRevision: null, history: [{ instruction: '给建议', reply: '减少重复。' }], refinements: [], apiKey: 'not-a-prompt' }
+    const response = await worker.fetch(request({ action: 'chat', prompt: JSON.stringify(chat) }), bindings)
+    expect(response.status).toBe(200); await response.text()
+    const sent = JSON.parse(fetch.mock.calls[0][1].body)
+    expect(sent.messages[0].role).toBe('system')
+    expect(sent.messages[0].content).toContain('previousRevision')
+    expect(JSON.parse(sent.messages[1].content).document.body).toHaveLength(16_000)
+    expect(sent.messages[1].content).not.toContain('not-a-prompt')
+  })
+  it('rejects malformed chat context before contacting a provider', async () => {
+    const fetch = vi.fn(); vi.stubGlobal('fetch', fetch)
+    const response = await worker.fetch(request({ action: 'chat', prompt: '{"instruction":"修改全文"}' }), bindings)
+    expect(response.status).toBe(400); expect(fetch).not.toHaveBeenCalled()
+  })
   it.each([
     ['gemini', 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions'],
     ['deepseek', 'https://api.deepseek.com/chat/completions'],

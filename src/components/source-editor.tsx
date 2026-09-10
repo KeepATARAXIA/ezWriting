@@ -45,11 +45,12 @@ import {
 import type { ArticleSourceLanguage } from '../domain/article'
 import type { LibraryContent, LibraryInsertRequest, LibraryItem } from '../domain/template-library'
 import { AI_SELECTION_LIMIT, nearbyPolishContext, type AiSelection } from '../lib/ai-polish'
+import { validateDocumentRevision, type AiDocumentEditor } from '../lib/ai-document'
 import { libraryTextForEditor } from '../lib/template-library'
 import { LIBRARY_DRAG_TYPE, readLibraryDrag } from '../lib/template-library-drag'
 import { isGifSource, mediaPlaceholder, mountGifPreview, mountVideoPreview } from '../lib/media-preview'
-import { sourceBlockIndexAtOffset } from '../lib/article-source'
-import { splitEditorDocument } from '../lib/article-editor-document'
+import { renderArticleSource, sourceBlockIndexAtOffset } from '../lib/article-source'
+import { editorTitlePrefix, splitEditorDocument } from '../lib/article-editor-document'
 import {
   isLocalVideoReference,
   localVideoBlob,
@@ -65,7 +66,9 @@ import {
 import './video-media.css'
 import './source-editor-layout.css'
 import { editorRowStripes } from './source-editor-stripes'
-import { markdownInlineStrongRanges, renderMarkdownToSafeHtml, sanitizeContentHtml } from '../lib/markdown-compatibility'
+import { articleTitleRegion } from './source-editor-title'
+import { markdownInlineStrongRanges, markdownMathRanges, renderMarkdownToSafeHtml, sanitizeContentHtml } from '../lib/markdown-compatibility'
+import { observeMathLayout } from '../lib/math-layout'
 
 export interface SourceEditorFocusRequest {
   line: number
@@ -93,6 +96,8 @@ interface SourceEditorProps {
   titleInDocument?: boolean
   onCollectSelection?: (selection: Extract<LibraryContent, { kind: 'text' }>) => void
   onAiSelection?: (selection: AiSelection) => void
+  onAiDocumentReady?: (editor: AiDocumentEditor | null) => void
+  onArtworkReady?: (editor: import('../domain/artwork').ArtworkEditor | null) => void
   libraryInsertRequest?: LibraryInsertRequest | null
   onLibraryInsertComplete?: (requestId: number, error?: string) => void
 }
@@ -926,6 +931,38 @@ class MarkdownHtmlMediaWidget extends WidgetType {
   }
 }
 
+class MarkdownMathWidget extends WidgetType {
+  constructor(readonly raw: string, readonly from: number, readonly display: boolean) { super() }
+  eq(other: MarkdownMathWidget): boolean { return this.raw === other.raw && this.from === other.from }
+  toDOM(view: EditorView): HTMLElement {
+    const element = document.createElement('span')
+    element.className = 'cm-math-widget'
+    element.dataset.display = String(this.display)
+    element.innerHTML = renderMarkdownToSafeHtml(this.raw)
+    const paragraph = element.querySelector(':scope > p')
+    if (paragraph) paragraph.replaceWith(...paragraph.childNodes)
+    element.tabIndex = 0
+    element.setAttribute('aria-label', '选择公式')
+    element.title = '开启“显示语法”后编辑公式'
+    const select = () => {
+      if (view.state.readOnly) return
+      view.dispatch({ selection: { anchor: this.from, head: this.from + this.raw.length }, scrollIntoView: true })
+      view.focus()
+    }
+    element.addEventListener('mousedown', event => { event.preventDefault(); select() })
+    element.addEventListener('keydown', event => {
+      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); select() }
+    })
+    mediaWidgetCleanup.set(element, observeMathLayout(element))
+    return element
+  }
+  destroy(element: HTMLElement): void {
+    mediaWidgetCleanup.get(element)?.()
+    mediaWidgetCleanup.delete(element)
+  }
+  ignoreEvent(): boolean { return true }
+}
+
 function markdownPresentationDecorations(state: EditorState): DecorationSet {
   if (!state.facet(markdownPresentationFacet) || state.facet(sourceLanguageFacet) !== 'markdown') {
     return Decoration.none
@@ -958,6 +995,12 @@ function markdownPresentationDecorations(state: EditorState): DecorationSet {
 
   const tree = markdownTreeForState(state)
   const text = state.doc.toString()
+  const mathRanges = text.includes('$') ? markdownMathRanges(text) : []
+  for (const math of mathRanges) {
+    highlightProtectedRanges.push(math)
+    hidden.push(math)
+    ranges.push(Decoration.replace({ widget: new MarkdownMathWidget(math.raw, math.from, math.display), atomicMath: true }).range(math.from, math.to))
+  }
   const htmlRanges: Array<{ from: number; to: number }> = []
   const codeRanges: Array<{ from: number; to: number }> = []
   const strongCandidates: Array<{ from: number; to: number }> = []
@@ -1054,6 +1097,8 @@ function markdownPresentationDecorations(state: EditorState): DecorationSet {
     const name = cursor.name
     const from = cursor.from
     const to = cursor.to
+
+    if (mathRanges.some(range => from >= range.from && to <= range.to)) return
 
     if (hidden.some(range => from >= range.from && to <= range.to)) return
 
@@ -1193,6 +1238,7 @@ function markdownPresentationDecorations(state: EditorState): DecorationSet {
   for (const candidate of strongCandidates) {
     for (const span of markdownInlineStrongRanges(text.slice(candidate.from, candidate.to))) {
       const from = candidate.from + span.from, to = candidate.from + span.to
+      if (mathRanges.some(range => from < range.to && to > range.from)) continue
       if (nativeStrong.some(range => range.from === from && range.to === to)) continue
       replace(from, from + 2)
       mark(from + 2, to - 2, 'cm-md-strong')
@@ -1380,7 +1426,7 @@ function markdownLinkAtOffset(text: string, offset: number): string | null {
   return null
 }
 
-export function SourceEditor({ value, language, status, focusRequest, readOnly = false, onChange, onActiveBlockChange, syncScroll = false, showSyntax, rowStripes = false, onShowSyntaxChange, titleInDocument = false, onCollectSelection, onAiSelection, libraryInsertRequest, onLibraryInsertComplete }: SourceEditorProps) {
+export function SourceEditor({ value, language, status, focusRequest, readOnly = false, onChange, onActiveBlockChange, syncScroll = false, showSyntax, rowStripes = false, onShowSyntaxChange, titleInDocument = false, onCollectSelection, onAiSelection, onAiDocumentReady, onArtworkReady, libraryInsertRequest, onLibraryInsertComplete }: SourceEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
@@ -1610,7 +1656,9 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
     // Use document positions so CodeMirror renders the destination in long documents.
     view.dispatch({ effects: EditorView.scrollIntoView(edge === 'top' ? 0 : view.state.doc.length, {
       y: edge === 'top' ? 'start' : 'end',
-      yMargin: Math.max(0, Math.min(view.scrollDOM.clientHeight - 1, view.documentPadding[edge] + view.defaultLineHeight)),
+      // Include the title region's full height, not only a plain text line.
+      yMargin: Math.max(0, Math.min(view.scrollDOM.clientHeight - 1,
+        view.documentPadding[edge] + (edge === 'top' ? view.lineBlockAt(0).height : view.defaultLineHeight))),
     }) })
   }
 
@@ -1865,6 +1913,60 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
     setSelectionMenu(null)
   }
 
+  useEffect(() => {
+    if (!onAiDocumentReady) return
+    onAiDocumentReady({ capture: () => {
+      const view = viewRef.current
+      if (!view || readOnlyRef.current || compositionActiveRef.current || view.compositionStarted) throw new Error('编辑器暂不可读取，请完成当前操作后重试。')
+      const source = view.state.doc.toString()
+      const split = titleInDocument ? splitEditorDocument(source) : { title: '', body: source, prefix: '' }
+      const language = languageRef.current
+      const original = { title: split.title, body: split.body, language }
+      return { ...original,
+        preview: body => renderArticleSource(expandEmbeddedMedia(body, embeddedImagesRef.current), language),
+        apply: revision => {
+          if (viewRef.current !== view) return '当前稿件已切换，请重新生成。'
+          if (readOnlyRef.current || compositionActiveRef.current || view.compositionStarted) return '编辑器暂不可修改，请完成当前操作后重试。'
+          if (languageRef.current !== language || view.state.doc.toString() !== source) return '稿件已发生变化，为保护你的编辑，请基于当前全文重新生成。'
+          try { validateDocumentRevision(original, revision) }
+          catch (error) { return (error as Error).message }
+          const prefix = titleInDocument ? revision.title === split.title ? split.prefix : editorTitlePrefix(revision.title) : ''
+          aiSelectionMenuDismissedRef.current = true
+          insertText(prefix + revision.body, prefix.length, prefix.length, {
+            range: { from: 0, to: view.state.doc.length }, separateHistory: true, syncImmediately: true, preserveOuterScroll: true,
+          })
+          setSelectionMenu(null)
+        },
+      }
+    } })
+    return () => onAiDocumentReady(null)
+  }, [onAiDocumentReady, titleInDocument])
+
+  useEffect(() => {
+    if (!onArtworkReady) return
+    onArtworkReady({ capture: () => {
+      const view = viewRef.current
+      if (!view || readOnlyRef.current || compositionActiveRef.current || view.compositionStarted) throw new Error('编辑器暂不可读取，请完成当前操作后重试。')
+      const snapshot = view.state.doc.toString()
+      const { from, to } = view.state.selection.main
+      const text = snapshot.slice(from, to)
+      const language = languageRef.current
+      if (!text.trim() || text.length > 3000 || (titleInDocument && from < splitEditorDocument(snapshot).prefix.length) || /dispatch-editor-(?:image|video):\/\//i.test(text)) throw new Error('请先选择 1–3000 字正文，再使用当前选段。')
+      // Insert after the last selected source line, retaining the entire selected text.
+      const position = view.state.doc.lineAt(to).to
+      return { text, insert: (source, description) => {
+        if (viewRef.current !== view) return '当前稿件已切换，请重新选择正文。'
+        if (readOnlyRef.current || compositionActiveRef.current || view.compositionStarted) return '编辑器暂不可修改，请完成当前操作后重试。'
+        if (view.state.doc.toString() !== snapshot || languageRef.current !== language) return '稿件已变化，请点击“使用当前选段”重新定位后插入。'
+        const token = addEmbeddedImage(embeddedImagesRef.current, source)
+        const syntax = language === 'html' ? `<img src="${token}" alt="${escapeHtmlAttribute(description)}">` : markdownImageSyntax(description.replace(/[\r\n]/g, ' '), token, '')
+        insertText(`\n\n${syntax}\n\n`, undefined, undefined, { range: { from: position, to: position }, media: true, separateHistory: true, syncImmediately: true, preserveOuterScroll: true })
+        setSelectionMenu(null)
+      } }
+    } })
+    return () => onArtworkReady(null)
+  }, [onArtworkReady, titleInDocument])
+
   const collectSelection = () => {
     const view = viewRef.current
     if (!view || readOnlyRef.current || view.state.selection.main.empty) return
@@ -1917,6 +2019,7 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
         extensions: [
           basicSetup,
           rowStripesCompartmentRef.current.of([]),
+          titleInDocument ? articleTitleRegion : [],
           EditorView.clipboardOutputFilter.of(text => expandLocalImageReferences(expandEmbeddedMedia(text, embeddedImagesRef.current))),
           history({ minDepth: SOURCE_EDITOR_MIN_UNDO_DEPTH }),
           imageSourceCompartment.of(embeddedImageFacet.of({ sources: compacted.sources })),
@@ -1930,7 +2033,7 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
             EditorView.editable.of(!readOnly),
           ]),
           EditorView.atomicRanges.of(view => view.state.field(imagePreviewField)),
-          EditorView.atomicRanges.of(view => view.state.field(markdownPresentationField).update({ filter: (_from, _to, decoration) => decoration.spec.protectedSyntax === true })),
+          EditorView.atomicRanges.of(view => view.state.field(markdownPresentationField).update({ filter: (_from, _to, decoration) => decoration.spec.protectedSyntax === true || decoration.spec.atomicMath === true })),
           languageCompartment.of([
             sourceLanguageFacet.of(language),
             language === 'markdown' ? markdown() : html(),
@@ -2374,30 +2477,31 @@ export function SourceEditor({ value, language, status, focusRequest, readOnly =
               </>
             )}
           </div>
-          <span
-            className="source-history-status"
-            title={`当前可撤销 ${historyAvailability.undoCount} 步、可重做 ${historyAvailability.redoCount} 步；正文历史至少保留最近 ${SOURCE_EDITOR_MIN_UNDO_DEPTH} 个独立事件，连续输入可能合并为一步。`}
-          >
-            撤销 {historyAvailability.undoCount} · 重做 {historyAvailability.redoCount} · 历史 ≥{SOURCE_EDITOR_MIN_UNDO_DEPTH}
-          </span>
-          <span className="source-language-badge">{language === 'markdown' ? 'Markdown' : 'HTML'}</span>
-          {language === 'markdown' && (
-            <button
-              type="button"
-              className={`source-syntax-toggle${showMarkdownSyntax ? '' : ' active'}`}
-              aria-label={showMarkdownSyntax ? '隐藏 Markdown 语法' : '显示 Markdown 语法'}
-              aria-pressed={!showMarkdownSyntax}
-              title={showMarkdownSyntax ? '隐藏 Markdown 语法' : '显示 Markdown 语法'}
-              onMouseDown={event => event.preventDefault()}
-              onClick={() => onShowSyntaxChange ? onShowSyntaxChange(!showMarkdownSyntax) : setLocalShowSyntax(!showMarkdownSyntax)}
+          <div className="source-status-actions">
+            <span
+              className="source-history-status"
+              title={`当前可撤销 ${historyAvailability.undoCount} 步、可重做 ${historyAvailability.redoCount} 步；正文历史至少保留最近 ${SOURCE_EDITOR_MIN_UNDO_DEPTH} 个独立事件，连续输入可能合并为一步。`}
             >
-              {showMarkdownSyntax ? <EyeOff size={15} /> : <Eye size={15} />}
-              <span>{showMarkdownSyntax ? '隐藏语法' : '显示语法'}</span>
-            </button>
-          )}
-          <div className="source-scroll-actions" role="group" aria-label="编辑区快速滚动">
-            <ToolButton label="到顶部" preserveSelection onClick={() => scrollToEdge('top')}><ArrowUpToLine size={16} /></ToolButton>
-            <ToolButton label="到底部" preserveSelection onClick={() => scrollToEdge('bottom')}><ArrowDownToLine size={16} /></ToolButton>
+              撤销 {historyAvailability.undoCount} · 重做 {historyAvailability.redoCount} · 历史 ≥{SOURCE_EDITOR_MIN_UNDO_DEPTH}
+            </span>
+            {language === 'markdown' && (
+              <button
+                type="button"
+                className={`source-syntax-toggle${showMarkdownSyntax ? '' : ' active'}`}
+                aria-label={showMarkdownSyntax ? '隐藏 Markdown 语法' : '显示 Markdown 语法'}
+                aria-pressed={!showMarkdownSyntax}
+                title={showMarkdownSyntax ? '隐藏 Markdown 语法' : '显示 Markdown 语法'}
+                onMouseDown={event => event.preventDefault()}
+                onClick={() => onShowSyntaxChange ? onShowSyntaxChange(!showMarkdownSyntax) : setLocalShowSyntax(!showMarkdownSyntax)}
+              >
+                {showMarkdownSyntax ? <EyeOff size={15} /> : <Eye size={15} />}
+                <span>{showMarkdownSyntax ? '隐藏语法' : '显示语法'}</span>
+              </button>
+            )}
+            <div className="source-scroll-actions" role="group" aria-label="编辑区快速滚动">
+              <ToolButton label="到顶部" preserveSelection onClick={() => scrollToEdge('top')}><ArrowUpToLine size={16} /></ToolButton>
+              <ToolButton label="到底部" preserveSelection onClick={() => scrollToEdge('bottom')}><ArrowDownToLine size={16} /></ToolButton>
+            </div>
           </div>
         </footer>
       </div>

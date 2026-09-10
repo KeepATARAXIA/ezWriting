@@ -2,7 +2,9 @@ import { createServer } from 'node:http'
 import { timingSafeEqual } from 'node:crypto'
 import { AI_PROMPT_LIMIT, AI_TIMEOUT_MS, AiError } from '../src/domain/ai.ts'
 import { POLISH_INSTRUCTION, readPolishInput } from '../src/lib/ai-polish.ts'
+import { AI_CHAT_PROMPT_LIMIT, AI_CHAT_REQUEST_BYTES, CHAT_INSTRUCTION, CHAT_OUTPUT_SCHEMA, readChatInput } from '../src/domain/ai-chat.ts'
 import { codexError } from './runtime.mjs'
+import { IMAGE_TIMEOUT_MS, imagePayload, runImageGeneration } from './images.mjs'
 
 export const CODEX_PORT = 48765
 export const ALLOWED_ORIGINS = new Set(['http://127.0.0.1:4173', 'http://localhost:4173',
@@ -37,16 +39,20 @@ export async function connectionStatus(rpc) {
 }
 
 export function validatePayload(payload) {
-  if (!payload || !['generate', 'polish', 'test'].includes(payload.action)
+  if (!payload || !['generate', 'polish', 'test', 'chat'].includes(payload.action)
     || typeof payload.model !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/.test(payload.model)
-    || (payload.action !== 'test' && (typeof payload.prompt !== 'string' || !payload.prompt.trim() || payload.prompt.length > AI_PROMPT_LIMIT))) throw new AiError('invalid_request')
+    || (payload.action !== 'test' && (typeof payload.prompt !== 'string' || !payload.prompt.trim() || payload.prompt.length > (payload.action === 'chat' ? AI_CHAT_PROMPT_LIMIT : AI_PROMPT_LIMIT)))) throw new AiError('invalid_request')
   let input
+  let chatInput
+  if (payload.action === 'chat') {
+    try { chatInput = readChatInput(payload.prompt) } catch { throw new AiError('invalid_request') }
+  }
   if (payload.action === 'polish') {
     try { input = readPolishInput(payload.prompt) } catch { throw new AiError('invalid_request') }
   }
   return { model: payload.model, action: payload.action,
     ...(input ? { optionCount: input.plans.length } : {}),
-    prompt: payload.action === 'test' ? '请只回复：连接成功' : input ? JSON.stringify(input) : payload.prompt }
+    prompt: payload.action === 'test' ? '请只回复：连接成功' : chatInput ? JSON.stringify(chatInput) : input ? JSON.stringify(input) : payload.prompt }
 }
 
 // Every request gets an isolated ephemeral thread and an app-server process.
@@ -57,7 +63,7 @@ export async function runGeneration(rpc, payload, cwd, signal, emit) {
     approvalPolicy: 'never', sandbox: 'read-only', ephemeral: true, environments: [],
     selectedCapabilityRoots: [], dynamicTools: [],
     baseInstructions: '你是 EZWRITING 的文字编辑。只根据用户本次提供的内容输出文字。不要使用工具、读取文件、执行命令或联网。',
-    developerInstructions: payload.action === 'polish' ? POLISH_INSTRUCTION : '直接回答用户的写作请求，不附加工作进度或操作说明。',
+    developerInstructions: payload.action === 'chat' ? CHAT_INSTRUCTION : payload.action === 'polish' ? POLISH_INSTRUCTION : '直接回答用户的写作请求，不附加工作进度或操作说明。',
     config: { 'project_doc_max_bytes': 0, 'web_search': 'disabled', 'features.shell_tool': false,
       'features.multi_agent': false, 'features.memories': false, 'features.apps': false, 'mcp_servers': {}, ...rpc.safeConfig },
   })
@@ -91,7 +97,7 @@ export async function runGeneration(rpc, payload, cwd, signal, emit) {
     }
     rpc.on('notification', notification); rpc.on('closed', closed); signal.addEventListener('abort', abort, { once: true })
     rpc.request('turn/start', { threadId, input: [{ type: 'text', text: payload.prompt, text_elements: [] }],
-      environments: [], effort: 'low', ...(payload.action === 'polish' ? { outputSchema: {
+      environments: [], effort: 'low', ...(payload.action === 'chat' ? { outputSchema: CHAT_OUTPUT_SCHEMA } : payload.action === 'polish' ? { outputSchema: {
         type: 'object', properties: { options: { type: 'array', items: { type: 'string' }, minItems: payload.optionCount ?? 3, maxItems: payload.optionCount ?? 3 } },
         required: ['options'], additionalProperties: false,
       } } : {}),
@@ -103,10 +109,13 @@ async function readBody(request) {
   const chunks = []; let bytes = 0
   for await (const chunk of request) {
     bytes += chunk.length
-    if (bytes > 48 * 1024) throw new AiError('too_large')
+    if (bytes > AI_CHAT_REQUEST_BYTES) throw new AiError('too_large')
     chunks.push(chunk)
   }
-  try { return JSON.parse(Buffer.concat(chunks).toString('utf8')) } catch { throw new AiError('invalid_request') }
+  let payload
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')) } catch { throw new AiError('invalid_request') }
+  if (payload?.action !== 'chat' && bytes > 48 * 1024) throw new AiError('too_large')
+  return payload
 }
 
 export function createBridge({ token, createRpc, cwd, port = CODEX_PORT }) {
@@ -133,22 +142,26 @@ export function createBridge({ token, createRpc, cwd, port = CODEX_PORT }) {
     const expected = Buffer.from(token)
     if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) { error('codex_pairing', 401); return }
     if (request.headers['content-type']?.split(';')[0].trim() !== 'application/json') { error('invalid_request', 415); return }
-    if (!['/api/codex/status', '/api/codex/generate'].includes(request.url)) { error('invalid_request', 404); return }
+    if (!['/api/codex/status', '/api/codex/generate', '/api/codex/images'].includes(request.url)) { error('invalid_request', 404); return }
+    const images = request.url === '/api/codex/images'
     if (busy) { error('codex_busy', 409); return }
     busy = true
     const controller = new AbortController()
     let rpc
-    const timer = setTimeout(() => controller.abort(new AiError('timeout')), AI_TIMEOUT_MS)
+    const timer = setTimeout(() => controller.abort(new AiError(images ? 'image_timeout' : 'timeout')), images ? IMAGE_TIMEOUT_MS : AI_TIMEOUT_MS)
     const abort = () => { if (!response.writableEnded) controller.abort() }
     response.on('close', abort)
     controller.signal.addEventListener('abort', () => { rpc?.close(); error(controller.signal.reason instanceof AiError ? controller.signal.reason.code : 'interrupted', 504) }, { once: true })
     try {
       const body = await readBody(request)
-      const payload = request.url.endsWith('/generate') ? validatePayload(body) : null
+      const payload = images ? imagePayload(body) : request.url.endsWith('/generate') ? validatePayload(body) : null
       if (controller.signal.aborted) return
-      rpc = createRpc(); live.add(rpc)
+      rpc = createRpc({ images }); live.add(rpc)
       await rpc.initialize()
-      if (payload) {
+      if (images) {
+        const image = await runImageGeneration(rpc, payload, cwd, controller.signal)
+        if (!response.destroyed && !response.writableEnded) { response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(JSON.stringify(image)) }
+      } else if (payload) {
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
         response.flushHeaders()
         await runGeneration(rpc, payload, cwd, controller.signal, event => {

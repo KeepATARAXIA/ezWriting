@@ -1,7 +1,7 @@
 import { useEffect, useRef, type ReactNode, type Ref } from 'react'
-import { Bell, FilePlus2, History, LayoutGrid, CircleHelp, Settings2, Sparkles, X } from 'lucide-react'
+import { Bell, FilePlus2, History, LayoutGrid, CircleHelp, Settings2, Sparkles, ImagePlus, PanelTop, X } from 'lucide-react'
 
-export type WorkbenchPanel = 'new' | 'settings' | 'library' | 'ai' | 'polish' | null
+export type WorkbenchPanel = 'new' | 'settings' | 'library' | 'ai' | 'polish' | 'illustration' | 'cover' | null
 export interface WorkbenchNavigationProps {
   historyOpen: boolean
   draftCount: number
@@ -48,6 +48,8 @@ export function WorkbenchNavigation(props: WorkbenchNavigationProps) {
       <button type="button" className="rail-action" aria-label="AI 工具" title="AI 工具" aria-controls="ai-sidebar" aria-expanded={props.panel === 'ai'} disabled={props.interactionLocked} onClick={() => props.onPanelChange(props.panel === 'ai' ? null : 'ai')}><Sparkles size={21} /><span>AI</span></button>
     </div>
     <div className="workbench-rail-utilities">
+      <button type="button" className="rail-action" aria-label="配图" aria-controls="artwork-sidebar" aria-expanded={props.panel === 'illustration'} disabled={props.interactionLocked} onClick={() => props.onPanelChange(props.panel === 'illustration' ? null : 'illustration')}><ImagePlus size={21} /><span>配图</span></button>
+      <button type="button" className="rail-action" aria-label="封面" aria-controls="artwork-sidebar" aria-expanded={props.panel === 'cover'} disabled={props.interactionLocked} onClick={() => props.onPanelChange(props.panel === 'cover' ? null : 'cover')}><PanelTop size={21} /><span>封面</span></button>
       <div ref={notificationRef} className="notification-anchor">
         <button ref={notificationTrigger} type="button" className={`rail-action notification-trigger${props.notificationCount ? ' has-notices' : ''}`} title="通知" aria-label={`通知，${props.notificationCount} 项`} aria-expanded={props.notificationsOpen} aria-controls="notification-panel" onClick={() => props.onNotificationsChange(!props.notificationsOpen)}>
           <span className="rail-icon"><Bell size={20} />{props.notificationCount > 0 && <span className="rail-count" aria-hidden="true">{props.notificationCount}</span>}</span><span>通知</span>

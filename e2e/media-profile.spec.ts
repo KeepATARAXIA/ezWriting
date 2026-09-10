@@ -48,7 +48,7 @@ for (const scenario of ['text', 'image', 'gif', 'video', 'mixed']) {
         transaction.oncomplete = () => database.close()
       }
     })), { timeout: 45_000 }).toBe(expectedAssets)
-    await expect(page.locator('.history-sync-state', { hasText: '已保存' }).first()).toHaveText('已保存', { timeout: 45_000 })
+    await expect(page.locator('.workbench-save-state')).toHaveText('已保存', { timeout: 45_000 })
     await page.evaluate(() => {
       const report = { tasks: [] as number[], events: [] as number[], reads: 0, assetWrites: 0, titleWrites: 0 }
       Object.assign(window, { __mediaReport: report })
@@ -68,7 +68,7 @@ for (const scenario of ['text', 'image', 'gif', 'video', 'mixed']) {
     const start = Date.now()
     await editTitle(page, '媒体性能基线 · 修改标题')
     await page.waitForFunction(() => (window as unknown as { __mediaReport: { titleWrites: number } }).__mediaReport.titleWrites > 0)
-    await expect(page.locator('.history-sync-state', { hasText: '已保存' }).first()).toHaveText('已保存', { timeout: 45_000 })
+    await expect(page.locator('.workbench-save-state')).toHaveText('已保存', { timeout: 45_000 })
     const savedMs = Date.now() - start
     await cdp.send('HeapProfiler.collectGarbage')
     const after = await cdp.send('Runtime.getHeapUsage')

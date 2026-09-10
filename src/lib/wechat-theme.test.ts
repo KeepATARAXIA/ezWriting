@@ -30,6 +30,34 @@ function contrastRatio(first: string, second: string): number {
 }
 
 describe('wechat theme layer', () => {
+  it('normalizes old drafts and invalid image frames without changing their theme images', () => {
+    expect(normalizeWechatThemeSettings({}).imageFrame).toBe('theme')
+    expect(normalizeWechatThemeSettings({ imageFrame: 'invalid' as never }).imageFrame).toBe('theme')
+    const source = '<img src="image.png" alt="原图">'
+    expect(applyWechatTheme(source, {})).toBe(applyWechatTheme(source, { imageFrame: 'theme' }))
+  })
+
+  it('exports responsive image frames inline, preserving links, captions and original images', () => {
+    const source = '<figure><a href="https://example.com"><img src="image.png" alt="原图"></a><figcaption>图片说明</figcaption></figure>'
+    for (const imageFrame of ['none', 'rounded', 'white', 'shadow', 'outline'] as const) {
+      const doc = new DOMParser().parseFromString(applyWechatTheme(source, { imageFrame }), 'text/html')
+      const image = doc.querySelector('img')!
+      expect(image.src).toContain('image.png')
+      expect(image.alt).toBe('原图')
+      expect(image.parentElement?.getAttribute('href')).toBe('https://example.com')
+      expect(doc.querySelector('figcaption')?.textContent).toBe('图片说明')
+      expect(image.style.maxWidth).toBe('100%')
+      expect(image.style.height).toBe('auto')
+      expect(image.style.boxSizing).toBe('border-box')
+      if (imageFrame === 'white') {
+        expect(image.style.borderWidth).toBe('6px')
+        expect(image.style.borderRadius).toBe('16px')
+      }
+      if (imageFrame === 'shadow') expect(image.style.boxShadow).toContain('14px')
+      if (imageFrame === 'none') expect(image.style.borderRadius).toBe('0px')
+    }
+  })
+
   it('exposes the 26 attributed md-wechat themes with stable unique ids', () => {
     expect(WECHAT_THEMES).toHaveLength(26)
     expect(WECHAT_THEMES.map(theme => theme.id)).toEqual([...WECHAT_THEME_IDS])

@@ -46,6 +46,7 @@ test('keeps last-draft recovery visible after the mobile history drawer closes',
   await page.setViewportSize({ width: 390, height: 844 })
   await openArticle(page)
   await page.getByRole('button', { name: '打开历史记录', exact: true }).click()
+  await page.locator('.history-draft-menu-button').first().click()
   await page.locator('.history-delete-action').first().click()
   await expect(page.locator('.history-sidebar-slot')).not.toHaveClass(/overlay-open/)
   const undo = page.locator('.history-undo-notice').getByRole('button', { name: '撤销', exact: true })

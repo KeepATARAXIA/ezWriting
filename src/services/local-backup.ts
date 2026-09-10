@@ -1,5 +1,6 @@
 import { expandLocalImageReferences, localImageReferences, retainLocalImageReferences } from '../lib/local-image-registry'
 import type { ArticleDraft, ArticleSourceLanguage, SourceKind } from '../domain/article'
+import { readCoverImage } from '../domain/artwork'
 import { DEFAULT_ARTICLE_FORMATTING, type ArticleFormatting } from '../domain/formatting'
 import {
   SAVED_DRAFT_SCHEMA_VERSION,
@@ -97,6 +98,7 @@ function article(value: unknown, draftId: string, importedAt: string): ArticleDr
   return {
     id: draftId,
     title: stringValue(value.title).slice(0, 500),
+    coverImage: readCoverImage(value.coverImage),
     html: annotated.html,
     ...(typeof value.markdown === 'string' ? { markdown: value.markdown } : {}),
     ...(typeof value.sourceText === 'string' ? { sourceText: value.sourceText } : {}),

@@ -46,7 +46,7 @@ export function editorRowStripes() {
         if (!hasWidget) rows.splice(0, rows.length, { top: box.top, bottom: box.bottom })
         const leading = Math.max(0, (Number.parseFloat(getComputedStyle(element).lineHeight) * view.scaleY - (rows[0]?.bottom - rows[0]?.top || 0)) / 2)
         const from = view.posAtDOM(element)
-        lines.push({ from, box, rows: rows.map((row, index) => ({
+        lines.push({ from, box, isTitle: element.classList.contains('cm-article-title'), rows: rows.map((row, index) => ({
           top: index ? (rows[index - 1].bottom + row.top) / 2 : hasWidget ? Math.max(box.top, row.top - leading) : box.top,
           bottom: index < rows.length - 1 ? (row.bottom + rows[index + 1].top) / 2 : hasWidget ? Math.min(box.bottom, row.bottom + leading) : box.bottom,
         })) })
@@ -66,8 +66,9 @@ export function editorRowStripes() {
       for (const line of lines) {
         next.set(line.from, phase)
         for (const row of line.rows) {
-          if (phase === 0) markers.push(new RectangleMarker('source-row-stripe',
-            line.box.left - originLeft, row.top - originTop, line.box.width, row.bottom - row.top))
+          if (phase === 0 && !line.isTitle) markers.push(new RectangleMarker('source-row-stripe',
+            line.box.left - originLeft - 12 * view.scaleX, row.top - originTop,
+            line.box.width + 24 * view.scaleX, row.bottom - row.top))
         }
         phase = 1 - phase
       }

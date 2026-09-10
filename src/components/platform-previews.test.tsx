@@ -31,6 +31,26 @@ describe('PlatformPreviews editor-to-preview locating', () => {
     vi.unstubAllGlobals()
   })
 
+  it('applies image frames immediately and keeps copying available', async () => {
+    let formatting = DEFAULT_ARTICLE_FORMATTING
+    const onFormattingChange = vi.fn(next => { formatting = next; render() })
+    const render = () => root.render(
+      <PlatformPreviews activePlatform="wechat" title="图片边框" html='<p><img src="image.png" alt="原图"></p>'
+        formatting={formatting} onFormattingChange={onFormattingChange}
+        previewDevice="desktop" onPreviewDeviceChange={vi.fn()} />,
+    )
+    await act(async () => render())
+    const click = async (selector: string) => act(async () => container.querySelector<HTMLButtonElement>(selector)!.click())
+    await click('.preview-settings-toggle')
+    await click('#wechat-settings-style-trigger')
+    const white = Array.from(container.querySelectorAll<HTMLButtonElement>('.image-frame-options button')).find(button => button.textContent === '圆角白边')!
+    await act(async () => white.click())
+    expect(container.querySelector<HTMLImageElement>('.wechat-content img')?.style.borderWidth).toBe('6px')
+    expect(onFormattingChange).toHaveBeenCalledWith(expect.objectContaining({ wechat: expect.objectContaining({ imageFrame: 'white' }) }))
+    expect(container.querySelector<HTMLButtonElement>('.wechat-copy-button')?.disabled).toBe(false)
+    expect(container.querySelector('.wechat-theme-actions')).toBeNull()
+  })
+
   it('centers and highlights the requested source block in the right preview', async () => {
     let resizeCallback: ResizeObserverCallback | null = null
     const disconnect = vi.fn()
@@ -317,7 +337,7 @@ describe('PlatformPreviews editor-to-preview locating', () => {
     expect(applyWechat).not.toHaveBeenCalled()
 
     await act(async () => renderPreview('wechat'))
-    expect(applyWechat).toHaveBeenCalledTimes(1)
+    expect(applyWechat.mock.calls.filter(call => call[2])).toHaveLength(1)
   })
 
   it('keeps formatting controls current while rendering a deferred formatting snapshot', async () => {
@@ -337,7 +357,7 @@ describe('PlatformPreviews editor-to-preview locating', () => {
       />,
     ))
 
-    expect(applyWechat).toHaveBeenLastCalledWith(expect.any(String), expect.any(Object), deferredFormatting)
+    expect(applyWechat).toHaveBeenCalledWith(expect.any(String), expect.any(Object), deferredFormatting)
     await act(async () => container.querySelector<HTMLButtonElement>('#wechat-settings-style-trigger')?.click())
     const large = Array.from(container.querySelectorAll<HTMLButtonElement>('#wechat-settings-style-panel [role="radio"]'))
       .find(button => button.textContent === '大')
@@ -361,7 +381,7 @@ describe('PlatformPreviews editor-to-preview locating', () => {
     expect(container.querySelector('.preview-sync-status')?.classList.contains('updating')).toBe(true)
   })
 
-  it('defaults WeChat themes to the compact category, keeps All last, and removes the duplicate generic layout control', async () => {
+  it('shows recommended image cards with unchanged theme names and All first', async () => {
     const onFormattingChange = vi.fn()
     await act(async () => {
       root.render(
@@ -379,17 +399,15 @@ describe('PlatformPreviews editor-to-preview locating', () => {
     })
 
     const categoryButtons = Array.from(container.querySelectorAll<HTMLButtonElement>('.wechat-theme-categories button'))
-    expect(categoryButtons.map(button => button.textContent)).toEqual(['简约', '书卷', '杂志', '商务', '科技', '活力', '全部'])
+    expect(categoryButtons.map(button => button.textContent)).toEqual(['全部', '简约', '书卷', '杂志', '商务', '科技', '活力'])
     expect(categoryButtons[0].getAttribute('aria-selected')).toBe('true')
     expect(container.querySelectorAll('.wechat-theme-card').length).toBeGreaterThan(0)
     expect(container.querySelectorAll('.wechat-theme-card').length).toBeLessThan(26)
-    expect(container.querySelectorAll('.wechat-theme-card .wechat-theme-graphic')).toHaveLength(
+    expect(container.querySelectorAll('.wechat-theme-card .wechat-theme-specimen')).toHaveLength(
       container.querySelectorAll('.wechat-theme-card').length,
     )
-    expect(container.querySelectorAll('.wechat-theme-card [data-preview-part="title"]')).toHaveLength(
-      container.querySelectorAll('.wechat-theme-card').length,
-    )
-    expect(container.querySelectorAll('.wechat-theme-card [data-preview-part="quote"]')).toHaveLength(
+    expect(Array.from(container.querySelectorAll('.wechat-theme-card footer strong')).map(element => element.textContent)).toEqual(['白盒展签', '墨白', '克莱因蓝', '纸上散文'])
+    expect(container.querySelectorAll('.wechat-theme-card [data-preview-part="image"]')).toHaveLength(
       container.querySelectorAll('.wechat-theme-card').length,
     )
     expect(container.querySelector('.wechat-theme-card .wechat-theme-preview-document')).toBeNull()
@@ -400,7 +418,7 @@ describe('PlatformPreviews editor-to-preview locating', () => {
     await act(async () => container.querySelector<HTMLButtonElement>('.preview-settings-toggle')?.click())
     expect(container.querySelector('.wechat-viewport')?.nextElementSibling?.classList.contains('preview-tool-resizer')).toBe(true)
     expect(container.querySelector('.preview-context-actions .preview-settings-toggle')?.getAttribute('aria-label')).toContain('排版')
-    expect(container.querySelector('.wechat-content [data-wechat-theme="literary"]')).not.toBeNull()
+    expect(container.querySelector('.wechat-content [data-wechat-theme="morandi-green"]')).not.toBeNull()
     expect(container.querySelector('#wechat-settings-layout-trigger')?.getAttribute('aria-selected')).toBe('true')
     expect(container.querySelectorAll('#wechat-theme-panel .inspector-tabs [role="tab"]')).toHaveLength(2)
     expect(container.querySelector('#wechat-settings-layout-panel [aria-label="选择文章版式"]')).toBeNull()
@@ -416,67 +434,61 @@ describe('PlatformPreviews editor-to-preview locating', () => {
     onFormattingChange.mockClear()
 
     await act(async () => container.querySelector<HTMLButtonElement>('#wechat-settings-layout-trigger')?.click())
-    await act(async () => categoryButtons.at(-1)?.click())
+    await act(async () => categoryButtons[0]?.click())
     const cards = container.querySelectorAll<HTMLElement>('.wechat-theme-card')
     expect(cards).toHaveLength(26)
     const swiss = Array.from(cards).find(card => card.textContent?.includes('瑞士索引'))!
     const swissSelect = swiss.querySelector<HTMLButtonElement>('.wechat-theme-select-target')!
 
     await act(async () => swissSelect.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })))
-    expect(container.querySelector('.wechat-content [data-wechat-theme="literary"]')).not.toBeNull()
+    expect(container.querySelector('.wechat-content [data-wechat-theme="morandi-green"]')).not.toBeNull()
     expect(container.querySelector('.wechat-content [data-wechat-theme="swiss-index"]')).toBeNull()
     expect(onFormattingChange).not.toHaveBeenCalled()
 
     await act(async () => swissSelect.click())
-    expect(container.querySelector('.wechat-content [data-wechat-theme="swiss-index"]')).not.toBeNull()
-    expect(onFormattingChange).not.toHaveBeenCalled()
-    await act(async () => container.querySelector<HTMLButtonElement>('.wechat-theme-action-buttons .primary-button')?.click())
+    expect(container.querySelector('.wechat-theme-actions')).toBeNull()
     expect(onFormattingChange).toHaveBeenCalledWith(expect.objectContaining({
       wechat: expect.objectContaining({ themeId: 'swiss-index' }),
     }))
   })
 
-  it('restores unapplied themes and styles, and discards previews on close or platform change', async () => {
-    const onFormattingChange = vi.fn()
-    const render = (platform: 'wechat' | 'x' = 'wechat', formatting = DEFAULT_ARTICLE_FORMATTING) => root.render(
-      <PlatformPreviews activePlatform={platform} title="主题试用" html="<p>保留正文</p>"
+  it('saves theme and color choices immediately and retains them across closing and platform changes', async () => {
+    let formatting = DEFAULT_ARTICLE_FORMATTING
+    const onFormattingChange = vi.fn(next => { formatting = next; render() })
+    const render = (platform: 'wechat' | 'x' = 'wechat') => root.render(
+      <PlatformPreviews activePlatform={platform} title="主题切换" html="<p>保留正文</p>"
         formatting={formatting} onFormattingChange={onFormattingChange}
         previewDevice="desktop" onPreviewDeviceChange={vi.fn()} />,
     )
     const click = async (selector: string) => act(async () => container.querySelector<HTMLButtonElement>(selector)!.click())
     await act(async () => render())
     await click('.preview-settings-toggle')
-    await click('button[aria-label^="预览克莱因蓝主题"]')
-    expect(container.querySelectorAll('.wechat-theme-card.selected [aria-label="选择文章强调色"]')).toHaveLength(1)
-    expect(container.querySelector('#wechat-settings-style-panel [aria-label="选择文章强调色"]')).toBeNull()
-    await click('.wechat-theme-card.selected [aria-label="orange"]')
-    expect(container.querySelector('.wechat-theme-card.selected [aria-label="orange"]')?.getAttribute('aria-checked')).toBe('true')
-    expect(onFormattingChange).not.toHaveBeenCalled()
+    await click('button[aria-label^="应用克莱因蓝主题"]')
+    expect(onFormattingChange).toHaveBeenCalledTimes(1)
+    expect(container.querySelector('.wechat-content [data-wechat-theme="klein"]')).not.toBeNull()
+    expect(container.querySelector('.wechat-theme-card .theme-card-colors')).toBeNull()
+    expect(container.querySelectorAll('.wechat-palette-dock')).toHaveLength(1)
+    await click('.wechat-palette-dock [aria-label="orange"]')
+    expect(formatting.wechat.accentByTheme.klein).toBe('#f06a2a')
     await click('#wechat-settings-style-trigger')
     await click('[aria-label="选择文章字号"] button:last-child')
-    expect(onFormattingChange).not.toHaveBeenCalled()
-    expect(container.querySelector<HTMLButtonElement>('.wechat-copy-button')!.disabled).toBe(true)
-    await click('.wechat-theme-action-buttons button:first-child')
-    expect(container.querySelector('.wechat-content [data-wechat-theme="literary"]')).not.toBeNull()
-    expect(container.querySelector('[aria-label="选择文章字号"] button:last-child')?.getAttribute('aria-checked')).toBe('false')
+    expect(formatting.fontSize).toBe('large')
     expect(container.querySelector<HTMLButtonElement>('.wechat-copy-button')!.disabled).toBe(false)
-    await click('#wechat-settings-layout-trigger')
-    await click('button[aria-label^="预览克莱因蓝主题"]')
     await click('.settings-close')
-    expect(container.querySelector('.wechat-content [data-wechat-theme="literary"]')).not.toBeNull()
-    await click('.preview-settings-toggle')
-    await click('button[aria-label^="预览克莱因蓝主题"]')
+    expect(container.querySelector('.wechat-content [data-wechat-theme="klein"]')).not.toBeNull()
     await act(async () => render('x'))
     await act(async () => render())
-    expect(container.querySelector('.wechat-content [data-wechat-theme="literary"]')).not.toBeNull()
-    await click('button[aria-label^="预览克莱因蓝主题"]')
-    const externalFormatting = { ...DEFAULT_ARTICLE_FORMATTING, fontSize: 'small' as const }
-    await act(async () => render('wechat', externalFormatting))
-    expect(container.querySelector('.wechat-content [data-wechat-theme="literary"]')).not.toBeNull()
-    expect(onFormattingChange).not.toHaveBeenCalled()
+    expect(container.querySelector('.wechat-content [data-wechat-theme="klein"]')).not.toBeNull()
+    await click('.preview-settings-toggle')
+    await click('#wechat-settings-layout-trigger')
+    await click('button[aria-label^="应用墨白主题"]')
+    await click('button[aria-label^="应用克莱因蓝主题"]')
+    expect(container.querySelector('.wechat-palette-dock [aria-label="orange"]')?.getAttribute('aria-checked')).toBe('true')
+    await click('.wechat-palette-dock header button')
+    expect(formatting.wechat.accentByTheme.klein).toBeUndefined()
   })
 
-  it('copies the inline-styled WeChat body as rich HTML', async () => {
+  it('copies the current WeChat theme even while the visual preview still has a deferred snapshot', async () => {
     const write = vi.fn().mockResolvedValue(undefined)
     let clipboardPayload: Record<string, Blob> | undefined
     class ClipboardItemMock {
@@ -495,7 +507,8 @@ describe('PlatformPreviews editor-to-preview locating', () => {
         activePlatform="wechat"
         title="Clipboard preview"
         html="<h2>复制标题</h2><p>保留公众号排版</p>"
-        formatting={DEFAULT_ARTICLE_FORMATTING}
+        formatting={{ ...DEFAULT_ARTICLE_FORMATTING, wechat: { ...DEFAULT_ARTICLE_FORMATTING.wechat, themeId: 'klein' } }}
+        renderFormatting={DEFAULT_ARTICLE_FORMATTING}
         previewDevice="desktop"
         onPreviewDeviceChange={vi.fn()}
       />,
@@ -504,13 +517,21 @@ describe('PlatformPreviews editor-to-preview locating', () => {
     const copyButton = container.querySelector<HTMLButtonElement>('button[aria-label="复制公众号格式"]')!
     await act(async () => {
       copyButton.click()
-      await Promise.resolve()
+      await vi.waitFor(() => expect(write).toHaveBeenCalledTimes(1), { timeout: 2000 })
     })
 
     expect(write).toHaveBeenCalledTimes(1)
     expect(clipboardPayload?.['text/html']).toBeInstanceOf(Blob)
     expect(clipboardPayload?.['text/html'].type).toBe('text/html')
     expect(clipboardPayload?.['text/plain'].type).toBe('text/plain')
+    const copiedHtml = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(String(reader.result))
+      reader.onerror = () => reject(reader.error)
+      reader.readAsText(clipboardPayload!['text/html'])
+    })
+    expect(copiedHtml).toContain('data-wechat-theme="klein"')
+    expect(container.querySelector('.wechat-content [data-wechat-theme="morandi-green"]')).not.toBeNull()
     expect(copyButton.getAttribute('aria-label')).toContain('已复制')
     expect(copyButton.getAttribute('aria-label')).toBe('公众号格式已复制')
   })

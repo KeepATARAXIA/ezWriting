@@ -3,6 +3,7 @@ import DOMPurify from 'dompurify'
 import { Marked, type Token } from 'marked'
 import { isLocalVideoReference, localVideoBlob } from './local-video-registry'
 import { isSupportedVideoDataUri, localVideoFileName, supportedVideoDataMimeType } from './video-assets'
+import { hydrateMath, mathExtension, type MathSource } from './markdown-math'
 
 // Keep this compatibility rule local to article rendering, without changing the global lexer.
 const articleMarkdown = new Marked({
@@ -32,6 +33,41 @@ const articleMarkdown = new Marked({
     },
   },
 })
+articleMarkdown.use(mathExtension)
+const sourceMarkdown = new Marked(mathExtension)
+
+export function lexArticleMarkdown(source: string) {
+  return sourceMarkdown.lexer(source, { ...sourceMarkdown.defaults, gfm: true })
+}
+
+export function markdownMathRanges(source: string): Array<MathSource & { from: number; to: number }> {
+  const ranges: Array<MathSource & { from: number; to: number }> = []
+  const visit = (tokens: Token[], parentRaw: string, base: number) => {
+    let offset = 0
+    for (const token of tokens) {
+      let start = parentRaw.indexOf(token.raw, offset)
+      let raw = token.raw
+      // Blockquotes and list continuations remove prefixes before lexing their
+      // children. Match those prefixes back to the untouched editor document.
+      if (start < 0 && raw.includes('\n')) {
+        const pattern = raw.split('\n').map(line => line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\n[ \\t>]*')
+        const match = new RegExp(pattern).exec(parentRaw.slice(offset))
+        if (match) { start = offset + match.index; raw = match[0] }
+      }
+      if (start < 0) continue
+      offset = start + raw.length
+      if (token.type === 'ezMathInline' || token.type === 'ezMathBlock') {
+        ranges.push({ ...(token as unknown as MathSource), raw, from: base + start, to: base + offset })
+      } else if (token.type === 'list') {
+        visit(token.items, raw, base + start)
+      } else if ('tokens' in token && token.tokens) {
+        visit(token.tokens, raw, base + start)
+      }
+    }
+  }
+  visit(lexArticleMarkdown(source), source, 0)
+  return ranges
+}
 
 // Use the preview lexer for additional editor spans, keeping original source offsets.
 export function markdownInlineStrongRanges(source: string): Array<{ from: number; to: number }> {
@@ -118,6 +154,8 @@ const SAFE_CONTENT_DATA_ATTRIBUTES = [
   'data-callout-title',
   'data-checked',
   'data-ez-format',
+  'data-ez-math',
+  'data-ez-math-display',
   'data-ez-task-marker',
   'data-ez-video-name',
   'data-footnote-content',
@@ -356,7 +394,11 @@ function sanitizeContentHtmlWithAttributes(html: string, additionalAttributes: s
     ADD_ATTR: [...SAFE_CONTENT_DATA_ATTRIBUTES, ...additionalAttributes],
   })
   const filtered = filterLocalVideos(filterInlineStyles(sanitized))
-  return images.restore(restoreHtmlEmbeddedVideos(filtered, embeddedVideos.videos))
+  const restored = images.restore(restoreHtmlEmbeddedVideos(filtered, embeddedVideos.videos))
+  if (!restored.includes('data-ez-math')) return restored
+  const document = new DOMParser().parseFromString(restored, 'text/html')
+  hydrateMath(document)
+  return document.body.innerHTML
 }
 
 export function sanitizeContentHtml(html: string): string {
@@ -786,12 +828,22 @@ function convertStandaloneImageCaptions(document: Document): void {
 export function renderMarkdownToSafeHtml(markdown: string): string {
   const embeddedVideos = compactHtmlEmbeddedVideos(markdown)
   const embeddedImages = compactMarkdownEmbeddedImages(embeddedVideos.html)
+  const math = embeddedImages.markdown.includes('$') ? markdownMathRanges(embeddedImages.markdown) : []
+  // Keep compatibility rewrites (highlights, comments, blank lines) out of TeX.
+  let protectedMarkdown = embeddedImages.markdown
+  let prefix = 'EZWRITINGMATH'
+  while (protectedMarkdown.includes(prefix)) prefix += 'X'
+  for (let index = math.length - 1; index >= 0; index -= 1) {
+    const range = math[index]
+    protectedMarkdown = protectedMarkdown.slice(0, range.from) + `${prefix}${index}END` + protectedMarkdown.slice(range.to)
+  }
   const syntaxNormalized = separateCalloutMarker(
-    normalizeObsidianInlineSyntax(normalizeObsidianImages(normalizeMarkdownStrongWhitespace(embeddedImages.markdown))),
+    normalizeObsidianInlineSyntax(normalizeObsidianImages(normalizeMarkdownStrongWhitespace(protectedMarkdown))),
   )
   const extracted = extractMarkdownFootnotes(syntaxNormalized)
   const footnotes = injectMarkdownFootnoteReferences(extracted.body, extracted.definitions)
-  const normalized = preserveMarkdownBlankLines(footnotes.markdown)
+  let normalized = preserveMarkdownBlankLines(footnotes.markdown)
+  math.forEach((range, index) => { normalized = normalized.replace(`${prefix}${index}END`, () => range.raw) })
   const parsed = String(articleMarkdown.parse(normalized, { gfm: true, breaks: true }))
   const document = new DOMParser().parseFromString(parsed, 'text/html')
 

@@ -6,7 +6,7 @@ export const AI_PROVIDERS = {
 } as const
 
 export type AiProvider = keyof typeof AI_PROVIDERS
-export type AiAction = 'test' | 'generate' | 'polish'
+export type AiAction = 'test' | 'generate' | 'polish' | 'chat'
 export interface AiProfile { model: string; apiKey: string }
 export interface AiSession { provider: AiProvider; profiles: Record<AiProvider, AiProfile> }
 export const AI_PROMPT_LIMIT = 8_000
@@ -30,8 +30,12 @@ export function isAiProvider(value: unknown): value is AiProvider {
 }
 
 export const AI_ERRORS = {
+  image_timeout: '图片生成等待超过 10 分钟，本次请求已停止。请检查 Codex 服务或网络后重试。',
+  image_connection_timeout: '本机 Codex 初始化或启动生图请求超时，请检查连接程序与网络后重试。',
+  image_unavailable: '当前 Codex 连接不支持内置生图，请检查本机 Codex 版本与账号权限。',
+  image_empty: 'Codex 未返回完整图片，请重新生成；文字回复不会作为图片使用。',
   codex_missing: '未找到 Codex CLI，请检查本机安装或 EZWRITING_CODEX_BIN 路径。',
-  codex_unavailable: '无法连接本机 Codex。请运行 npm run codex:bridge，并允许浏览器访问本地网络。',
+  codex_unavailable: '无法连接本机 Codex。Windows 请在项目目录运行 npm.cmd run codex:bridge（macOS / Linux 使用 npm run codex:bridge），保持终端运行后重试，并允许浏览器访问本地网络。',
   codex_pairing: '连接码无效或已过期，请粘贴当前连接程序窗口中的连接码。',
   codex_login: '请先在本机运行 codex login，通过 ChatGPT 登录。此连接只使用订阅，不使用 API Key 计费。',
   codex_busy: '本机 Codex 正在处理另一条请求，请完成或停止后重试。',

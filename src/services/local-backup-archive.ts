@@ -61,6 +61,7 @@ function assetId(mime: string, digest: string): string {
 
 function mapSources(draft: PersistedDraft, replace: (value: string) => string): PersistedDraft {
   return { ...draft, article: { ...draft.article,
+    coverImage: draft.article.coverImage ? { ...draft.article.coverImage, source: replace(draft.article.coverImage.source) } : undefined,
     html: replace(draft.article.html),
     markdown: draft.article.markdown === undefined ? undefined : replace(draft.article.markdown),
     sourceText: draft.article.sourceText === undefined ? undefined : replace(draft.article.sourceText),
@@ -224,6 +225,11 @@ async function readEntry(zip: JSZip, name: string, size: number, options: Backup
 
 function normalizeArchiveDraft(raw: unknown, exportedAt: string, assets: ReadonlyMap<string, Pick<DraftBackupAsset, 'mimeType'>>): PersistedDraft {
   if (!record(raw) || !record(raw.article) || typeof raw.article.html !== 'string') throw new Error('备份稿件结构无效。')
+  if (record(raw.article.coverImage)) {
+    const source = raw.article.coverImage.source
+    const match = typeof source === 'string' ? /^dispatch-asset:\/\/([a-z0-9-]+)$/.exec(source) : null
+    if (!match || !/^image\/(png|jpeg|webp)$/.test(assets.get(match[1])?.mimeType ?? '')) throw new Error('备份封面引用了缺失或无效图片。')
+  }
   for (const field of ['html', 'markdown', 'sourceText']) {
     const value = raw.article[field]
     if (typeof value !== 'string') continue

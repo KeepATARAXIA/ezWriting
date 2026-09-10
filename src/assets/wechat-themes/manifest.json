@@ -1,0 +1,142 @@
+{
+  "generator": "Built-in image_gen",
+  "date": "2026-09-09",
+  "purpose": "Local theme preview artwork; never inserted into article content.",
+  "assets": [
+    {
+      "id": "literary",
+      "file": "literary.jpg",
+      "prompt": "Create ONE independent premium editorial thumbnail photograph. Landscape 3:2, edge-to-edge. Open blank cream book and a single dried stem on an ivory linen table beside window, soft warm daylight, contemplative literary editorial photograph. Recognizable at small size, restrained simple composition. No text, lettering, logos, watermarks, border, UI or collage. Asset identifier literary."
+    },
+    {
+      "id": "swiss-index",
+      "file": "swiss-index.jpg",
+      "prompt": "Create ONE independent premium website theme thumbnail. Landscape 3:2, edge-to-edge. Top-down editorial still life of precisely aligned white paper sheets, one vermilion-red square and a metal drafting ruler, Swiss graphic design discipline, white background, hard clean shadows. Strong simple composition recognizable at 180px wide. No text, letters, numbers, logos, watermarks, border, UI or collage. Asset identifier swiss-index."
+    },
+    {
+      "id": "night-film",
+      "file": "night-film.jpg",
+      "prompt": "Create ONE independent premium website theme thumbnail. Landscape 3:2, edge-to-edge. Cinematic photograph of a quiet empty city street at blue hour, one amber streetlamp reflected on wet pavement, deep navy shadows, restrained widescreen film atmosphere. Strong simple composition recognizable at 180px wide. No text, letters, numbers, logos, watermarks, border, UI or collage. Asset identifier night-film."
+    },
+    {
+      "id": "white-cube",
+      "file": "white-cube.jpg",
+      "prompt": "Create one premium editorial photograph for a small website theme preview thumbnail, landscape 3:2. Theme: White Cube / minimalist art exhibition. Subject: pristine white architectural planes intersecting diagonally beneath a clear soft cobalt-blue sky, sharp sunlight creating elegant geometric shadows. Restrained architectural photography, white dominates, light blue focal area, refined spacious composition with recognizable forms even at 180px wide. Edge-to-edge image only, no interface, no border, no collage, absolutely no text, letters, logo or watermark. Save the generated image."
+    },
+    {
+      "id": "pixel-quest",
+      "file": "pixel-quest.jpg",
+      "prompt": "Create ONE independent premium website theme thumbnail. Landscape 3:2, edge-to-edge. Beautiful crisp pixel art landscape with grassy floating island, a tiny golden treasure chest and pale blue sky, retro 16-bit adventure aesthetic, clean big readable pixel clusters. Strong simple composition recognizable at 180px wide. No text, letters, numbers, logos, watermarks, border, UI or collage. Asset identifier pixel-quest."
+    },
+    {
+      "id": "velocity-report",
+      "file": "velocity-report.jpg",
+      "prompt": "Create ONE independent premium website theme thumbnail. Landscape 3:2, edge-to-edge. Dynamic editorial sports photograph of red running track curving diagonally with sharp white lane markings, bold geometry, late afternoon sunlight, no people. Strong simple composition recognizable at 180px wide. No text, letters, numbers, logos, watermarks, border, UI or collage. Asset identifier velocity-report."
+    },
+    {
+      "id": "mobai",
+      "file": "mobai.jpg",
+      "prompt": "Create ONE independent premium editorial thumbnail photograph. Landscape 3:2, edge-to-edge. Minimal white ceramic vase holding one elegant olive branch, on warm white table, sunlight and soft leaf shadows, quiet offwhite interior, premium still life photography. Recognizable at small size, restrained simple composition. No text, lettering, logos, watermarks, border, UI or collage. Asset identifier mobai."
+    },
+    {
+      "id": "klein",
+      "file": "klein.jpg",
+      "prompt": "Create ONE independent premium editorial thumbnail photograph. Landscape 3:2, edge-to-edge. Bold ultramarine blue sky above a diagonal white concrete architectural wall, precise minimalist architectural photography, saturated Klein blue dominates upper half. Recognizable at small size, restrained simple composition. No text, lettering, logos, watermarks, border, UI or collage. Asset identifier klein."
+    },
+    {
+      "id": "xuanzhi",
+      "file": "xuanzhi.jpg",
+      "prompt": "Create ONE independent premium website theme thumbnail. Landscape 3:2, edge-to-edge. Minimal Chinese ink wash painting of distant misty mountains and a small pine tree beside quiet water, ivory rice paper, charcoal ink, generous negative space, refined traditional literati painting. Strong simple composition recognizable at 180px wide. No text, letters, logos, watermarks, border, UI or collage. Asset identifier xuanzhi."
+    },
+    {
+      "id": "morandi-green",
+      "file": "morandi-green.jpg",
+      "prompt": "Create ONE independent premium editorial thumbnail photograph. Landscape 3:2, edge-to-edge. White porcelain tea cup on two neutral linen-bound books, blurred sage-green leaves in background, diffuse morning sunlight, refined muted green lifestyle still life. Recognizable at small size, restrained simple composition. No text, lettering, logos, watermarks, border, UI or collage. Asset identifier morandi-green."
+    },
+    {
+      "id": "midnight-gold",
+      "file": "midnight-gold.jpg",
+      "prompt": "Create ONE independent premium website theme thumbnail. Landscape 3:2, edge-to-edge. Premium architectural photograph looking up at dark charcoal skyscraper facades catching thin warm golden sunlight, elegant financial editorial mood, strong ascending geometry. Strong simple composition recognizable at 180px wide. No text, letters, logos, watermarks, border, UI or collage. Asset identifier midnight-gold."
+    },
+    {
+      "id": "cream-orange",
+      "file": "cream-orange.jpg",
+      "prompt": "Create ONE independent premium website theme thumbnail. Landscape 3:2, edge-to-edge. One fresh orange and a small slice of orange cream cake on an ivory ceramic plate, warm cream background, cheerful soft sunlight, premium food still life. Strong simple composition recognizable at 180px wide. No text, letters, logos, watermarks, border, UI or collage. Asset identifier cream-orange."
+    },
+    {
+      "id": "mint-soda",
+      "file": "mint-soda.jpg",
+      "prompt": "Create ONE independent premium website theme thumbnail. Landscape 3:2, edge-to-edge. Clear glass of sparkling soda with mint leaves and a lime slice, fresh pale mint background, crisp sunlight, condensation and restrained bubbles, premium beverage photography. Strong simple composition recognizable at 180px wide. No text, letters, logos, watermarks, border, UI or collage. Asset identifier mint-soda."
+    },
+    {
+      "id": "brick-industry",
+      "file": "brick-industry.jpg",
+      "prompt": "Create ONE independent premium website theme thumbnail. Landscape 3:2, edge-to-edge. Warm terracotta brick workshop wall, a precisely crafted matte steel chair and simple concrete floor, industrial design editorial photograph, side sunlight, orange brick and charcoal palette. Strong simple composition recognizable at 180px wide. No readable text, letters, logos, watermarks, border, UI or collage. Asset identifier brick-industry."
+    },
+    {
+      "id": "mori-journal",
+      "file": "mori-journal.jpg",
+      "prompt": "Create ONE independent premium website theme thumbnail. Landscape 3:2, edge-to-edge. Sunlit fern fronds beside a winding quiet forest path, moss green and warm cream highlights, intimate nature editorial photography, fresh peaceful woodland. Strong simple composition recognizable at 180px wide. No readable text, letters, logos, watermarks, border, UI or collage. Asset identifier mori-journal."
+    },
+    {
+      "id": "fleet-street",
+      "file": "fleet-street.jpg",
+      "prompt": "Create ONE independent premium website theme thumbnail. Landscape 3:2, edge-to-edge. Vintage black typewriter beside folded unprinted ivory newsprint sheets, refined monochrome documentary still life, side daylight, clean strong editorial composition. Strong simple composition recognizable at 180px wide. No readable text, letters, logos, watermarks, border, UI or collage. Asset identifier fleet-street."
+    },
+    {
+      "id": "blueprint",
+      "file": "blueprint.jpg",
+      "prompt": "Create ONE independent premium website theme thumbnail. Landscape 3:2, edge-to-edge. White architectural scale model of modern angular house on cobalt blue drafting surface, a rolled blank plan nearby, precise soft shadows, premium architectural studio photograph. Strong simple composition recognizable at 180px wide. No readable text, letters, logos, watermarks, border, UI or collage. Asset identifier blueprint."
+    },
+    {
+      "id": "peach-soda",
+      "file": "peach-soda.jpg",
+      "prompt": "Create ONE independent premium website theme thumbnail. Landscape 3:2, edge-to-edge. Two fresh pink peaches and a glass of pale peach soda on a soft blush pink tabletop, bright natural daylight, playful premium fruit still life, ample clean space. Strong simple composition recognizable at 180px wide. No text, letters, logos, watermarks, border, UI or collage. Asset identifier peach-soda."
+    },
+    {
+      "id": "mono-editorial",
+      "file": "mono-editorial.jpg",
+      "prompt": "Create ONE independent premium website theme thumbnail. Landscape 3:2, edge-to-edge. High contrast black and white photograph of sculptural concrete spiral stairway viewed from above, sharp geometry, sophisticated magazine editorial aesthetic. Strong simple composition recognizable at 180px wide. No text, letters, logos, watermarks, border, UI or collage. Asset identifier mono-editorial."
+    },
+    {
+      "id": "lemon-sea",
+      "file": "lemon-sea.jpg",
+      "prompt": "Create ONE independent premium website theme thumbnail. Landscape 3:2, edge-to-edge. Vivid yellow lemon on white seaside terrace ledge with deep blue Mediterranean sea beyond, crisp summer sunshine, minimal cheerful travel editorial photograph. Strong simple composition recognizable at 180px wide. No text, letters, logos, watermarks, border, UI or collage. Asset identifier lemon-sea."
+    },
+    {
+      "id": "wisteria",
+      "file": "wisteria.jpg",
+      "prompt": "Create ONE independent premium website theme thumbnail. Landscape 3:2, edge-to-edge. Graceful lavender wisteria flowers hanging beside an open blank cream book on a pale stone bench, soft spring light, romantic refined literary editorial photograph. Strong simple composition recognizable at 180px wide. No text, letters, logos, watermarks, border, UI or collage. Asset identifier wisteria."
+    },
+    {
+      "id": "hk-neon",
+      "file": "hk-neon.jpg",
+      "prompt": "Create ONE independent premium website theme thumbnail. Landscape 3:2, edge-to-edge. Cinematic Hong Kong old street corner at night, red taxi seen from rear beneath turquoise and red neon light tubes, rain reflections, nostalgic analog film mood, NO readable shop signs. Strong simple composition recognizable at 180px wide. No text, letters, logos, watermarks, border, UI or collage. Asset identifier hk-neon."
+    },
+    {
+      "id": "nordic",
+      "file": "nordic.jpg",
+      "prompt": "Create ONE independent premium website theme thumbnail. Landscape 3:2, edge-to-edge. Airy Nordic interior with one pale oak sculptural chair beside a large white curtain, sunlight across pale floor, white and light timber tones, elegant architectural photograph. Strong simple composition recognizable at 180px wide. No text, letters, logos, watermarks, border, UI or collage. Asset identifier nordic."
+    },
+    {
+      "id": "latte",
+      "file": "latte.jpg",
+      "prompt": "Create ONE independent premium website theme thumbnail. Landscape 3:2, edge-to-edge. Overhead editorial photograph of ceramic cup of latte with delicate leaf latte art on warm beige tabletop beside a linen napkin, minimal cozy coffee ritual. Strong simple composition recognizable at 180px wide. No text, letters, logos, watermarks, border, UI or collage. Asset identifier latte."
+    },
+    {
+      "id": "cyan-scape",
+      "file": "cyan-scape.jpg",
+      "prompt": "Create ONE independent premium website theme thumbnail. Landscape 3:2, edge-to-edge. Refined traditional Chinese mineral pigment landscape painting, layered azurite blue and malachite green mountains above pale mist and still river, elegant Song dynasty inspired composition, no calligraphy or seals. Strong simple composition recognizable at 180px wide. No text, letters, logos, watermarks, border, UI or collage. Asset identifier cyan-scape."
+    },
+    {
+      "id": "candy-pop",
+      "file": "candy-pop.jpg",
+      "prompt": "Create ONE independent premium website theme thumbnail. Landscape 3:2, edge-to-edge. Playful flat editorial illustration of oversized coral pink, cobalt blue and lemon yellow paper-cut flowers on warm white background, clean bold shapes, contemporary cheerful design, only three accent colors. Strong simple composition recognizable at 180px wide. No text, letters, logos, watermarks, border, UI or collage. Asset identifier candy-pop."
+    }
+  ],
+  "dimensions": [
+    600,
+    400
+  ],
+  "encoding": "JPEG quality 88, resized from generated originals"
+}

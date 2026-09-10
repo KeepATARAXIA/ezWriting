@@ -1,8 +1,10 @@
 import { lazy, Suspense, useState, type RefObject } from 'react'
 import { Download, FileDown, FilePlus2, FileUp, FolderOpen, HardDrive, LoaderCircle } from 'lucide-react'
 import type { AiSession } from '../domain/ai'
+import type { ArtworkEditor, CoverImage } from '../domain/artwork'
 import { readAiSettings, saveAiSettings } from '../lib/ai-settings'
 import type { AiSelection } from '../lib/ai-polish'
+import type { AiDocumentEditor } from '../lib/ai-document'
 import type { LibraryContent, LibraryItem } from '../domain/template-library'
 import { WorkbenchDialog } from './workbench-dialog'
 import { AiPolishDialog } from './ai-polish-dialog'
@@ -11,6 +13,7 @@ import type { WorkspaceMode } from '../lib/workbench-preferences'
 
 const TemplateLibrary = lazy(() => import('./template-library').then(module => ({ default: module.TemplateLibrary })))
 const AiSidebar = lazy(() => import('./ai-sidebar').then(module => ({ default: module.AiSidebar })))
+const ArtworkSidebar = lazy(() => import('./artwork-sidebar').then(module => ({ default: module.ArtworkSidebar })))
 
 interface Props {
   panel: WorkbenchPanel
@@ -43,6 +46,12 @@ interface Props {
   onInsertLibraryItem: (item: LibraryItem) => void
   aiSelection?: AiSelection | null
   onConfigureAi: () => void
+  aiDocumentEditor?: AiDocumentEditor | null
+  aiDraftId?: string | null
+  aiDraftTitle?: string
+  artworkEditor?: ArtworkEditor | null
+  coverImage?: CoverImage
+  onSaveCover: (cover: CoverImage) => string | undefined
 }
 
 export function WorkbenchPanels(props: Props) {
@@ -54,8 +63,9 @@ export function WorkbenchPanels(props: Props) {
   }
   const { panel } = props
   if (!panel) return null
+  if (panel === 'illustration' || panel === 'cover') return <Suspense fallback={<aside className="ai-sidebar"><p role="status">正在打开图片工具…</p></aside>}><ArtworkSidebar key={`${panel}-${props.aiDraftId ?? 'no-draft'}`} mode={panel} editor={props.artworkEditor} title={props.aiDraftTitle ?? ''} cover={props.coverImage} model={aiSession.profiles.codex.model} onModel={model => changeAiSession({ ...aiSession, profiles: { ...aiSession.profiles, codex: { ...aiSession.profiles.codex, model } } })} onSaveCover={props.onSaveCover} locked={props.locked || !props.aiDraftId} onClose={props.onClose} /></Suspense>
   if (panel === 'polish') return props.aiSelection ? <AiPolishDialog key={props.aiSelection.id} session={aiSession} onChange={changeAiSession} storageError={aiStorageError} locked={props.locked} selection={props.aiSelection} onClose={props.onClose} onConfigure={props.onConfigureAi} /> : null
-  if (panel === 'ai') return <Suspense fallback={<aside className="ai-sidebar" aria-label="AI 工具"><p role="status">正在打开 AI 工具…</p></aside>}><AiSidebar session={aiSession} onChange={changeAiSession} storageError={aiStorageError} locked={props.locked} onClose={props.onClose} /></Suspense>
+  if (panel === 'ai') return <Suspense fallback={<aside className="ai-sidebar" aria-label="AI 工具"><p role="status">正在打开 AI 工具…</p></aside>}><AiSidebar key={props.aiDraftId ?? 'no-draft'} editor={props.aiDocumentEditor} draftTitle={props.aiDraftTitle} session={aiSession} onChange={changeAiSession} storageError={aiStorageError} locked={props.locked} onClose={props.onClose} /></Suspense>
   if (panel === 'library') return <Suspense fallback={<aside className="template-library-sidebar" aria-label="模板素材库"><p role="status">正在打开素材库…</p><button type="button" onClick={props.onClose}>关闭模板素材库</button></aside>}><TemplateLibrary dismissGuardRef={props.libraryDismissGuardRef} onClose={props.onClose} selection={props.librarySelection} canInsert={Boolean(props.canInsertLibraryItem) && !props.locked} onInsert={props.onInsertLibraryItem} /></Suspense>
   const backupLocked = props.locked || props.backupStatus !== 'idle' || !props.hasRepository
   const title = { new: '新建文档', settings: '设置', library: '模板素材库', ai: 'AI 工具' }[panel]

@@ -68,6 +68,10 @@ export async function captureXhsCard(element: HTMLElement): Promise<Blob> {
   const clone = element.cloneNode(true) as HTMLElement
 
   inlineComputedStyles(element, clone)
+  if (clone.querySelector('[data-ez-math]')) {
+    const { replaceMathWithImages } = await import('./math-export')
+    await replaceMathWithImages(clone)
+  }
   await inlineImageSources(clone)
   clone.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml')
   clone.style.width = `${sourceWidth}px`

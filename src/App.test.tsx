@@ -561,7 +561,7 @@ describe('App publishing engine onboarding', () => {
     await act(async () => largeFont.click())
     await act(async () => wechatTab.click())
     expect(container.querySelector('.preview-workbench')?.classList.contains('theme-clean')).toBe(true)
-    expect(container.querySelector('[data-wechat-theme="literary"]')).not.toBeNull()
+    expect(container.querySelector('[data-wechat-theme="morandi-green"]')).not.toBeNull()
     await act(async () => xTab.click())
     expect(Array.from(container.querySelectorAll<HTMLButtonElement>('#x-settings-layout-panel [role="radio"]'))
       .find(button => button.textContent === '刊物')?.getAttribute('aria-checked')).toBe('true')
@@ -589,7 +589,7 @@ describe('App publishing engine onboarding', () => {
 
     expect(wechat.html).not.toContain('<mark')
     expect(wechat.html).toContain('data-ez-format="highlight"')
-    expect(wechat.html).toContain('data-wechat-theme="literary"')
+    expect(wechat.html).toContain('data-wechat-theme="morandi-green"')
     expect(wechat.markdown).toContain('<span style=')
     expect(xhs.html).toContain('font-weight: 750')
     expect(xhs.markdown).toContain('**重点内容**')

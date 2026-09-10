@@ -511,6 +511,7 @@ test('flushes an immediate edit before delete and restores the latest version', 
 
   await editTitle(page, '删除前最后一版')
   await openHistory(page)
+  await page.locator('.history-draft-menu-button').first().click()
   await page.locator('.history-delete-action').first().click()
   await page.locator('.history-undo-notice').getByRole('button', { name: '撤销', exact: true }).click()
   await openHistory(page)

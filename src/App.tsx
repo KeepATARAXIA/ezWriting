@@ -36,6 +36,7 @@ import {
 import type { ArticleDraft, MissingImageAction, MissingImageTarget, PlatformAccount, PublishResult } from './domain/article'
 import type { LibraryContent, LibraryInsertRequest, LibraryItem } from './domain/template-library'
 import type { AiSelection } from './lib/ai-polish'
+import type { AiDocumentEditor } from './lib/ai-document'
 import { DEFAULT_ARTICLE_FORMATTING, type ArticleFormatting } from './domain/formatting'
 import { DispatchControls, type BridgeState, type WorkState } from './components/dispatch-controls'
 import { HistorySidebar } from './components/history-sidebar'
@@ -89,7 +90,7 @@ import {
 } from './lib/file-parser'
 import { extractMissingImageTargets } from './lib/missing-assets'
 import { compactLocalVideoData, retainLocalVideoReferences, localVideoBlob, localVideoPreviewUrl } from './lib/local-video-registry'
-import { normalizeMarkdownStrongWhitespace } from './lib/markdown-compatibility'
+import { markdownMathRanges, normalizeMarkdownStrongWhitespace } from './lib/markdown-compatibility'
 import { getBrowserExtensionGuide } from './lib/browser-extension-install'
 import { getPlatformAccounts, publishDraft, waitForBridge } from './lib/wechatsync-bridge'
 import { useDraftAutosave } from './hooks/use-draft-autosave'
@@ -427,14 +428,16 @@ function reconcileSourceUpdate(previous: ArticleDraft, next: ArticleDraft): Arti
   return reconcileMissingAssetState(next, annotated.html, previous.html)
 }
 
-function repairLoadedMarkdownStrongWhitespace(article: ArticleDraft): { article: ArticleDraft; changed: boolean } {
+function repairLoadedMarkdownRendering(article: ArticleDraft): { article: ArticleDraft; changed: boolean } {
   if (article.sourceLanguage !== 'markdown' && typeof article.markdown !== 'string') {
     return { article, changed: false }
   }
 
   const source = resolveArticleSource(article)
   const normalizedSource = normalizeMarkdownStrongWhitespace(source.text)
-  if (normalizedSource === source.text) return { article, changed: false }
+  const hasLegacyMath = source.text.includes('$') && !article.html.includes('data-ez-math')
+    && markdownMathRanges(source.text).length > 0
+  if (normalizedSource === source.text && !hasLegacyMath) return { article, changed: false }
 
   return {
     article: reconcileSourceUpdate(article, updateArticleFromSource(article, normalizedSource)),
@@ -589,6 +592,8 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   const [librarySelection, setLibrarySelection] = useState<Extract<LibraryContent, { kind: 'text' }> | null>(null)
   const [libraryInsertRequest, setLibraryInsertRequest] = useState<(LibraryInsertRequest & { draftId: string }) | null>(null)
   const [aiSelection, setAiSelection] = useState<(AiSelection & { draftId: string }) | null>(null)
+  const [aiDocumentEditor, setAiDocumentEditor] = useState<AiDocumentEditor | null>(null)
+  const [artworkEditor, setArtworkEditor] = useState<import('./domain/artwork').ArtworkEditor | null>(null)
   const libraryInsertIdRef = useRef(0)
   const libraryDismissGuardRef = useRef<() => boolean>(() => true)
   const [helpOpen, setHelpOpen] = useState(false)
@@ -792,7 +797,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
       article: restoredArticle,
     }
     const normalizedArticle = normalizeArticleEditorTitle(restoredArticle)
-    const repaired = repairLoadedMarkdownStrongWhitespace(normalizedArticle)
+    const repaired = repairLoadedMarkdownRendering(normalizedArticle)
     const snapshot: CurrentDraftSnapshot = { ...persistedSnapshot, article: repaired.article }
     documentGenerationRef.current += 1
     draftRevisionRef.current += 1
@@ -1691,7 +1696,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
     setLibrarySelection(null)
     setPanel(next)
     if (next !== 'ai') setAiSelection(null)
-    if (next === 'library' || next === 'ai') {
+    if (next === 'library' || next === 'ai' || next === 'illustration' || next === 'cover') {
       setHistoryExpanded(false)
       setWorkspaceMode(current => current === 'preview' ? 'split' : current)
       setEditorView('edit'); setMobileWorkspace('edit')
@@ -1732,7 +1737,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
   const mediaNotice = [missing ? `${missing} 张图片待补齐` : '', videos ? `${videos} 个视频需在目标平台手动上传` : '', activePlatform === 'xhs' && gifs ? `${gifs} 个 GIF 将输出为静态图片` : ''].filter(Boolean).join(' · ')
   const notificationCount = (article?.warnings.length || 0) + [mediaNotice, error, historyError, autosave.error, backupNotice, backupProgress, undoDraft, previewNotice, bridgeState === 'missing' || bridgeState === 'error'].filter(Boolean).length
   useEffect(() => {
-    if (error || historyError || autosave.error || backupNotice || undoDraft || previewNotice) { setPanel(current => current === 'library' || current === 'ai' ? current : null); setNotificationsOpen(true) }
+    if (error || historyError || autosave.error || backupNotice || undoDraft || previewNotice) { setPanel(current => current === 'library' || current === 'ai' || current === 'illustration' || current === 'cover' ? current : null); setNotificationsOpen(true) }
   }, [error, historyError, autosave.error, backupNotice, undoDraft, previewNotice])
 
   return (
@@ -1837,7 +1842,7 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
         )}
       </header>
 
-      <div className={`workbench-layout${panel === 'library' ? ' library-open' : panel === 'ai' ? ' ai-open' : ''}`}>
+      <div className={`workbench-layout${panel === 'library' ? ' library-open' : panel === 'ai' || panel === 'illustration' || panel === 'cover' ? ' ai-open' : ''}`}>
         <WorkbenchNavigation
           historyOpen={historyUsesOverlay ? historyOverlayOpen : historyExpanded}
           draftCount={homeDrafts.length}
@@ -2259,6 +2264,8 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
                               onActiveBlockChange={updateActiveEditorLocation}
                               onCollectSelection={collectEditorSelection}
                               onAiSelection={optimizeEditorSelection}
+                              onAiDocumentReady={setAiDocumentEditor}
+                              onArtworkReady={setArtworkEditor}
                               libraryInsertRequest={libraryInsertRequest?.draftId === article.id ? libraryInsertRequest : null}
                               onLibraryInsertComplete={finishLibraryInsert}
                             />
@@ -2340,8 +2347,14 @@ export function App({ draftRepository: repositoryOverride }: AppProps = {}) {
       </div>
 
       <WorkbenchPanels panel={panel} onClose={() => openPanel(null)} libraryDismissGuardRef={libraryDismissGuardRef}
+        artworkEditor={article ? artworkEditor : null} coverImage={article?.coverImage} onSaveCover={coverImage => {
+          if (!article || exclusiveOperationRef.current !== null) return '当前稿件暂不可修改。'
+          markDraftDirty()
+          setArticle(current => current?.id === article.id ? { ...current, coverImage } : current)
+        }}
         onConfigureAi={() => openPanel('ai')}
         aiSelection={aiSelection?.draftId === article?.id ? aiSelection : null}
+        aiDocumentEditor={article ? aiDocumentEditor : null} aiDraftId={article?.id ?? null} aiDraftTitle={article?.title ?? ''}
         librarySelection={librarySelection} canInsertLibraryItem={Boolean(article)} onInsertLibraryItem={insertLibraryItem}
         onBlank={() => void createNewArticle()}
         onFile={() => fileInputRef.current?.click()} onDirectory={() => directoryInputRef.current?.click()}

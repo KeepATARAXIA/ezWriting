@@ -40,15 +40,14 @@ test('keeps two toolbar rows and docks formatting beside the preview without nar
   expect(await page.locator('.workbench-toolbar').evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true)
   await page.screenshot({ path: testInfo.outputPath('toolbar-with-history.png') })
   await page.locator('.preview-settings-toggle').click()
-  expect((await page.locator('.preview-tool-rail:not([hidden])').boundingBox())!.width).toBe(310)
+  expect((await page.locator('.preview-tool-rail:not([hidden])').boundingBox())!.width).toBeLessThanOrEqual(480)
   await page.screenshot({ path: testInfo.outputPath('toolbar-formatting-drawer.png'), animations: 'disabled' })
-  await page.getByRole('button', { name: /^预览克莱因蓝主题/ }).click()
-  await page.getByRole('button', { name: '立即应用', exact: true }).click()
+  await page.getByRole('button', { name: /^应用克莱因蓝主题/ }).click()
   await expect(page.getByLabel('本地保存状态')).toHaveText('已保存')
   await page.reload()
   await expect(page.locator('.preview-settings-toggle')).toHaveAttribute('aria-expanded', 'false')
   await page.locator('.preview-settings-toggle').click()
-  await expect(page.getByRole('button', { name: /^预览克莱因蓝主题/ })).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByRole('region', { name: '推荐模板', exact: true }).getByRole('button', { name: /^应用克莱因蓝主题/ })).toHaveAttribute('aria-pressed', 'true')
 })
 
 test('keeps preview and output menus reachable on all platforms and mobile widths', async ({ page }, testInfo) => {

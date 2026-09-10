@@ -92,6 +92,7 @@ describe('App local draft history', () => {
     expect(container.querySelector('.topbar-document-title')?.textContent).toBe('本地历史测试稿')
     expect(container.querySelector('.history-draft-title')?.textContent).toBe('本地历史测试稿')
 
+    await act(async () => container.querySelector<HTMLButtonElement>('.history-draft-menu-button')!.click())
     const deleteButton = container.querySelector<HTMLButtonElement>('.history-delete-action')!
     await act(async () => deleteButton.click())
     await vi.waitFor(async () => {
@@ -119,10 +120,11 @@ describe('App local draft history', () => {
     await act(async () => editWorkbenchTitle(container, '刚刚修改的稿件'))
     await act(async () => {
       container.querySelector<HTMLButtonElement>('.brand')!.click()
-      await new Promise(resolve => window.setTimeout(resolve, 50))
     })
-
-    expect(container.querySelector('.empty-workbench')).not.toBeNull()
+    await vi.waitFor(async () => {
+      await act(async () => {})
+      expect(container.querySelector('.empty-workbench')).not.toBeNull()
+    })
     expect(Array.from(container.querySelectorAll('.home-recent-grid strong')).map(node => node.textContent))
       .toEqual(['刚刚修改的稿件', '昨天的稿件'])
     expect((await repository.listDrafts())[0].title).toBe('刚刚修改的稿件')
@@ -130,9 +132,11 @@ describe('App local draft history', () => {
 
     await act(async () => {
       container.querySelector<HTMLButtonElement>('[aria-label="继续编辑：刚刚修改的稿件"]')!.click()
-      await new Promise(resolve => window.setTimeout(resolve, 50))
     })
-    expect(container.querySelector('.topbar-document-title')?.textContent).toBe('刚刚修改的稿件')
+    await vi.waitFor(async () => {
+      await act(async () => {})
+      expect(container.querySelector('.topbar-document-title')?.textContent).toBe('刚刚修改的稿件')
+    })
     expect(await repository.listDrafts()).toHaveLength(2)
   })
 
@@ -252,6 +256,24 @@ describe('App local draft history', () => {
     expect(container.textContent).not.toContain('同步历史记录')
   })
 
+  it('renders and saves existing math drafts without changing their Markdown source', async () => {
+    const source = '$$\\mathbf{总耗时} = a+b$$'
+    const draft = createPersistedDraft({
+      id: 'legacy-math', title: '旧公式稿', html: `<p>${source}</p>`,
+      markdown: source, sourceText: source, sourceLanguage: 'markdown', tags: [],
+      sourceFile: 'math.md', sourceKind: 'markdown', importedAt: '2026-09-09T00:00:00.000Z', warnings: [],
+    }, DEFAULT_ARTICLE_FORMATTING)
+    await repository.saveDraft(draft)
+    await renderApp()
+    await vi.waitFor(async () => {
+      await act(async () => {})
+      expect(container.querySelector('.wechat-content .katex')).not.toBeNull()
+      const saved = await repository.getDraft(draft.id)
+      expect(saved?.article.html).toContain('data-ez-math')
+      expect(saved?.article.sourceText).toBe(source)
+    })
+  })
+
   it('flushes the latest active edit before delete so undo restores that edit', async () => {
     await renderApp()
     await createBlankInWorkbench(container)
@@ -261,7 +283,10 @@ describe('App local draft history', () => {
     })
 
     await act(async () => {
-      container.querySelector<HTMLButtonElement>('.history-delete-action')?.click()
+      container.querySelector<HTMLButtonElement>('.history-draft-menu-button')!.click()
+    })
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('.history-delete-action')!.click()
       await new Promise(resolve => window.setTimeout(resolve, 50))
     })
     expect((await repository.getDraft(draftId))?.article.title).toBe('删除前最后一版')

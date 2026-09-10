@@ -1,6 +1,7 @@
-import { marked, type Token, type Tokens } from 'marked'
+import { type Token, type Tokens } from 'marked'
 import type { ArticleDraft, ArticleSourceLanguage } from '../domain/article'
-import { renderMarkdownToSafeHtml, sanitizeContentHtml, sanitizeInternalContentHtml } from './markdown-compatibility'
+import { lexArticleMarkdown, renderMarkdownToSafeHtml, sanitizeContentHtml, sanitizeInternalContentHtml } from './markdown-compatibility'
+import { mathSourceMarkdown } from './markdown-math'
 
 export interface ArticleSource {
   text: string
@@ -29,6 +30,8 @@ function markdownImage(alt: string, source: string, caption = ''): string {
 function markdownInline(node: Node): string {
   if (node.nodeType === Node.TEXT_NODE) return (node.textContent || '').replace(/\s+/g, ' ')
   if (!(node instanceof HTMLElement)) return ''
+  const math = mathSourceMarkdown(node)
+  if (math !== undefined) return math
   const content = Array.from(node.childNodes).map(markdownInline).join('')
   const tag = node.tagName.toLocaleLowerCase()
 
@@ -96,6 +99,8 @@ function markdownCallout(element: HTMLElement): string {
 }
 
 function markdownBlock(element: HTMLElement): string {
+  const math = mathSourceMarkdown(element)
+  if (math !== undefined) return math
   const tag = element.tagName.toLocaleLowerCase()
   if (element.hasAttribute('data-source-spacer')) return SOURCE_SPACER_SENTINEL
   if (/^h[1-6]$/.test(tag)) return `${'#'.repeat(Number(tag[1]))} ${markdownInline(element).trim()}`
@@ -175,7 +180,7 @@ function sameReference(left: string, right: string): boolean {
 }
 
 function markdownBlocks(text: string): SourceBlock[] {
-  const tokens = marked.lexer(text, { gfm: true })
+  const tokens = lexArticleMarkdown(text)
   const blocks: SourceBlock[] = []
   let cursor = 0
 
@@ -329,7 +334,7 @@ export function previewSourceBlocks(text: string, language: ArticleSourceLanguag
       footnotes.push({ blockIndex, lines })
       return
     }
-    const token = language === 'markdown' ? marked.lexer(raw, { gfm: true })[0] : undefined
+    const token = language === 'markdown' ? lexArticleMarkdown(raw)[0] : undefined
     if (token?.type === 'def') return
     if (token?.type === 'code' && /^ {0,3}(?:`{3,}|~{3,})/.test(raw)) {
       result.push({ blockIndex, lines: [block.line + 1] })

@@ -50,15 +50,16 @@ export class CodexRpc extends EventEmitter {
   pending = new Map()
   counter = 0
   closed = false
-  constructor(binary, cwd) {
+  constructor(binary, cwd, { images = false } = {}) {
     super()
+    this.images = images
     this.child = spawn(binary, ['app-server', '--stdio',
       '-c', 'web_search="disabled"', '-c', 'project_doc_max_bytes=0',
       '-c', 'features.shell_tool=false', '-c', 'features.multi_agent=false',
       '-c', 'features.memories=false', '-c', 'features.apps=false',
       '-c', 'features.plugins=false', '-c', 'features.hooks=false',
       '-c', 'features.browser_use=false', '-c', 'features.computer_use=false',
-      '-c', 'features.image_generation=false', '-c', 'features.code_mode_host=false',
+      '-c', `features.image_generation=${images}`, '-c', 'features.code_mode_host=false',
       '-c', 'features.shell_snapshot=false', '-c', 'features.goals=false',
       '-c', 'mcp_servers={}', '-c', 'analytics.enabled=false'],
     { cwd, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] })
@@ -71,7 +72,7 @@ export class CodexRpc extends EventEmitter {
     let buffer = ''
     this.child.stdout.on('data', chunk => {
       buffer += chunk
-      if (buffer.length > 2 * 1024 * 1024) { this.fail(new AiError('too_large')); return }
+      if (buffer.length > (images ? 30 : 2) * 1024 * 1024) { this.fail(new AiError('too_large')); return }
       let end
       while ((end = buffer.indexOf('\n')) >= 0) {
         const line = buffer.slice(0, end); buffer = buffer.slice(end + 1)
@@ -98,7 +99,7 @@ export class CodexRpc extends EventEmitter {
     if (this.closed) return Promise.reject(new AiError('codex_unavailable'))
     const id = ++this.counter
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { this.pending.delete(id); reject(new AiError('timeout')) }, 25_000)
+      const timer = setTimeout(() => { this.pending.delete(id); reject(new AiError(this.images ? 'image_connection_timeout' : 'timeout')) }, this.images ? 60_000 : 25_000)
       this.pending.set(id, { resolve, reject, timer })
       this.send({ id, method, params })
     })

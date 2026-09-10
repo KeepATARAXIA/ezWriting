@@ -1,6 +1,7 @@
 import { AI_PROMPT_LIMIT, AI_TIMEOUT_MS, AiError, isAiProvider, type AiProvider, type AiStreamEvent } from '../../../src/domain/ai'
 import { readSseData } from '../../../src/lib/ai-sse'
 import { POLISH_INSTRUCTION, readPolishInput } from '../../../src/lib/ai-polish'
+import { AI_CHAT_PROMPT_LIMIT, AI_CHAT_REQUEST_BYTES, CHAT_INSTRUCTION, readChatInput } from '../../../src/domain/ai-chat'
 
 // Only these official endpoints can receive keys. Client-supplied URLs are never used.
 const ENDPOINTS: Record<Exclude<AiProvider, 'codex'>, string> = {
@@ -13,7 +14,7 @@ const errorResponse = (code: AiError['code'], status: number) => Response.json({
 })
 
 async function readPayload(request: Request): Promise<unknown> {
-  const limit = 48 * 1024
+  const limit = AI_CHAT_REQUEST_BYTES
   if (Number(request.headers.get('Content-Length')) > limit || !request.body) throw new AiError('too_large')
   const reader = request.body.getReader()
   const decoder = new TextDecoder()
@@ -27,7 +28,9 @@ async function readPayload(request: Request): Promise<unknown> {
       if (bytes > limit) throw new AiError('too_large')
       text += decoder.decode(value, { stream: true })
     }
-    return JSON.parse(text + decoder.decode())
+    const payload = JSON.parse(text + decoder.decode())
+    if (payload?.action !== 'chat' && bytes > 48 * 1024) throw new AiError('too_large')
+    return payload
   } finally {
     await reader.cancel().catch(() => undefined)
     reader.releaseLock()
@@ -75,12 +78,17 @@ export async function handleAi(request: Request): Promise<Response> {
   if (!payload || typeof payload !== 'object') return errorResponse('invalid_request', 400)
   const { provider, model, action, prompt } = payload as Record<string, unknown>
   if (!isAiProvider(provider) || provider === 'codex' || typeof model !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/.test(model)
-    || (action !== 'test' && action !== 'generate' && action !== 'polish')
-    || (action !== 'test' && (typeof prompt !== 'string' || !prompt.trim() || prompt.length > AI_PROMPT_LIMIT))) {
+    || (action !== 'test' && action !== 'generate' && action !== 'polish' && action !== 'chat')
+    || (action !== 'test' && (typeof prompt !== 'string' || !prompt.trim() || prompt.length > (action === 'chat' ? AI_CHAT_PROMPT_LIMIT : AI_PROMPT_LIMIT)))) {
     return errorResponse('invalid_request', 400)
   }
 
   let polishInput: ReturnType<typeof readPolishInput> | undefined
+  let chatInput: ReturnType<typeof readChatInput> | undefined
+  if (action === 'chat') {
+    try { chatInput = readChatInput(prompt as string) }
+    catch { return errorResponse('invalid_request', 400) }
+  }
   if (action === 'polish') {
     try { polishInput = readPolishInput(prompt as string) }
     catch { return errorResponse('invalid_request', 400) }
@@ -100,9 +108,9 @@ export async function handleAi(request: Request): Promise<Response> {
       method: 'POST', redirect: 'manual', signal: controller.signal,
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}`, Accept: 'text/event-stream' },
       body: JSON.stringify({
-        model, stream: true, max_tokens: polishInput ? Math.min(8192, Math.max(768, polishInput.maxOptionCharacters * polishInput.plans.length * 2 + 256)) : 4096,
-        ...(polishInput && provider === 'deepseek' ? { thinking: { type: 'disabled' }, response_format: { type: 'json_object' } } : {}),
-        messages: [...(polishInput ? [{ role: 'system', content: POLISH_INSTRUCTION }] : []), { role: 'user', content: action === 'test' ? '请只回复：连接成功' : polishInput ? JSON.stringify(polishInput) : prompt }],
+        model, stream: true, max_tokens: chatInput ? 8192 : polishInput ? Math.min(8192, Math.max(768, polishInput.maxOptionCharacters * polishInput.plans.length * 2 + 256)) : 4096,
+        ...((polishInput || chatInput) && provider === 'deepseek' ? { thinking: { type: 'disabled' }, response_format: { type: 'json_object' } } : {}),
+        messages: [...(chatInput ? [{ role: 'system', content: CHAT_INSTRUCTION }] : polishInput ? [{ role: 'system', content: POLISH_INSTRUCTION }] : []), { role: 'user', content: action === 'test' ? '请只回复：连接成功' : chatInput ? JSON.stringify(chatInput) : polishInput ? JSON.stringify(polishInput) : prompt }],
       }),
     })
   } catch {

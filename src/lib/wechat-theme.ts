@@ -15,6 +15,7 @@ import {
   type ArticleFormatting,
 } from '../domain/formatting'
 import { restoreSourceStyles } from './source-style-policy'
+import { imageFrameStyle, normalizeImageFrame, type ImageFrame } from '../domain/image-frame'
 
 export const WECHAT_THEME_IDS = [
   'literary',
@@ -50,6 +51,7 @@ export type WechatThemeFont = 'theme' | 'sans' | 'serif' | 'rounded'
 export type WechatThemeCategory = '全部' | '简约' | '书卷' | '杂志' | '商务' | '科技' | '活力'
 
 export interface WechatThemeSettings {
+  imageFrame?: ImageFrame
   themeId: WechatThemeId
   accentByTheme: Partial<Record<WechatThemeId, string>>
   slotColorsByTheme: Partial<Record<WechatThemeId, Record<string, string>>>
@@ -123,7 +125,7 @@ export function normalizeWechatThemeSettings(value?: Partial<WechatThemeSettings
     }),
   ) as Partial<Record<WechatThemeId, Record<string, string>>>
 
-  return { themeId, accentByTheme, slotColorsByTheme, fontFamily, fontSize }
+  return { themeId, accentByTheme, slotColorsByTheme, fontFamily, fontSize, imageFrame: normalizeImageFrame(value?.imageFrame) }
 }
 
 function applyStyle(element: HTMLElement, cssText?: string): void {
@@ -485,5 +487,14 @@ export function applyWechatTheme(
   }
 
   if (sharedFormatting?.sourceStyle === 'preserve') restoreSourceStyles(document)
+  // An explicitly chosen frame takes precedence over imported image decoration.
+  if (settings.imageFrame && settings.imageFrame !== 'theme') {
+    container.querySelectorAll<HTMLImageElement>('img').forEach(image => {
+      Object.assign(image.style, imageFrameStyle(settings.imageFrame!))
+      image.style.boxSizing = 'border-box'
+      image.style.maxWidth = '100%'
+      image.style.height = 'auto'
+    })
+  }
   return container.outerHTML
 }

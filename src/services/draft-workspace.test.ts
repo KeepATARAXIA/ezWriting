@@ -130,6 +130,7 @@ describe('draft workspace', () => {
           slotColorsByTheme: { 'candy-pop': { blue: '#abcdef' } },
           fontFamily: 'rounded',
           fontSize: 18,
+          imageFrame: 'white',
         },
       },
       kind: 'image',

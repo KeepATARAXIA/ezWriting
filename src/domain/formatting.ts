@@ -19,16 +19,17 @@ export interface ArticleFormatting {
 export const DEFAULT_ARTICLE_FORMATTING: ArticleFormatting = {
   sourceStyle: 'theme',
   theme: 'clean',
-  font: 'serif',
+  font: 'sans',
   fontSize: 'medium',
-  lineHeight: 'comfortable',
-  accent: 'blue',
+  lineHeight: 'airy',
+  accent: 'green',
   wechat: {
-    themeId: 'literary',
-    accentByTheme: {},
+    themeId: 'morandi-green',
+    accentByTheme: { 'morandi-green': '#07a35a' },
     slotColorsByTheme: {},
     fontFamily: 'theme',
     fontSize: 16,
+    imageFrame: 'white',
   },
 }
 

@@ -27,10 +27,20 @@ it('requires pairing before any generation request and reports local failures', 
   await expect(generateAiText(options)).rejects.toMatchObject({ code: 'codex_unavailable' })
 })
 
-it('does not store the local connection in localStorage and can operate with blocked session storage', () => {
+it('remembers pairing across page sessions and forgets it explicitly', async () => {
+  setCodexToken(' remembered ')
+  window.sessionStorage.clear()
+  vi.resetModules()
+  const fresh = await import('./codex-client')
+  expect(fresh.getCodexToken()).toBe('remembered')
+  expect(fresh.setCodexToken('')).toBe(true)
+  expect(window.localStorage.getItem('dispatch.codex-connection.v1')).toBeNull()
+})
+
+it('reports blocked persistent storage while retaining current-page access', () => {
   const save = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('Blocked') })
   vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('Blocked') })
-  setCodexToken('memory-only')
+  expect(setCodexToken('memory-only')).toBe(false)
   expect(getCodexToken()).toBe('memory-only')
   expect(save).toHaveBeenCalledTimes(1)
   setCodexToken(''); expect(getCodexToken()).toBe('')

@@ -7,7 +7,7 @@ describe('applyArticleFormatting', () => {
   it('applies the selected typography and accent to publishable HTML', () => {
     const html = applyArticleFormatting(
       '<h2>小标题</h2><p>正文</p><blockquote>重点</blockquote><a href="https://example.com">链接</a>',
-      DEFAULT_ARTICLE_FORMATTING,
+      { ...DEFAULT_ARTICLE_FORMATTING, lineHeight: 'comfortable', accent: 'blue' },
     )
     const document = new DOMParser().parseFromString(html, 'text/html')
 

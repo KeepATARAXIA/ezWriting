@@ -19,6 +19,15 @@
 .ai-polish-dialog { position: relative; display: flex; flex-direction: column; min-height: 0; }
 .ai-results-heading { margin: 0 0 10px; font-size: 17px; color: #26324a; }
 .ai-results-heading span { font-size: 12px; font-weight: 400; color: #788398; }
+.ai-results-toolbar { display: flex; flex-shrink: 0; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 10px 24px; border-bottom: 1px solid #edf0f4; }
+.ai-results-toolbar .ai-results-heading { margin: 0; }
+.ai-results-toolbar .ai-text-button { font-size: 12px; }
+.workbench-dialog:has(.ai-polish-results):not([data-positioned]) { height: min(880px, calc(100dvh - 48px)); }
+.workbench-dialog:has(.ai-polish-results) > .workbench-dialog-content { height: 100%; max-height: none; }
+.ai-polish-results { flex: 1; }
+.ai-polish-comparison.ai-polish-results .ai-polish-body { display: block; flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 24px clamp(20px, 4vw, 56px) 40px; }
+.ai-polish-comparison.ai-polish-results .ai-comparison-source, .ai-polish-comparison.ai-polish-results .ai-comparison-versions { contain: none; overflow: visible; padding: 0; max-height: none; }
+.ai-polish-comparison.ai-polish-results .ai-comparison-source { border: 0; margin: 0 0 24px; }
 .ai-regenerate-panel { position: absolute; right: 20px; bottom: 72px; width: min(580px, calc(100% - 40px)); max-height: calc(100% - 84px); display: flex; flex-direction: column; overflow: hidden; box-sizing: border-box; z-index: 4; padding: 18px; background: #fff; border: 1px solid #dce2ec; border-radius: 12px; box-shadow: 0 8px 32px #26324a26; }
 .ai-regenerate-panel-body { min-height: 0; overflow-y: auto; padding: 3px; }
 .ai-regenerate-panel .ai-preset-manage-note { display: none; }
@@ -71,7 +80,7 @@
 .ai-option-list { display: flex; flex-direction: column; gap: 12px; }
 .ai-option-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 20px; row-gap: 8px; min-width: 0; padding: 16px; border: 1px solid #dfe5ef; border-radius: 10px; background: #fff; }
 .ai-option-meta { color: #8992a3; font-size: 11px; font-weight: 400; }
-.ai-option-actions { grid-column: 2; grid-row: 1 / 3; display: flex; align-items: center; gap: 18px; align-self: center; }
+.ai-option-actions { grid-column: 2; grid-row: 1; display: flex; align-items: center; gap: 18px; align-self: center; }
 .ai-option-card .ai-variant-label { font-size: 14px; font-weight: 600; padding: 4px 12px; border-radius: 12px; }
 .ai-option-heading { grid-column: 1; min-width: 0; display: flex; align-items: center; gap: 12px; }
 .ai-option-card h3 { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0; color: #788398; font-size: 12px; font-weight: 400; }
@@ -80,15 +89,18 @@
 .ai-variant-label-1 { color: #70518a; background: #eee5f6; }
 .ai-variant-label-2 { color: #885719; background: #ffecd4; }
 .ai-option-text, .ai-difference-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.75; }
-.ai-option-text { grid-column: 1; min-width: 0; color: #26324a; font-size: 18px; }
+.ai-option-text { grid-column: 1 / -1; min-width: 0; color: #26324a; font-size: 18px; }
 .ai-difference-text { color: #657087; font-size: 14px; }
 .ai-polish-dialog .ai-difference-toggle { min-height: 36px; padding: 3px 0; background: transparent; color: #788398; font-size: 13px; font-weight: 400; white-space: nowrap; }
 .ai-polish-dialog .ai-apply-option { flex-shrink: 0; min-width: 72px; min-height: 38px; padding: 8px 18px; color: #fff; background: #1648ff; border-color: transparent; font-size: 14px; }
 .ai-polish-dialog .ai-apply-option:hover:not(:disabled), .ai-polish-dialog .ai-apply-option:focus-visible { color: #fff; background: #103bda; }
-.ai-option-difference { grid-column: 1 / -1; margin-top: 6px; padding-top: 8px; border-top: 1px solid #edf0f5; }
+.ai-option-difference { grid-column: 1 / -1; }
+.ai-option-difference .ai-difference-text { color: #26324a; font-size: 18px; }
+.ai-option-card :is(.ai-option-text, .ai-option-difference, .ai-difference-text) { height: auto; max-height: none; overflow: visible; }
+.ai-polish-footer > .ai-status-error { color: #b42336; margin: 0 0 10px; }
 @container (max-width: 500px) {
   .ai-option-card { grid-template-columns: minmax(0, 1fr); }
-  .ai-option-actions { grid-column: 1; grid-row: auto; justify-content: flex-end; }
+  .ai-option-actions { grid-column: 1; grid-row: 2; justify-content: flex-end; }
 }
 .ai-polish-dialog del { color: #b42336; background: #ffe8ec; }
 .ai-polish-dialog ins { color: #137548; background: #def5e6; text-decoration: none; }
@@ -116,7 +128,7 @@
 .workbench-dialog:has(.ai-polish-dialog) header h2 svg { color: #1648ff; }
 .workbench-dialog:has(.ai-polish-dialog) header .ai-polish-meta { margin-left: auto; white-space: nowrap; }
 .ai-polish-model select { width: 270px; max-width: 100%; height: 40px; padding: 0 12px; border: 1px solid #dce2ec; border-radius: 8px; background: #fff; color: #26324a; font: inherit; font-size: 13px; }
-.ai-polish-original { background: #f0f5ff; padding: 18px; border: 1px solid #a9c3ff; border-radius: 8px; margin: 16px 0; }
+.ai-polish-original { background: #f0f5ff; padding: 18px; border: 0; border-radius: 8px; margin: 16px 0; }
 .ai-polish-original h3 { display: flex; align-items: center; gap: 6px; font-size: 14px; color: #3d5878; }
 .ai-polish-original h3 span { color: #788398; font-size: 12px; }
 .ai-polish-original h3 em { margin-left: auto; border-radius: 5px; background: #e0ebff; padding: 4px 8px; color: #1648ff; font-size: 11px; font-style: normal; white-space: nowrap; }
@@ -145,6 +157,14 @@
 .ai-preset-manage-note { display: flex; align-items: flex-start; gap: 8px; }
 .ai-preset-manage-note svg { flex-shrink: 0; margin-top: 2px; }
 @media (max-width: 700px) {
+  .workbench-dialog:has(.ai-polish-results):not([data-positioned]) { width: calc(100vw - 16px); max-width: none; height: calc(100dvh - 16px); max-height: calc(100dvh - 16px); box-sizing: border-box; }
+  .ai-results-toolbar { padding: 8px 12px; }
+  .ai-results-toolbar .ai-results-heading { font-size: 14px; }
+  .ai-results-toolbar .ai-text-button { padding-inline: 4px; font-size: 11px; }
+  .ai-polish-footer { padding: 12px; }
+  .ai-polish-footer button { white-space: nowrap; flex-shrink: 0; }
+  .ai-polish-footer .ai-primary { padding-inline: 12px; }
+  .ai-polish-footer .ai-text-button { padding-inline: 6px; }
   .workbench-dialog:has(.ai-polish-dialog) > .workbench-dialog-content > header { flex-wrap: wrap; gap: 10px; padding: 12px 16px; }
   .workbench-dialog:has(.ai-polish-dialog) header h2 { font-size: 18px; }
   .workbench-dialog:has(.ai-polish-dialog) header .icon-button { position: absolute; top: 12px; right: 12px; }

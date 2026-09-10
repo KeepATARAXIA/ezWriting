@@ -76,7 +76,7 @@ describe('HistorySidebar', () => {
       .toEqual(['未命名稿件', '今日早稿', '昨日稿件', '本周稿件', '更早稿件'])
     expect(container.textContent).not.toContain('已经删除')
     expect(container.querySelector<HTMLButtonElement>('[aria-current="page"]')?.textContent).toContain('未命名稿件')
-    expect(container.textContent).toContain('已保存')
+    expect(container.textContent).not.toContain('已保存')
   })
 
   it('shows every draft without category filters', async () => {
@@ -99,11 +99,10 @@ describe('HistorySidebar', () => {
       activeSaveStatus: 'dirty',
       drafts: [draft({ id: 'active' }), draft({ id: 'saved' })],
     })
-    expect(container.querySelector('.history-draft-item.selected .history-sync-state')?.textContent).toContain('待保存')
-    expect(container.querySelector('.history-draft-item:not(.selected) .history-sync-state')?.textContent).toContain('已保存')
+    expect(container.querySelector('.history-sync-state')).toBeNull()
 
     await render({ activeSaveStatus: 'saving' })
-    expect(container.querySelector('.history-draft-item.selected .history-sync-state')?.textContent).toContain('保存中')
+    expect(container.querySelector('.history-sync-state')).toBeNull()
 
     await render({ activeSaveStatus: 'error' })
     expect(container.querySelector('.history-draft-item.selected .history-sync-state')?.textContent).toContain('保存失败')
@@ -125,11 +124,13 @@ describe('HistorySidebar', () => {
     expect(document.activeElement).toBe(openButtons[1])
   })
 
-  it('opens drafts and deletes directly without a category menu', async () => {
+  it('opens drafts and exposes deletion only through more actions', async () => {
     await render({ drafts: [draft({ id: 'draft-1', title: '内容策略' })] })
     await act(async () => container.querySelector<HTMLButtonElement>('.history-draft-open')!.click())
     expect(props.onSelectDraft).toHaveBeenCalledWith('draft-1')
     vi.mocked(props.onSelectDraft).mockClear()
+    expect(container.querySelector('.history-delete-action')).toBeNull()
+    await act(async () => container.querySelector<HTMLButtonElement>('.history-draft-menu-button')!.click())
     const button = container.querySelector<HTMLButtonElement>('.history-delete-action')!
     expect(button.getAttribute('aria-label')).toBe('删除稿件“内容策略”')
     expect(button.querySelector('.lucide-trash-2')).not.toBeNull()
@@ -137,6 +138,18 @@ describe('HistorySidebar', () => {
     await act(async () => button.click())
     expect(props.onDeleteDraft).toHaveBeenCalledWith('draft-1')
     expect(props.onSelectDraft).not.toHaveBeenCalled()
+  })
+
+  it('dismisses more actions with Escape and restores trigger focus', async () => {
+    await render({ drafts: [draft({ id: 'one' })] })
+    const trigger = container.querySelector<HTMLButtonElement>('.history-draft-menu-button')!
+    await act(async () => trigger.click())
+    const action = container.querySelector<HTMLButtonElement>('.history-delete-action')!
+    action.focus()
+    await act(async () => action.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+    expect(container.querySelector('.history-delete-action')).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+    expect(props.onDeleteDraft).not.toHaveBeenCalled()
   })
 
   it('disables draft mutations while an exclusive operation is running', async () => {

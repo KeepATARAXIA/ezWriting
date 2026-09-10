@@ -2,7 +2,7 @@
 .library-sidebar-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 14px 14px 10px; border-bottom: 1px solid #edf0f4; }
 .library-sidebar-heading h2 { margin: 0; color: #202c43; font-size: 16px; font-weight: 650; }
 .template-library { min-width: 0; min-height: 0; padding: 12px 14px 20px; overflow-y: auto; overscroll-behavior: contain; }
-.workbench-layout.library-open > .workspace { width: auto; margin-left: 280px; }
+.workbench-layout.library-open > .workspace { width: auto; margin-left: 280px; margin-right: 0; }
 .workbench-layout.library-open .editor-grid.workspace-mode-split { grid-template-columns: minmax(240px, var(--editor-weight)) 14px minmax(0, var(--preview-weight)); }
 .workbench-layout.library-open .workbench-toolbar { flex-wrap: wrap; gap: 4px 8px; }
 .workbench-layout.library-open .source-toolbar { flex-wrap: nowrap; overflow-x: auto; }

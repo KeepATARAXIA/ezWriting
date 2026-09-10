@@ -6,14 +6,15 @@ let connectionToken = ''
 
 // The connector's pairing code is separate from OpenAI credentials and draft storage.
 export function getCodexToken(): string {
-  try { return window.sessionStorage.getItem(TOKEN_KEY) ?? connectionToken } catch { return connectionToken }
+  try { return window.localStorage.getItem(TOKEN_KEY) ?? connectionToken } catch { return connectionToken }
 }
 export function setCodexToken(token: string) {
   connectionToken = token.trim()
   try {
-    if (connectionToken) window.sessionStorage.setItem(TOKEN_KEY, connectionToken)
-    else window.sessionStorage.removeItem(TOKEN_KEY)
-  } catch { /* Session memory still supports browsers that block storage. */ }
+    if (connectionToken) window.localStorage.setItem(TOKEN_KEY, connectionToken)
+    else window.localStorage.removeItem(TOKEN_KEY)
+    return true
+  } catch { return false /* Current-page memory still supports blocked storage. */ }
 }
 
 export interface CodexStatus {

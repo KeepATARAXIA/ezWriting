@@ -1,5 +1,6 @@
 import type { XhsCardTemplate } from '../domain/saved-draft'
 import type { XhsPageFits } from './xhs-pagination'
+import { fitMathToWidth } from './math-layout'
 
 export interface XhsCardMeasurementOptions {
   title: string
@@ -82,6 +83,7 @@ export function createXhsCardPageMeasurer(options: XhsCardMeasurementOptions): X
     content.className = 'xhs-card-content'
     content.innerHTML = pageHtml
     page.append(content)
+    fitMathToWidth(content)
 
     let footer: HTMLElement | null = null
     if (options.showFooter) {

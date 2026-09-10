@@ -70,6 +70,9 @@ describe('SourceEditor', () => {
     expect(container.querySelector('.cm-gutters')).not.toBeNull()
     expect(container.querySelector('.source-editor-statusbar')?.textContent).toContain('字数 6')
     expect(container.querySelector('.source-editor-statusbar')?.textContent).toContain('历史 ≥100')
+    expect(container.querySelectorAll('.source-editor-statusbar .source-language-badge')).toHaveLength(0)
+    expect(container.querySelector('.source-status-actions')?.lastElementChild?.classList.contains('source-scroll-actions')).toBe(true)
+    expect(container.querySelector('.source-editor-statusbar')?.textContent?.match(/markdown/gi)).toHaveLength(1)
     expect(container.querySelector('.source-toolbar button[aria-label*="Markdown 语法"]')).toBeNull()
     expect(container.querySelector('.source-editor-statusbar button[aria-label="显示 Markdown 语法"]')).not.toBeNull()
     await act(async () => {
